@@ -49,3 +49,27 @@ vec2 = embeddings.embed_query("信息安全")
 print(f"向量维度: {len(vec1)}")
 print(f"两个相似词的向量前5位: {vec1[:5]}")
 print(f"对比词的向量前5位: {vec2[:5]}")
+
+
+# ===== ChromaDB 测试 =====
+from langchain_community.vectorstores import Chroma
+
+# 用前面的 embeddings 对象
+texts = [
+    "网络安全是保护系统免受攻击的实践",
+    "Python是一种编程语言，适合快速开发",
+    "SQL注入是常见的Web漏洞",
+]
+
+# 存入 ChromaDB（持久化到本地目录）
+vectorstore = Chroma.from_texts(
+    texts=texts,
+    embedding=embeddings,
+    persist_directory="./chroma_db",
+)
+
+# 检索测试
+results = vectorstore.similarity_search("什么是网络安全", k=2)
+print("\n检索结果:")
+for i, doc in enumerate(results):
+    print(f"  {i+1}. {doc.page_content}")
