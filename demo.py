@@ -8,6 +8,7 @@
 """
 # Please install OpenAI SDK first: `pip3 install openai`
 import os
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -30,3 +31,21 @@ response = client.chat.completions.create(
 )
 
 print(response.choices[0].message.content)
+
+
+# ===== Embedding 测试 =====
+from langchain_huggingface import HuggingFaceEmbeddings
+
+# 初始化 BGE-M3（首次运行会下载模型，约2GB，需要几分钟）
+embeddings = HuggingFaceEmbeddings(
+    model_name="BAAI/bge-m3",
+    model_kwargs={"device": "cpu"},
+)
+
+# 测试：把两句话转向量，看维度
+vec1 = embeddings.embed_query("网络安全")
+vec2 = embeddings.embed_query("信息安全")
+
+print(f"向量维度: {len(vec1)}")
+print(f"两个相似词的向量前5位: {vec1[:5]}")
+print(f"对比词的向量前5位: {vec2[:5]}")
