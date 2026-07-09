@@ -6,32 +6,23 @@
 @IDE ：PyCharm
 @Intro : 
 """
-# Please install OpenAI SDK first: `pip3 install openai`
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 from dotenv import load_dotenv
-from openai import OpenAI
+from langchain_deepseek import ChatDeepSeek
 
 # 加载环境变量
 load_dotenv()
 
-client = OpenAI(
-    api_key=os.environ.get('DEEPSEEK_API_KEY'),
-    base_url="https://api.deepseek.com")
-
-response = client.chat.completions.create(
+# 初始化 DeepSeek
+llm = ChatDeepSeek(
     model="deepseek-v4-flash",
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant"},
-        {"role": "user", "content": "简单介绍一下你自己"},
-    ],
-    stream=False,
-    reasoning_effort="high",
-    extra_body={"thinking": {"type": "enabled"}}
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
 )
 
-print(response.choices[0].message.content)
-
+# 发一条消息测试
+response = llm.invoke("你好，请用一句话介绍你自己。")
+print(response.content)
 
 # ===== Embedding 测试 =====
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -73,3 +64,76 @@ results = vectorstore.similarity_search("什么是网络安全", k=2)
 print("\n检索结果:")
 for i, doc in enumerate(results):
     print(f"  {i+1}. {doc.page_content}")
+
+
+# ===== 完整 RAG 流程 =====
+from langchain_community.document_loaders import TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+# 1. 加载文档
+loader = TextLoader("./data/sample.txt", encoding="utf-8")
+docs = loader.load()
+
+# 2. 切分文档
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=200,
+    chunk_overlap=50,
+)
+chunks = splitter.split_documents(docs)
+print(f"\n文档切分: {len(chunks)} 个块")
+
+# 3. 向量化并存入 ChromaDB
+vectorstore = Chroma.from_documents(
+    documents=chunks,
+    embedding=embeddings,
+    persist_directory="./chroma_db",
+)
+
+# 4. 构建检索器
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+
+# 5. 构建 RAG 链
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+
+# 定义提示词模板
+system_prompt = (
+    "你是一个文档问答助手。请根据以下检索到的文档内容回答用户问题。"
+    "如果文档中没有相关信息，请说'文档中没有相关信息'。"
+    "\n\n文档内容:\n{context}"
+)
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", system_prompt),
+    ("human", "{input}"),
+])
+
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
+
+# 组合链
+rag_chain = (
+    {"context": retriever | format_docs, "input": RunnablePassthrough()}
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+
+# 6. 提问
+question = "常见的Web漏洞有哪些？"
+response = rag_chain.invoke(question)
+
+print(f"\n问题: {question}")
+print(f"回答: {response}")
+
+# 再问一个
+question2 = "渗透测试是什么？"
+response2 = rag_chain.invoke(question2)
+print(f"\n问题: {question2}")
+print(f"回答: {response2}")
+
+question3 = "Java的Spring框架怎么用？"
+response3 = rag_chain.invoke(question3)
+print(f"\n问题: {question3}")
+print(f"回答: {response3}")
