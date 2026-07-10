@@ -71,13 +71,15 @@ from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # 1. 加载文档
-loader = TextLoader("./data/sample.txt", encoding="utf-8")
+# loader = TextLoader("./data/sample.txt", encoding="utf-8")
+from langchain_community.document_loaders import PyPDFLoader
+loader = PyPDFLoader("./data/sample.pdf")
 docs = loader.load()
 
 # 2. 切分文档
 splitter = RecursiveCharacterTextSplitter(
-    chunk_size=200,
-    chunk_overlap=50,
+    chunk_size=500,
+    chunk_overlap=100,
 )
 chunks = splitter.split_documents(docs)
 print(f"\n文档切分: {len(chunks)} 个块")
@@ -121,19 +123,37 @@ rag_chain = (
 )
 
 # 6. 提问
-question = "常见的Web漏洞有哪些？"
+# question = "常见的Web漏洞有哪些？"
+# response = rag_chain.invoke(question)
+#
+# print(f"\n问题: {question}")
+# print(f"回答: {response}")
+#
+# # 再问一个
+# question2 = "渗透测试是什么？"
+# response2 = rag_chain.invoke(question2)
+# print(f"\n问题: {question2}")
+# print(f"回答: {response2}")
+#
+# question3 = "Java的Spring框架怎么用？"
+# response3 = rag_chain.invoke(question3)
+# print(f"\n问题: {question3}")
+# print(f"回答: {response3}")
+
+# 6. 提问
+question = "零信任架构的核心原则是什么？"
 response = rag_chain.invoke(question)
 
 print(f"\n问题: {question}")
 print(f"回答: {response}")
 
 # 再问一个
-question2 = "渗透测试是什么？"
+question2 = "勒索软件的常见攻击手法有哪些？"
 response2 = rag_chain.invoke(question2)
 print(f"\n问题: {question2}")
 print(f"回答: {response2}")
 
-question3 = "Java的Spring框架怎么用？"
+question3 = "区块链技术在网络安全中有什么应用？"
 response3 = rag_chain.invoke(question3)
 print(f"\n问题: {question3}")
 print(f"回答: {response3}")
