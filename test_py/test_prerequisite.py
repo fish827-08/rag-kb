@@ -8,6 +8,7 @@
 """
 
 
+
 def test_getenv():
     print("\n" + "=" * 40)
     import os
@@ -40,3 +41,31 @@ def test_get_path():
     print(BASE_DIR.exists())
     print(DATA_DIR.exists())
     print(CHROMA_DIR.exists())
+
+
+def test_print():
+    print("\n" + "=" * 40)
+    supported_formats = [".pdf", ".txt", ".md"]
+    print("/".join(supported_formats))
+
+
+def test_path_exists():
+    print("\n" + "=" * 40)
+    from pathlib import Path
+    BASE_DIR = Path.cwd().parent  # 项目根目录
+    DATA_DIR = BASE_DIR / "data"  # 数据目录
+    file_path = DATA_DIR / "sample.txt"
+    print(file_path.exists())
+    if not file_path.exists():
+        raise FileNotFoundError(f"{file_path}不存在")
+
+
+def test_document_processor():
+    print("\n" + "=" * 40)
+    from rag_kb import config
+    from rag_kb import document_processor
+    file_path = config.DATA_DIR / "sample.txt"
+    print(file_path)
+    processor = document_processor.DocumentProcessor()
+    docs = processor.load_and_split(file_path)
+    print(docs)

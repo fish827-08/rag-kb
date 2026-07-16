@@ -128,7 +128,7 @@ rag-kb/
 
 **requirements.txt 需要新增的依赖：**
 
-```
+```python
 langchain-chroma>=0.2.0
 langchain-huggingface>=0.2.0
 langchain-text-splitters>=0.3.0
