@@ -8,7 +8,6 @@
 """
 
 
-
 def test_getenv():
     print("\n" + "=" * 40)
     import os
@@ -69,3 +68,9 @@ def test_document_processor():
     processor = document_processor.DocumentProcessor()
     docs = processor.load_and_split(file_path)
     print(docs)
+
+
+def test_get_path():
+    print("\n" + "=" * 40)
+    from pathlib import Path
+    print(Path(__file__).resolve().parent.parent)

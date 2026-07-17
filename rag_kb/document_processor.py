@@ -23,7 +23,6 @@ class DocumentProcessor:
         """初始化切分器参数"""
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        pass
 
     def load(self, file_path: Path) -> list[Document]:
         """加载单个文件，根据扩展名自动选择 loader
@@ -35,20 +34,19 @@ class DocumentProcessor:
         if not file_path.exists():
             raise FileNotFoundError(f"{file_path}不存在")
 
-        suffix = file_path.suffix  # 取得文件的后缀名
+        suffix = file_path.suffix.lower()  # 取得文件的后缀名 lower()变小写
         if suffix in self.supported_formats:  # 遍历supported_formats，符合的文件类型/通过 self. 访问类变量
             # 支持的类型返回合适的loader加载的list[Document]
             if suffix == self.supported_formats[0]:
                 # 使用PyPDFLoader
-                return PyPDFLoader(file_path).load()
+                return PyPDFLoader(str(file_path)).load()
             else:
-                return TextLoader(file_path, encoding="utf-8").load()
+                return TextLoader(str(file_path), encoding="utf-8").load()
         else:
             # 不支持的格式抛出 ValueError
             # 主动抛出异常
             fmt = "/".join(self.supported_formats)
             raise ValueError(f"不支持的格式: {suffix}，仅支持 {fmt}")  # 用于返回异常
-        pass
 
     def split(self, documents: list[Document], chunk_size: int = None, chunk_overlap: int = None) -> list[Document]:
         """切分文档，可覆盖默认的 chunk_size 和 chunk_overlap"""
@@ -63,12 +61,10 @@ class DocumentProcessor:
             chunk_overlap=chunk_overlap,  # 切片重叠处的大小
         )
         return splitter.split_documents(documents)  # 切片 这里没对documents进行判空处理因为如果所传入文件为空的情况下就是返回空切片
-        pass
 
     def load_and_split(self, file_path: Path) -> list[Document]:
         """便捷方法：加载并切分"""
         return self.split(self.load(file_path))
-        pass
 
 
 if __name__ == "__main__":

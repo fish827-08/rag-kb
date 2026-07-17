@@ -21,7 +21,7 @@ EMBEDDING_DEVICE = "cpu"
 CHUNK_SIZE = 500  # 切分大小
 CHUNK_OVERLAP = 100  # 重叠大小
 SEARCH_K = 3  # 检索返回数量
-BASE_DIR = Path.cwd().parent  # 项目根目录
+BASE_DIR = Path(__file__).resolve().parent.parent  # 项目根目录 resolve()规范化，补齐目录去掉./  Path(__file__)获取当前文件路径
 DATA_DIR = BASE_DIR / "data"  # 数据目录
 CHROMA_DIR = BASE_DIR / "chroma_db"  # 向量库目录
 COLLECTION_NAME = "rag_kb_collection"  # ChromaDB collection
@@ -30,3 +30,7 @@ SYSTEM_PROMPT = \
     "你是一个文档问答助手。请根据以下检索到的文档内容回答用户问题。" \
     "如果文档中没有相关信息，请说'文档中没有相关信息'。" \
     "如果文档中有相关信息，请标注信息来源。"
+
+if __name__ == "__main__":
+    print("BASE_DIR:"+str(BASE_DIR))
+    print("DATA_DIR:"+str(DATA_DIR))
