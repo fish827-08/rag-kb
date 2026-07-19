@@ -4,7 +4,7 @@
 @Auth ： Yu
 @File ：document_processor.py
 @IDE ：PyCharm
-@Intro : 
+@Intro : 能加载 PDF/TXT/MD 文件，并切分成文本块
 """
 from langchain_core.documents import Document
 from pathlib import Path
@@ -24,24 +24,24 @@ class DocumentProcessor:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
-    def load(self, file_path: Path) -> list[Document]:
+    def load(self, file_path: str) -> list[Document]:
         """加载单个文件，根据扩展名自动选择 loader
 
         支持 .pdf / .txt / .md
         不支持的格式抛出 ValueError
         文件不存在抛出 FileNotFoundError
         """
-        if not file_path.exists():
+        if not Path(file_path).exists():
             raise FileNotFoundError(f"{file_path}不存在")
 
-        suffix = file_path.suffix.lower()  # 取得文件的后缀名 lower()变小写
+        suffix = Path(file_path).suffix.lower()  # 取得文件的后缀名 lower()变小写
         if suffix in self.supported_formats:  # 遍历supported_formats，符合的文件类型/通过 self. 访问类变量
             # 支持的类型返回合适的loader加载的list[Document]
-            if suffix == self.supported_formats[0]:
+            if suffix == ".pdf":
                 # 使用PyPDFLoader
-                return PyPDFLoader(str(file_path)).load()
-            else:
-                return TextLoader(str(file_path), encoding="utf-8").load()
+                return PyPDFLoader(file_path).load()
+            elif suffix in (".md", ".txt"):
+                return TextLoader(file_path, encoding="utf-8").load()
         else:
             # 不支持的格式抛出 ValueError
             # 主动抛出异常
@@ -62,7 +62,7 @@ class DocumentProcessor:
         )
         return splitter.split_documents(documents)  # 切片 这里没对documents进行判空处理因为如果所传入文件为空的情况下就是返回空切片
 
-    def load_and_split(self, file_path: Path) -> list[Document]:
+    def load_and_split(self, file_path: str) -> list[Document]:
         """便捷方法：加载并切分"""
         return self.split(self.load(file_path))
 
@@ -80,8 +80,15 @@ if __name__ == "__main__":
     # print(processor.load(file_path3))  # 可以打印
     # print(processor.load(file_path4))  # 文件不存在
     # docs = processor.load_and_split(file_path1)
-    docs = processor.load_and_split(Path(file_path5))
+    docs = processor.load_and_split(file_path5)
     for doc in docs:
         print(doc)
         print(doc.metadata)
         print(len(doc.page_content))
+    import os
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+    from rag_kb import embeddings
+
+    ei = embeddings.get_embeddings()
+    vec1 = ei.embed_query("网络安全")
+    print(vec1)

@@ -7,6 +7,7 @@
 @Intro : 
 """
 import os
+
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 from dotenv import load_dotenv
 from langchain_deepseek import ChatDeepSeek
@@ -41,7 +42,6 @@ print(f"向量维度: {len(vec1)}")
 print(f"两个相似词的向量前5位: {vec1[:5]}")
 print(f"对比词的向量前5位: {vec2[:5]}")
 
-
 # ===== ChromaDB 测试 =====
 from langchain_community.vectorstores import Chroma
 
@@ -63,8 +63,7 @@ vectorstore = Chroma.from_texts(
 results = vectorstore.similarity_search("什么是网络安全", k=2)
 print("\n检索结果:")
 for i, doc in enumerate(results):
-    print(f"  {i+1}. {doc.page_content}")
-
+    print(f"  {i + 1}. {doc.page_content}")
 
 # ===== 完整 RAG 流程 =====
 from langchain_community.document_loaders import TextLoader
@@ -73,6 +72,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # 1. 加载文档
 # loader = TextLoader("./data/sample.txt", encoding="utf-8")
 from langchain_community.document_loaders import PyPDFLoader
+
 loader = PyPDFLoader("./data/sample.pdf")
 docs = loader.load()
 
@@ -111,15 +111,17 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
 ])
 
+
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
+
 # 组合链
 rag_chain = (
-    {"context": retriever | format_docs, "input": RunnablePassthrough()}
-    | prompt
-    | llm
-    | StrOutputParser()
+        {"context": retriever | format_docs, "input": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
 )
 
 # 6. 提问

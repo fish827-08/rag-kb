@@ -15,6 +15,8 @@ from pathlib import Path
 load_dotenv()
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+if not DEEPSEEK_API_KEY:
+    raise RuntimeError("DEEPSEEK_API_KEY 未设置，请检查 .env 文件")
 DEEPSEEK_MODEL = "deepseek-v4-flash"
 EMBEDDING_MODEL = "BAAI/bge-m3"
 EMBEDDING_DEVICE = "cpu"
@@ -29,7 +31,8 @@ COLLECTION_NAME = "rag_kb_collection"  # ChromaDB collection
 SYSTEM_PROMPT = \
     "你是一个文档问答助手。请根据以下检索到的文档内容回答用户问题。" \
     "如果文档中没有相关信息，请说'文档中没有相关信息'。" \
-    "如果文档中有相关信息，请标注信息来源。"
+    "如果文档中有相关信息，请标注信息来源。" \
+    "\n\n文档内容:\n{context}"
 
 if __name__ == "__main__":
     print("BASE_DIR:"+str(BASE_DIR))

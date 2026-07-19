@@ -4,11 +4,13 @@
 @Auth ： Yu
 @File ：embeddings.py
 @IDE ：PyCharm
-@Intro : 
+@Intro : 封装 BGE-M3 embedding 模型，提供一个函数获取 embedding 实例
 """
+
 import os
 
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"  # 先设环境变量
+# os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")  # 先设环境变量
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 from langchain_huggingface import HuggingFaceEmbeddings
 from rag_kb import config
 

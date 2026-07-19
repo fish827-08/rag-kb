@@ -74,3 +74,19 @@ def test_get_path():
     print("\n" + "=" * 40)
     from pathlib import Path
     print(Path(__file__).resolve().parent.parent)
+
+
+def test_list_count():
+    print("\n" + "=" * 40)
+    lst = [1, 2, 3]
+    print("len of lst is:"+str(len(lst)))
+
+
+def test_accumulate():
+    print("\n" + "=" * 40)
+    lst_plus = [[1, 2, 3], [1, 2], [1, 2, 3, 4, 5]]
+    all_num = 0
+    for lst in lst_plus:
+        all_num += len(lst)
+        print(lst.index())
+    print("all_num= " + str(all_num))

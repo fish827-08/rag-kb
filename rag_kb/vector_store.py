@@ -4,18 +4,15 @@
 @Auth ： Yu
 @File ：vector_store.py
 @IDE ：PyCharm
-@Intro : 
+@Intro : 封装 ChromaDB 的存取操作，提供存入文档、检索文档、清空等功能。
 """
-import gc
 import shutil
-import threading
-import time
 from pathlib import Path
 
 import chromadb
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
-from rag_kb import config, embeddings, document_processor
+from rag_kb import config, embeddings
 
 
 class VectorStore:
@@ -65,13 +62,13 @@ class VectorStore:
     # 将Chroma转化为retriever，支持retriever.invoke()调用,k为返回的document数量
     def as_retriever(self, k: int = config.SEARCH_K):
         """转为 LangChain retriever"""
-        return self.get_chroma.as_retriever(k=k)
+        return self.get_chroma.as_retriever(search_kwargs={"k": k})
 
     # 删除持久化目录并重置内部状态
     def clear(self) -> None:
         """清空向量库（删除持久化目录）"""
         if self._client is not None:
-            self._client.close()
+            self._client.close()  # 显式关闭 SQLite 连接 → 立即释放文件句柄 → 可以删除
             self._client = None
         self._chroma = None
 
@@ -80,6 +77,8 @@ class VectorStore:
 
 
 if __name__ == "__main__":
+    from rag_kb import document_processor
+
     print("test")
     vs = VectorStore()
     # vs.clear()
@@ -94,6 +93,7 @@ if __name__ == "__main__":
     print("=" * 100)
     ret = vs.as_retriever()
     ret_docs = ret.invoke("什么是社会工程学攻击")
+    print("as_retriever num: "+str(len(ret_docs)))
     for d in ret_docs:
         print(d.page_content)
         print(d.metadata)
