@@ -25,7 +25,7 @@ class VectorStore:
 
     # 可以将方法当属性一样使用
     @property
-    def get_chroma(self) -> Chroma:
+    def chroma(self) -> Chroma:
         """初始化Chroma"""
         if self._chroma is None:
             # 自己创建 chromadb client（公开 API）
@@ -42,27 +42,27 @@ class VectorStore:
     # 直接调用Chroma现有的方法，我进行简单的封装
     def add_documents(self, documents: list[Document]) -> None:
         """存入 Document 列表"""
-        self.get_chroma.add_documents(documents)
+        self.chroma.add_documents(documents)
 
     def add_texts(self, texts: list[str]) -> None:
         """存入纯文本列表（内部转成 Document）"""
-        self.get_chroma.add_texts(texts)
+        self.chroma.add_texts(texts)
 
     # 返回k个最相关的Document
     def search(self, query: str, k: int = config.SEARCH_K) -> list[Document]:
         """检索最相关的 top-k 文档块"""
-        return self.get_chroma.similarity_search(query, k)
+        return self.chroma.similarity_search(query, k)
 
     # 返回k个最相关的Document，还包含他们的分数，其中分数代码向量之间的距离，距离越小分数越小，相关性越强
     def search_with_scores(self, query: str, k: int = config.SEARCH_K) -> list[tuple[Document, float]]:
         """检索并返回相似度分数"""
-        return self.get_chroma.similarity_search_with_score(query, k)
+        return self.chroma.similarity_search_with_score(query, k)
 
     # 因为 LCEL 管道的每个环节都得是 Runnable，retriever 实现了 Runnable 接口，能无缝接入 chain | retriever | format_docs 这样的管道
     # 将Chroma转化为retriever，支持retriever.invoke()调用,k为返回的document数量
     def as_retriever(self, k: int = config.SEARCH_K):
         """转为 LangChain retriever"""
-        return self.get_chroma.as_retriever(search_kwargs={"k": k})
+        return self.chroma.as_retriever(search_kwargs={"k": k})
 
     # 删除持久化目录并重置内部状态
     def clear(self) -> None:
