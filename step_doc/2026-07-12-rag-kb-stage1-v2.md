@@ -529,7 +529,7 @@ if __name__ == "__main__":
 
 - [ ] `python -m rag_kb --help` 显示所有命令
 - [ ] `python -m rag_kb info` 用表格显示配置
-- [ ] `python -m rag_kb add data/sample.txt` 导入成功，显示块数量
+- [ ] `python -m rag_kb add sample.txt` 导入成功，显示块数量
 - [ ] `python -m rag_kb ask "常见Web漏洞有哪些"` 返回回答和来源
 - [ ] `python -m rag_kb chat` 能连续问答，输入 quit 退出
 - [ ] `python -m rag_kb clear` 需要确认才清空

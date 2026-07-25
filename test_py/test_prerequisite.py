@@ -79,7 +79,7 @@ def test_get_path():
 def test_list_count():
     print("\n" + "=" * 40)
     lst = [1, 2, 3]
-    print("len of lst is:"+str(len(lst)))
+    print("len of lst is:" + str(len(lst)))
 
 
 def test_accumulate():
@@ -90,3 +90,22 @@ def test_accumulate():
         all_num += len(lst)
         print(lst.index())
     print("all_num= " + str(all_num))
+
+
+def test_str():
+    print("\n" + "=" * 40)
+    text = "  a b ssa  "
+    print(text.strip())
+
+
+def test_config_print():
+    print("\n" + "=" * 40)
+    from rag_kb import config
+    # for k, v in vars(config).items():
+    #     if not k.startswith("_"):
+    #         print(f"{k} = {v}")
+    # print(config.SEARCH_K)
+    dicts = config.Config.get_all().items()
+    print(dicts)
+    for k,v in dicts:
+        print(k)
