@@ -91,7 +91,10 @@ class RAGChain:
     def ask_with_sources(self, question: str) -> dict:
         """提问，返回 {"answer": str, "sources": list[Document]}"""
         answer_str = self.ask(question)
-        sources_list = self.retriever.invoke(question)
+        sources_list = "文档中没有相关信息。"
+        if not answer_str.__eq__("文档中没有相关信息。"):
+            sources_list = self.retriever.invoke(question)
+
         return {
             "answer": answer_str,
             "sources": sources_list

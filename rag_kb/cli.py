@@ -59,7 +59,7 @@ def add_dir(directory: str):
 
 
 @app.command()
-def ask(question: str = None):
+def ask(question: str = typer.Argument(None)):
     """
     单次提问
     """
@@ -81,7 +81,7 @@ def chat():
                   "输入 quit 退出", style="yellow")
     while True:
         text = str(typer.prompt("> ")).strip()
-        if text is None:
+        if not text:
             continue
         if should_quit(text):
             console.print("再见！", style="cyan")
@@ -114,8 +114,7 @@ def info():
 def should_quit(text: str) -> bool:
     """接收离开命令返回True"""
     # strip() 用来「剥掉」字符串首尾的指定字符，默认剥掉空白符（空格、制表符、换行符等），常用于清理用户输入中不小心多敲的前后空格。
-    if text.strip().lower() in ("quit", "exit", "q", "bye"):
-        return True
+    return text.strip().lower() in ("quit", "exit", "q", "bye")
 
 
 if __name__ == "__main__":

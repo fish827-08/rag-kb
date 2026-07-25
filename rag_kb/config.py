@@ -18,7 +18,8 @@ load_dotenv()
 class Config:
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
     if not DEEPSEEK_API_KEY:
-        raise RuntimeError("DEEPSEEK_API_KEY 未设置，请检查 .env 文件")
+        import warnings
+        warnings.warn("DEEPSEEK_API_KEY 未设置，LLM 相关功能不可用")
     DEEPSEEK_MODEL = "deepseek-v4-flash"
     EMBEDDING_MODEL = "BAAI/bge-m3"
     EMBEDDING_DEVICE = "cpu"
