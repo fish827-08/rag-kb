@@ -20,8 +20,11 @@ from rag_kb import config, document_processor, vector_store
 
 
 def format_docs(docs: list[Document]) -> str:
-    """"将每个docs的page_content拼接在一起，用\n\n隔开"""
-    return "\n\n".join("[片段" + str(docs.index(doc) + 1) + "]" + doc.page_content for doc in docs)
+    """将每个 docs 的 page_content 拼接在一起，用两个换行符隔开"""
+    return "\n\n".join(
+        f"[片段{i}]{doc.page_content}"
+        for i, doc in enumerate(docs, start=1)  # enumerate(docs, start=1) 在遍历时同步产出索引，时间复杂度是 O(n)O(n)O(n)
+    )
 
 
 class RAGChain:
