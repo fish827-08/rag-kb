@@ -2,6 +2,9 @@ venv/
 __pycache__/
 *.pyc
 .env
+.env.local
 chroma_db/
+kb_data/
 models/
 .idea/
+.pytest_cache/
