@@ -1,10 +1,43 @@
-chromadb==1.5.9
-langchain_chroma==1.1.0
-langchain_community==0.4.2
-langchain_core==1.5.1
-langchain_deepseek==1.1.0
-langchain_huggingface==1.2.2
-langchain_text_splitters==1.1.2
-python-dotenv==1.2.2
-rich==15.0.0
-typer==0.27.0
+# kb 项目依赖（设计文档第 3 节）。torch 已按本机 CUDA 预装，此处不重复指定版本。
+# 如需从零安装 CUDA 版 torch，见 AGENTS.md 第 7 节环境备忘。
+
+# Web
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# MCP（FastMCP 挂载进同一 ASGI 应用）
+mcp>=1.2
+
+# 向量库 / 关键词检索
+chromadb>=1.5
+rank_bm25>=0.2.2
+jieba>=0.42
+
+# Embedding
+sentence-transformers>=3.0
+
+# LLM 客户端（OpenAI 兼容：Ollama / DeepSeek）
+openai>=1.0
+httpx>=0.27
+
+# 文档解析
+pypdf>=4.0
+python-docx>=1.1
+markitdown>=0.1
+
+# 网页抓取
+trafilatura>=1.8
+
+# 目录监听
+watchdog>=4.0
+
+# 切分（唯一保留的 langchain 独立小包）
+langchain-text-splitters>=0.3
+
+# 配置 / CLI
+pydantic-settings>=2.0
+typer>=0.12
+rich>=13.0
+
+# 测试
+pytest>=8.0
