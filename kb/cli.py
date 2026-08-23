@@ -44,6 +44,16 @@ def info():
     console.print(_service().stats())
 
 
+@app.command()
+def serve():
+    """启动常驻 REST 服务（设备检测在 N8 完善）。"""
+    import uvicorn
+    from kb.api import create_app
+    s = get_settings()
+    app = create_app(s)
+    uvicorn.run(app, host=s.api_host, port=s.api_port)
+
+
 def main() -> None:
     app()
 
