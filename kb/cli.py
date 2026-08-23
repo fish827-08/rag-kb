@@ -86,7 +86,7 @@ def serve():
     s = get_settings()
     # 终端交互式设备检测（显式配置/runtime.json/询问），结果注入 settings
     s.device = resolve_device(s, interactive=True)
-    app = create_app(s)
+    app = create_app(s, enable_watcher=True)
     uvicorn.run(app, host=s.api_host, port=s.api_port)
 
 

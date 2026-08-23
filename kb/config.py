@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     deepseek_model: str = "deepseek-v4-flash"
     chunk_size: int = 500
     chunk_overlap: int = 100
-    watch_dir: Path = Path("data")
+    watch_dir: Path = Path("data")            # 目录监听（serve 挂载）；空串/"."=不启动
     api_host: str = "127.0.0.1"
     api_port: int = 8000
     context_token_limit: int = 2000             # /ask 检索上下文 token 硬上限

@@ -88,6 +88,10 @@ class KBService:
         """列表（过滤 + 分页），返回 (记录, 总数)。"""
         return self.store.list_records(**filters)
 
+    def list_records(self, **filters) -> tuple[list[Record], int]:
+        """记录列表（过滤 + 分页），直接委托 store；watcher 等内部与验收测试使用。"""
+        return self.store.list_records(**filters)
+
     def update_memory(self, record_id: str, content: str | None = None,
                       tags: list[str] | None = None) -> Record | None:
         """更新记忆；content 变更时重新嵌入并更新 updated_at。"""

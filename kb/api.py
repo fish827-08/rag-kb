@@ -12,6 +12,7 @@ from kb.config import Settings, get_settings
 from kb.mcp import create_mcp_server
 from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
                         WebFetchError)
+from kb.watcher import KBWatcher
 
 
 class MemoryCreate(BaseModel):
@@ -47,20 +48,35 @@ class WebIngestRequest(BaseModel):
     url: str
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None,
+               enable_watcher: bool = False) -> FastAPI:
     """应用工厂；全局单例 KBService 挂 app.state.kb（REST 与 MCP 共享该实例）。
-    统一错误 JSON：{"error": "<CODE>", "message": "<人话>"}。"""
+    统一错误 JSON：{"error": "<CODE>", "message": "<人话>"}。
+
+    enable_watcher=True 时（仅 serve 模式）在 lifespan 中挂目录监听线程；
+    TestClient 测试默认 False 不触发。watch_dir 为空（""/"."）时不启动。
+    """
     kb = KBService(settings)
     # MCP 服务器与 REST 共享同一 KBService 单例；先建 streamable http 应用
     # （内部懒创建会话管理器，随后由主应用 lifespan 托管启停）
     mcp_server = create_mcp_server(kb)
     mcp_app = mcp_server.streamable_http_app(streamable_http_path="/")
+    watcher: KBWatcher | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        """挂载的子应用 lifespan 不会自动执行，在此托管 MCP 会话管理器生命周期。"""
-        async with mcp_server.session_manager.run():
-            yield
+        """托管 MCP 会话管理器与目录监听线程的生命周期。"""
+        nonlocal watcher
+        wd = kb.settings.watch_dir
+        if enable_watcher and str(wd) not in ("", "."):
+            watcher = KBWatcher(kb, wd)
+            watcher.start()
+        try:
+            async with mcp_server.session_manager.run():
+                yield
+        finally:
+            if watcher is not None:
+                watcher.stop()
 
     app = FastAPI(title="kb memory service", lifespan=lifespan)
     app.state.kb = kb
