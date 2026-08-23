@@ -22,6 +22,15 @@ class MemoryUpdate(BaseModel):
     tags: list[str] | None = None
 
 
+class SearchRequest(BaseModel):
+    """检索请求；query 必填，top_k/mode 带默认值，type/tag 可选过滤。"""
+    query: str
+    top_k: int = 5
+    mode: str = "hybrid"
+    type: str | None = None
+    tag: str | None = None
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """应用工厂；全局单例 KBService 挂 app.state.kb。
     统一错误 JSON：{"error": "<CODE>", "message": "<人话>"}。"""
@@ -73,6 +82,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404,
                                 detail={"error": "NOT_FOUND", "message": "记录不存在"})
         return {"ok": True}
+
+    @app.post("/api/v1/search")
+    def search(body: SearchRequest) -> dict:
+        """混合检索；results 即 KBService.search 的返回。"""
+        results = kb.search(body.query, top_k=body.top_k, mode=body.mode,
+                            type=body.type, tag=body.tag)
+        return {"results": results}
+
+    @app.get("/api/v1/documents")
+    def list_documents() -> dict:
+        """按 source 聚合的文档列表。"""
+        return {"items": kb.list_documents()}
+
+    @app.delete("/api/v1/documents/{source}")
+    def delete_document(source: str) -> dict:
+        """按 source 删除文档全部记录。"""
+        return {"deleted": kb.delete_document(source)}
 
     @app.get("/api/v1/healthz")
     def healthz() -> dict:

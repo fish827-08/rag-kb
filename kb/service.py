@@ -68,6 +68,30 @@ class KBService:
         self.bm25.remove(record_id)
         return True
 
+    # ---- 文档管理 ----
+    def list_documents(self) -> list[dict]:
+        """按 source 聚合文档列表（source 非空的所有记录，不限 type）。
+        chunks=该 source 记录数；chars=content 总字符数；last_imported=最大 created_at。"""
+        docs: dict[str, dict] = {}
+        for r in self.store.iter_all():
+            if not r.source:
+                continue
+            d = docs.setdefault(r.source, {
+                "source": r.source, "chunks": 0, "chars": 0, "last_imported": ""})
+            d["chunks"] += 1
+            d["chars"] += len(r.content)
+            if r.created_at > d["last_imported"]:
+                d["last_imported"] = r.created_at
+        return sorted(docs.values(), key=lambda d: d["source"])
+
+    def delete_document(self, source: str) -> int:
+        """按 source 删除文档全部记录，返回删除数量；同步清理 BM25 索引。"""
+        ids = [r.id for r in self.store.iter_all() if r.source == source]
+        n = self.store.delete_by_source(source)
+        for rid in ids:
+            self.bm25.remove(rid)
+        return n
+
     # ---- 检索与统计 ----
     def search(self, query: str, top_k: int = 5, mode: str = "hybrid",
                type: str | None = None, tag: str | None = None) -> list[dict]:

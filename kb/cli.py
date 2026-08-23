@@ -1,12 +1,46 @@
-"""CLI 入口：add / search / info / serve（serve 在 N8 补全）。"""
+"""CLI 入口：add / search / info / serve。"""
+import json
+
 import typer
 from rich.console import Console
 
-from kb.config import get_settings
+from kb.config import Settings, get_settings
 from kb.service import KBService
 
 app = typer.Typer()
 console = Console()
+
+
+def resolve_device(settings: Settings, interactive: bool, input_fn=input) -> str:
+    """优先级：settings.device 显式非空值 > runtime.json 已存选择 > 交互询问（cuda 可用时）
+    > 默认 cpu。interactive=False 时不询问直接 cpu。"""
+    # 1. 显式配置最高优先，直接返回（不写文件）
+    if settings.device:
+        return settings.device
+    # 2. runtime.json 已有持久化选择
+    if settings.runtime_file.exists():
+        try:
+            saved = json.loads(settings.runtime_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            saved = {}
+        if saved.get("device"):
+            return saved["device"]
+    # 3. 交互询问（仅 interactive 且 cuda 可用时）；仅此路径写入 runtime.json
+    if interactive:
+        try:
+            import torch
+            cuda_ok = torch.cuda.is_available()
+        except ImportError:
+            cuda_ok = False
+        if cuda_ok:
+            answer = input_fn("检测到独立显卡，是否启用 GPU 加速？[y/n]")
+            device = "cuda" if answer.strip().lower() == "y" else "cpu"
+            settings.runtime_file.parent.mkdir(parents=True, exist_ok=True)
+            settings.runtime_file.write_text(
+                json.dumps({"device": device}), encoding="utf-8")
+            return device
+    # 4. 默认 cpu（不写文件）
+    return "cpu"
 
 
 def _service() -> KBService:
@@ -46,10 +80,12 @@ def info():
 
 @app.command()
 def serve():
-    """启动常驻 REST 服务（设备检测在 N8 完善）。"""
+    """启动常驻 REST 服务（python -m kb serve）。"""
     import uvicorn
     from kb.api import create_app
     s = get_settings()
+    # 终端交互式设备检测（显式配置/runtime.json/询问），结果注入 settings
+    s.device = resolve_device(s, interactive=True)
     app = create_app(s)
     uvicorn.run(app, host=s.api_host, port=s.api_port)
 
