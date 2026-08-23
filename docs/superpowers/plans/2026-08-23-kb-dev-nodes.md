@@ -578,6 +578,47 @@ def test_cli_add与search(env_isolated):
 
 **门禁**：测试全绿（语义用例验证向量路、关键词用例验证 BM25 路、hybrid 验证融合）；`python -m kb info` 可运行（`kb/__main__.py` 转发 cli）；tag `node-06`。**M1 完成，人工确认后进入 M2。**
 
+### N6-hotfix：嵌入器离线加载（M1 关闭的前置条件，2026-08-23 验收发现）
+
+**问题**：CLI 直接运行（非 pytest 环境）加载默认模型 `BAAI/bge-m3` 时，huggingface_hub 先联网 HEAD 校验模型更新；直连 huggingface.co 失败后其重试逻辑抛出
+`RuntimeError: Cannot send a request, as the client has been closed.`，模型加载崩溃。
+影响：**断网/无代理环境下 CLI 与服务均无法启动**——违反设计文档"模型预下载后，断网可完整运行"的成功标准。
+（测试未暴露的原因：conftest 设置了 `HF_ENDPOINT=https://hf-mirror.com`，镜像可达所以联网校验通过了。）
+
+**修复要求**（`kb/embedder.py` 的 `_ensure_loaded`，离线优先 + 在线兜底）：
+
+```python
+def _ensure_loaded(self):
+    """首次使用时加载模型；优先离线（缓存命中，不联网），失败再在线下载；cuda 下 fp16。"""
+    if self._model is None:
+        from sentence_transformers import SentenceTransformer
+        try:
+            self._model = SentenceTransformer(
+                self.model_name, device=self.device, local_files_only=True)
+        except Exception:
+            # 缓存未命中（首次部署新模型），走在线下载；HF_ENDPOINT 镜像由环境变量提供
+            self._model = SentenceTransformer(self.model_name, device=self.device)
+        if self.device == "cuda":
+            self._model.half()
+```
+
+已验证：本机 sentence-transformers 5.6.0 支持 `local_files_only`，BGE-M3 缓存离线加载正常（1024 维）。
+
+**补充验收**（追加到 `tests/test_n03_embedder.py`，无需新增文件）：
+
+```python
+def test_断网环境加载(env_isolated, monkeypatch):
+    """模拟断网：hf_hub 离线开关打开时仍能从缓存加载（回归 N6-hotfix）。"""
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    from kb.embedder import Embedder
+    from kb.config import get_settings
+    e = Embedder(get_settings().embed_model, device="cpu")
+    vecs = e.embed_texts(["离线加载测试"])
+    assert len(vecs[0]) == 512
+```
+
+**门禁**：原 20 项全绿 + 上述补充用例绿；CLI 在**不设任何 HF 环境变量**的裸终端可 add/search；提交 `节点06-hotfix: ...`，tag `node-06`（原地重打或 `node-06.1`）。
+
 ---
 
 ## N7：REST API 骨架
