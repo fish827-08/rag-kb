@@ -49,7 +49,7 @@
 | 组件 | 选型 | 许可证 |
 |---|---|---|
 | Web 框架 | FastAPI + uvicorn | MIT |
-| MCP | 官方 `mcp` Python SDK（FastMCP，挂载进同一 ASGI 应用） | MIT |
+| MCP | 官方 `mcp` Python SDK（mcp 2.0.0 的 MCPServer，挂载进同一 ASGI 应用；SDK 2.0 已移除 1.x 的 FastMCP 类，能力等价） | MIT |
 | 向量库 | ChromaDB（嵌入式，进程内直连） | Apache 2.0 |
 | 关键词检索 | rank_bm25 + jieba | Apache 2.0 / MIT |
 | Embedding | sentence-transformers 直载 BGE-M3（默认），可配置小模型（如 bge-small-zh） | MIT |
@@ -64,7 +64,7 @@
 
 ### 4.1 进程模型
 
-单进程：`python -m kb serve` 启动常驻服务。FastAPI 为主框架，FastMCP 挂载在同一 ASGI 应用；REST 与 MCP 共享同一 `KBService` 实例，不存在两套业务逻辑。
+单进程：`python -m kb serve` 启动常驻服务。FastAPI 为主框架，MCP（mcp 2.0.0 `MCPServer`，streamable http）挂载在同一 ASGI 应用（`/mcp/` 路径）；REST 与 MCP 共享同一 `KBService` 实例，不存在两套业务逻辑。
 
 ```
 客户端（Claude Code / Cursor / 自建 Agent / 脚本）
