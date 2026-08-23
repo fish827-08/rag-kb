@@ -23,3 +23,13 @@ def test_相似语义更近(env_isolated):
     hits = e.embed_texts(["深度学习与神经网络基础", "今天中午吃什么"])
     def cos(a, b): return sum(x * y for x, y in zip(a, b))
     assert cos(q, hits[0]) > cos(q, hits[1])  # 语义相近者余弦更高
+
+
+def test_断网环境加载(env_isolated, monkeypatch):
+    """模拟断网：hf_hub 离线开关打开时仍能从缓存加载（回归 N6-hotfix）。"""
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    from kb.embedder import Embedder
+    from kb.config import get_settings
+    e = Embedder(get_settings().embed_model, device="cpu")
+    vecs = e.embed_texts(["离线加载测试"])
+    assert len(vecs[0]) == 512

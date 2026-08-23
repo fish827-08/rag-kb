@@ -11,10 +11,15 @@ class Embedder:
         self._model = None
 
     def _ensure_loaded(self):
-        """首次使用时加载模型；cuda 设备下以 fp16 加载以省显存。"""
+        """首次使用时加载模型；优先离线（缓存命中，不联网），失败再在线下载；cuda 下 fp16。"""
         if self._model is None:
             from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self.model_name, device=self.device)
+            try:
+                self._model = SentenceTransformer(
+                    self.model_name, device=self.device, local_files_only=True)
+            except Exception:
+                # 缓存未命中（首次部署新模型），走在线下载；HF_ENDPOINT 镜像由环境变量提供
+                self._model = SentenceTransformer(self.model_name, device=self.device)
             if self.device == "cuda":
                 self._model.half()
 
