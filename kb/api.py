@@ -1,5 +1,7 @@
 """REST API：FastAPI 应用工厂 + memories CRUD + healthz + ask + 统一错误格式。"""
+import tempfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -8,7 +10,7 @@ from pydantic import BaseModel
 
 from kb.config import Settings, get_settings
 from kb.mcp import create_mcp_server
-from kb.service import KBService, LLMDisabledError
+from kb.service import KBService, LLMDisabledError, UnsupportedFormatError
 
 
 class MemoryCreate(BaseModel):
@@ -108,6 +110,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         results = kb.search(body.query, top_k=body.top_k, mode=body.mode,
                             type=body.type, tag=body.tag)
         return {"results": results}
+
+    @app.post("/api/v1/documents")
+    async def add_document(request: Request) -> dict:
+        """导入文档：multipart 文件上传（字段 file）或 JSON {"path": 本地路径}。
+
+        返回 {"source": 文件名, "chunks": 块数}；
+        缺参 / 文件不存在 / 格式不支持 → 400（统一错误 JSON）。
+        上传文件保留扩展名落临时文件走统一解析管道，source 用上传文件名。
+        """
+        content_type = request.headers.get("content-type", "")
+        try:
+            if content_type.startswith("multipart/form-data"):
+                form = await request.form()
+                upload = form.get("file")
+                if upload is None or isinstance(upload, str):
+                    raise HTTPException(status_code=400, detail={
+                        "error": "BAD_REQUEST",
+                        "message": "multipart 上传需提供文件字段 file"})
+                name = Path(upload.filename or "upload").name
+                with tempfile.NamedTemporaryFile(
+                        suffix=Path(name).suffix, delete=False) as tmp:
+                    tmp.write(await upload.read())
+                    tmp_path = Path(tmp.name)
+                try:
+                    return kb.add_document(tmp_path, source=name)
+                finally:
+                    tmp_path.unlink(missing_ok=True)
+            try:
+                body = await request.json()
+            except Exception:
+                body = None
+            path = (body or {}).get("path")
+            if not path:
+                raise HTTPException(status_code=400, detail={
+                    "error": "BAD_REQUEST",
+                    "message": "需提供 multipart file 字段或 JSON path 字段"})
+            if not Path(path).is_file():
+                raise HTTPException(status_code=400, detail={
+                    "error": "FILE_NOT_FOUND",
+                    "message": f"文件不存在：{path}"})
+            return kb.add_document(path)
+        except UnsupportedFormatError as exc:
+            raise HTTPException(status_code=400, detail={
+                "error": "UNSUPPORTED_FORMAT", "message": str(exc)})
 
     @app.get("/api/v1/documents")
     def list_documents() -> dict:

@@ -6,7 +6,7 @@
 """
 from mcp.server.mcpserver import MCPServer
 
-from kb.service import KBService, LLMDisabledError
+from kb.service import KBService, LLMDisabledError, UnsupportedFormatError
 
 # 模块级服务单例：None 表示尚未注入，首次调用工具时惰性自建
 _service: KBService | None = None
@@ -56,8 +56,15 @@ def delete_memory(record_id: str) -> dict:
 
 
 def add_document(path: str) -> dict:
-    """导入本地文档（PDF/TXT/MD/DOCX）切分入库；文档摄取尚未就绪，当前返回 {"error": "NOT_READY"}。"""
-    return {"error": "NOT_READY"}
+    """导入本地文档（PDF/DOCX/MD/TXT 及 Office 格式）切分入库；
+    返回 {"source": 文件名, "chunks": 块数}；文件不存在或格式不支持时
+    返回 {"error": "FILE_NOT_FOUND" | "UNSUPPORTED_FORMAT", "message": 原因}。"""
+    try:
+        return _svc().add_document(path)
+    except UnsupportedFormatError as exc:
+        return {"error": "UNSUPPORTED_FORMAT", "message": str(exc)}
+    except OSError as exc:
+        return {"error": "FILE_NOT_FOUND", "message": f"文件无法读取：{exc}"}
 
 
 def add_webpage(url: str) -> dict:

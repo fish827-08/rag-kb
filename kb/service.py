@@ -1,14 +1,18 @@
 """KBService：统一业务编排，组装 store / embedder / bm25 / retriever / llm。"""
 import math
 from collections import OrderedDict
+from pathlib import Path
 
 from kb.bm25 import BM25Index
 from kb.config import Settings, get_settings
 from kb.embedder import Embedder
+from kb.ingest import UnsupportedFormatError, chunk_text, parse_file
 from kb.llm import LLMClient, LLMStatus
-from kb.models import Record
+from kb.models import Record, RecordType
 from kb.retriever import HybridRetriever
 from kb.storage import ChromaStore
+
+__all__ = ["KBService", "LLMDisabledError", "UnsupportedFormatError"]
 
 # RAG 护栏系统提示：强约束仅依据参考文档作答，禁止编造
 RAG_SYSTEM_PROMPT = "仅依据参考文档回答，无相关信息则明确说明，禁止编造。"
@@ -111,7 +115,30 @@ class KBService:
         self.bm25.remove(record_id)
         return True
 
-    # ---- 文档管理 ----
+    # ---- 文档摄取与管理 ----
+    def add_document(self, path: str | Path,
+                     source: str | None = None) -> dict:
+        """解析本地文档 → 切分 → 每 chunk 一条 doc_chunk Record 入库。
+
+        返回 {"source": 文件名, "chunks": 入库块数}；
+        source 缺省取文件名，multipart 上传时以上传文件名入库（覆盖临时文件名）。
+        空文档切不出 chunk，不入库直接返回 chunks=0。
+        """
+        path = Path(path)
+        text = parse_file(path)
+        chunks = chunk_text(text, self.settings.chunk_size,
+                            self.settings.chunk_overlap)
+        doc_source = source or path.name
+        if not chunks:
+            return {"source": doc_source, "chunks": 0}
+        records = [Record(content=c, type=RecordType.DOC_CHUNK,
+                          source=doc_source) for c in chunks]
+        vecs = self.embedder.embed_texts([r.content for r in records])
+        self.store.add(records, vecs)
+        for r in records:
+            self.bm25.add(r)
+        return {"source": doc_source, "chunks": len(records)}
+
     def list_documents(self) -> list[dict]:
         """按 source 聚合文档列表（source 非空的所有记录，不限 type）。
         chunks=该 source 记录数；chars=content 总字符数；last_imported=最大 created_at。"""
