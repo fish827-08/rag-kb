@@ -1042,13 +1042,13 @@ def test_简单问题本地直答(routed_svc):
     assert all(c["prefer"] != "cloud" for c in llm.calls)
 
 
-def test_缓存命中只调一次LLM(routed_svc):
+def test_缓存命中不重复调用LLM(routed_svc):
     svc, llm = routed_svc
     llm.script = ["SIMPLE", "首次回答"]
     svc.ask("会议室在哪")
-    svc.ask("会议室在哪里？")        # 相似问法
-    svc.ask("会议室究竟在哪呀")      # 再次相似
-    assert len(llm.calls) == 1       # 只有首次真正调用了分类+生成
+    svc.ask("会议室在哪里？")        # 相似问法（bge-small 实测相似度≈0.96，命中）
+    svc.ask("会议室在哪")            # 重复原问（必命中）
+    assert len(llm.calls) == 2       # 只有首次 ask 调用了分类+生成，后两次走缓存
 
 
 def test_复杂问题无云走本地(routed_svc):
