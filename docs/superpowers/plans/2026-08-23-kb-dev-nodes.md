@@ -1015,6 +1015,7 @@ class ScriptedLLM:
 @pytest.fixture
 def routed_svc(env_isolated, monkeypatch):
     from kb.service import KBService
+    from kb.config import get_settings
     get_settings.cache_clear()
     monkeypatch.setenv("KB_LLM_MODE", "auto")
     llm = ScriptedLLM(script=[])
