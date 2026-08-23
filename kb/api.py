@@ -1,11 +1,11 @@
-"""REST API：FastAPI 应用工厂 + memories CRUD + healthz + 统一错误格式。"""
+"""REST API：FastAPI 应用工厂 + memories CRUD + healthz + ask + 统一错误格式。"""
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
 from pydantic import BaseModel
 
 from kb.config import Settings, get_settings
-from kb.service import KBService
+from kb.service import KBService, LLMDisabledError
 
 
 class MemoryCreate(BaseModel):
@@ -29,6 +29,11 @@ class SearchRequest(BaseModel):
     mode: str = "hybrid"
     type: str | None = None
     tag: str | None = None
+
+
+class AskRequest(BaseModel):
+    """问答请求；question 必填。"""
+    question: str
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -99,6 +104,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def delete_document(source: str) -> dict:
         """按 source 删除文档全部记录。"""
         return {"deleted": kb.delete_document(source)}
+
+    @app.post("/api/v1/ask")
+    def ask(body: AskRequest) -> dict:
+        """基础 RAG 问答；LLM 禁用时返回 503 与配置指引。"""
+        try:
+            return kb.ask(body.question)
+        except LLMDisabledError:
+            raise HTTPException(status_code=503, detail={
+                "error": "LLM_DISABLED",
+                "message": "未检测到可用的 LLM：请安装并启动 Ollama"
+                           "（https://ollama.com），或在 .env 配置 "
+                           "KB_DEEPSEEK_API_KEY 启用云端"})
 
     @app.get("/api/v1/healthz")
     def healthz() -> dict:
