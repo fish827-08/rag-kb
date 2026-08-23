@@ -851,6 +851,7 @@ def test_本地可用与护栏参数(env_isolated, monkeypatch):
 
 def test_模式解析矩阵(env_isolated, monkeypatch):
     from kb.llm import LLMStatus
+    from kb.config import get_settings
     # local 模式 + Ollama 挂 → DISABLED
     monkeypatch.setenv("KB_LLM_MODE", "local")
     c = _client(env_isolated, monkeypatch, ollama_up=False)
