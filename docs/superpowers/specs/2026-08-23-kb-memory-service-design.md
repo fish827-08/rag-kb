@@ -326,10 +326,10 @@ Embedding 相关测试用真实小模型（如 `bge-small-zh-v1.5`，约 100MB�
 
 ## 13. 迁移与范围
 
-- 删除：`rag_kb/`、`app/`、`demo.py`、`test_py/`。
+- 归档：`rag_kb/`、`app/`、`demo.py`、`test_py/`、`step_doc/`、`notes/`、旧 `README.md`、`ROADMAP.md` 已于 2026-08-23 按人工指示移入 `_archive/`（保留历史，不删除；禁止参考其内容）。
 - 新增：`AGENTS.md`（仓库根目录，AI 开发第一入口——声明文档有效性、硬件约束、开发约定与测试职责分工）。
 - 重写：`README.md`（新定位、安装、Claude Code / Cursor 挂载 MCP 的配置示例）；`requirements.txt`。
-- 保留：`notes/`、`step_doc/` 作历史；`data/` 样例文档。
+- 保留：`data/` 样例文档（M4 摄取人工验证用）。
 - 明确不做（本期）：鉴权与多用户、Qdrant 实际接入（仅留接口）、记忆遗忘/摘要（P2）、Web UI、Docker。
 
 ## 14. 里程碑

@@ -1360,11 +1360,12 @@ def test_文件删除级联清理(env_isolated):
 
 ## N16：收尾与清理
 
-**目标**：删除旧代码、重写 README、全量回归，达到交付状态。
+**目标**：确认旧代码归档、重写 README、全量回归，达到交付状态。
+（旧代码已于 2026-08-23 按人工指示提前归档至 `_archive/`，本节点不再删除。）
 
 **交付物**：
-- 删除：`rag_kb/`、`app/`、`demo.py`、`test_py/`、旧 `requirements.txt` 内容已替换
-- 重写 `README.md`：新定位、快速开始（venv → pip install → python -m kb serve）、Claude Code / Cursor 挂载 MCP 的配置示例（`http://127.0.0.1:8000/mcp`）、REST 端点速查
+- 确认归档完整：`_archive/` 含全部旧目录，根目录无残留
+- 重写根目录 `README.md`：新定位、快速开始（venv → pip install → python -m kb serve）、Claude Code / Cursor 挂载 MCP 的配置示例（`http://127.0.0.1:8000/mcp/`）、REST 端点速查
 - `tests/test_n16_regression.py`：导入所有模块冒烟
 
 **验收测试**（`tests/test_n16_regression.py`）：
@@ -1376,10 +1377,17 @@ def test_全部模块可导入():
     import kb.api, kb.mcp, kb.cli  # noqa: F401
 
 
-def test_旧目录已删除():
+def test_旧代码已归档且根目录无残留():
     from pathlib import Path
-    for p in ("rag_kb", "app", "demo.py", "test_py"):
-        assert not Path(p).exists(), f"旧代码未删除: {p}"
+    # 根目录不得残留旧路径（已提前归档，2026-08-23）
+    for p in ("rag_kb", "app", "demo.py", "test_py", "notes", "step_doc",
+              "ROADMAP.md"):
+        assert not Path(p).exists(), f"根目录残留旧文件: {p}"
+    # 归档目录必须完整
+    for p in ("_archive/rag_kb", "_archive/app", "_archive/demo.py",
+              "_archive/test_py", "_archive/step_doc", "_archive/notes",
+              "_archive/README.md", "_archive/ROADMAP.md"):
+        assert Path(p).exists(), f"归档缺失: {p}"
 
 
 def test_README含挂载示例():
