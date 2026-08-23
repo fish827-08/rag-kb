@@ -22,14 +22,20 @@ def _svc() -> KBService:
 
 
 def write_memory(content: str, tags: list[str] | None = None) -> dict:
-    """写入一条记忆短文本（事实/笔记/摘要），可选标签；返回 {"id": 记录ID}。"""
+    """写入一条记忆短文本（事实/笔记/摘要），可选标签；返回 {"id": 记录ID}。
+    内容为空串或纯空白时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。"""
+    if not content or not content.strip():
+        return {"error": "INVALID_ARGUMENT", "message": "content 不能为空或纯空白"}
     record = _svc().add_memory(content, tags=tags)
     return {"id": record.id}
 
 
-def search_memory(query: str, top_k: int = 5) -> list[dict]:
+def search_memory(query: str, top_k: int = 5) -> list[dict] | dict:
     """混合检索记忆与知识（向量语义 + BM25 关键词，RRF 融合）；
-    返回命中列表，每项含 id/content/score/type/source。"""
+    返回命中列表，每项含 id/content/score/type/source。
+    top_k 小于 1 时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。"""
+    if top_k < 1:
+        return {"error": "INVALID_ARGUMENT", "message": "top_k 必须为不小于 1 的整数"}
     return _svc().search(query, top_k=top_k)
 
 
@@ -42,7 +48,10 @@ def read_memory(record_id: str) -> dict:
 
 
 def update_memory(record_id: str, content: str) -> dict:
-    """按 ID 更新记忆内容（变更后自动重新嵌入）；记录不存在时返回 {"error": "NOT_FOUND"}。"""
+    """按 ID 更新记忆内容（变更后自动重新嵌入）；记录不存在时返回 {"error": "NOT_FOUND"}；
+    内容为空串或纯空白时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。"""
+    if not content or not content.strip():
+        return {"error": "INVALID_ARGUMENT", "message": "content 不能为空或纯空白"}
     record = _svc().update_memory(record_id, content=content)
     if record is None:
         return {"error": "NOT_FOUND"}

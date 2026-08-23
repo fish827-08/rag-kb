@@ -2,11 +2,12 @@
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from kb.config import Settings, get_settings
 from kb.mcp import create_mcp_server
@@ -22,6 +23,14 @@ class MemoryCreate(BaseModel):
     source: str | None = None
     namespace: str = "default"
 
+    @field_validator("content")
+    @classmethod
+    def content_not_blank(cls, v: str) -> str:
+        """拒绝空串与纯空白内容（strip 后为空即非法，pydantic 校验失败转 422）。"""
+        if not v.strip():
+            raise ValueError("content 不能为空或纯空白")
+        return v
+
 
 class MemoryUpdate(BaseModel):
     """更新记忆请求；至少一项非空。"""
@@ -32,8 +41,8 @@ class MemoryUpdate(BaseModel):
 class SearchRequest(BaseModel):
     """检索请求；query 必填，top_k/mode 带默认值，type/tag 可选过滤。"""
     query: str
-    top_k: int = 5
-    mode: str = "hybrid"
+    top_k: int = Field(default=5, ge=1)
+    mode: Literal["hybrid", "vector", "keyword"] = "hybrid"
     type: str | None = None
     tag: str | None = None
 
@@ -46,6 +55,43 @@ class AskRequest(BaseModel):
 class WebIngestRequest(BaseModel):
     """网页摄取请求；url 必填。"""
     url: str
+
+
+def _wrap_sse_charset(app):
+    """轻量 ASGI 中间件：给 MCP 的 SSE 响应头补 charset=utf-8。
+
+    纯函数式包装：拦截 http.response.start 消息，当 content-type 为
+    text/event-stream 且未声明 charset 时追加 "; charset=utf-8"，
+    兼容按默认编码解码 SSE 流的客户端；其余消息与作用域原样透传。
+    """
+
+    async def middleware(scope, receive, send):
+        # 非 HTTP 作用域（如 lifespan）直接透传
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+
+        async def send_wrapper(message):
+            # 只在响应起始消息上补头；命中时构造新消息，不改动原 dict
+            if message["type"] == "http.response.start":
+                headers = message.get("headers") or []
+                new_headers = []
+                patched = False
+                for k, v in headers:
+                    if (k.lower() == b"content-type"
+                            and v.lower().startswith(b"text/event-stream")
+                            and b"charset" not in v.lower()):
+                        new_headers.append((k, v + b"; charset=utf-8"))
+                        patched = True
+                    else:
+                        new_headers.append((k, v))
+                if patched:
+                    message = {**message, "headers": new_headers}
+            await send(message)
+
+        await app(scope, receive, send_wrapper)
+
+    return middleware
 
 
 def create_app(settings: Settings | None = None,
@@ -212,7 +258,8 @@ def create_app(settings: Settings | None = None,
     def healthz() -> dict:
         return {"status": "ok", **kb.stats()}
 
-    # MCP streamable http 端点挂载在 /mcp（子路径 "/"，即完整路径 /mcp/）
-    app.mount("/mcp", mcp_app)
+    # MCP streamable http 端点挂载在 /mcp（子路径 "/"，即完整路径 /mcp/）；
+    # 外包 SSE charset 中间件，保证 text/event-stream 响应头带 charset=utf-8
+    app.mount("/mcp", _wrap_sse_charset(mcp_app))
 
     return app
