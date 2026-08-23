@@ -100,6 +100,7 @@ class LLMClient:
             "model": self._settings.llm_model,
             "messages": messages,
             "think": False,
+            "stream": False,
             "options": {
                 "temperature": 0.2,
                 "num_ctx": 4096,

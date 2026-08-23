@@ -16,6 +16,7 @@ def _client(env_isolated, monkeypatch, ollama_up=True, key=""):
         if request.url.path == "/api/chat":
             body = json.loads(request.content)
             assert body["think"] is False                      # 护栏：关思考
+            assert body["stream"] is False                     # 护栏：非流式（Ollama 默认流式返回 JSONL）
             assert body["options"]["num_ctx"] == 4096          # 护栏：上下文
             assert body["options"]["temperature"] == 0.2
             return httpx.Response(200, json={

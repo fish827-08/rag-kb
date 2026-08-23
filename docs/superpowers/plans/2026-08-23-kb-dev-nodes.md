@@ -802,8 +802,10 @@ class LLMClient:
              prefer: str = "auto") -> str:
         """统一生成接口。prefer: local/cloud/auto（路由用）。
         本地：POST {ollama_base_url}/api/chat，body 含
-          {"think": false, "options": {"temperature": 0.2, "num_ctx": 4096,
+          {"think": false, "stream": false, "options": {"temperature": 0.2, "num_ctx": 4096,
            "max_tokens": 800 或入参覆盖}}
+        （stream:false 必须显式传——Ollama /api/chat 默认流式返回 JSONL，
+          N12 全链路基准发现缺省导致 JSON 解析崩溃，2026-08-23 hotfix）
         云端：openai SDK，model=deepseek_model，temperature 0.2，max_tokens 同上。
         调用失败抛 LLMError（service 层转 503/降级）。"""
 ```
