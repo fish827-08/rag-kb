@@ -10,7 +10,8 @@ from pydantic import BaseModel
 
 from kb.config import Settings, get_settings
 from kb.mcp import create_mcp_server
-from kb.service import KBService, LLMDisabledError, UnsupportedFormatError
+from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
+                        WebFetchError)
 
 
 class MemoryCreate(BaseModel):
@@ -39,6 +40,11 @@ class SearchRequest(BaseModel):
 class AskRequest(BaseModel):
     """问答请求；question 必填。"""
     question: str
+
+
+class WebIngestRequest(BaseModel):
+    """网页摄取请求；url 必填。"""
+    url: str
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -164,6 +170,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def delete_document(source: str) -> dict:
         """按 source 删除文档全部记录。"""
         return {"deleted": kb.delete_document(source)}
+
+    @app.post("/api/v1/ingest/web")
+    def ingest_web(body: WebIngestRequest) -> dict:
+        """抓取网页正文切分入库；抓取/正文提取失败返回 400 与原因。"""
+        try:
+            return kb.add_webpage(body.url)
+        except WebFetchError as exc:
+            raise HTTPException(status_code=400, detail={
+                "error": "WEB_FETCH_FAILED", "message": str(exc)})
 
     @app.post("/api/v1/ask")
     def ask(body: AskRequest) -> dict:

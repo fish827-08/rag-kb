@@ -6,7 +6,8 @@
 """
 from mcp.server.mcpserver import MCPServer
 
-from kb.service import KBService, LLMDisabledError, UnsupportedFormatError
+from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
+                        WebFetchError)
 
 # 模块级服务单例：None 表示尚未注入，首次调用工具时惰性自建
 _service: KBService | None = None
@@ -68,8 +69,12 @@ def add_document(path: str) -> dict:
 
 
 def add_webpage(url: str) -> dict:
-    """抓取网页正文并入库；网页摄取尚未就绪，当前返回 {"error": "NOT_READY"}。"""
-    return {"error": "NOT_READY"}
+    """抓取网页正文并切分入库；返回 {"source": url, "chunks": 块数}；
+    抓取/正文提取失败时返回 {"error": "WEB_FETCH_FAILED", "message": 原因}。"""
+    try:
+        return _svc().add_webpage(url)
+    except WebFetchError as exc:
+        return {"error": "WEB_FETCH_FAILED", "message": str(exc)}
 
 
 def ask_kb(question: str) -> dict:

@@ -31,9 +31,10 @@ def test_记忆工具链(msvc):
 def test_未就绪工具(msvc):
     from kb.mcp import add_document, add_webpage
     # add_document 已于 N13 接通（计划 L1100："N13 前返回 NOT_READY"）：
-    # 不存在的文件返回 FILE_NOT_FOUND；add_webpage 待 N14 接通，仍 NOT_READY
+    # 不存在的文件返回 FILE_NOT_FOUND；add_webpage 已于 N14 接通
+    # （计划 L1101："N14 前返回 NOT_READY"）：不可达 URL 返回 WEB_FETCH_FAILED
     assert add_document("x.pdf")["error"] == "FILE_NOT_FOUND"
-    assert add_webpage("http://x")["error"] == "NOT_READY"
+    assert add_webpage("http://x")["error"] == "WEB_FETCH_FAILED"
 
 
 def test_应用挂载冒烟(env_isolated):

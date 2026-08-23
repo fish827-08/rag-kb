@@ -1,11 +1,14 @@
-"""文档摄取：按扩展名解析为纯文本 + 递归切分（设计文档第 9 节）。
+"""文档/网页摄取：解析为纯文本 + 递归切分（设计文档第 9 节）。
 
 解析分派：.pdf→pypdf；.docx→python-docx；.md/.txt→直读；
 Office 等已知格式（.xlsx/.pptx/...）→ markitdown 兜底；
 白名单之外的扩展名一律抛 UnsupportedFormatError（API 层转 400）。
 
-重依赖（pypdf / python-docx / markitdown / langchain-text-splitters）
-均在函数内延迟导入，服务启动不加载。
+网页摄取：httpx 拉取（超时 15s，UA 伪装常规浏览器）→ trafilatura
+提取正文；抓取/提取失败抛 WebFetchError（API 层转 400 + 原因）。
+
+重依赖（pypdf / python-docx / markitdown / langchain-text-splitters /
+httpx / trafilatura）均在函数内延迟导入，服务启动不加载。
 """
 from pathlib import Path
 
@@ -19,6 +22,16 @@ _MARKITDOWN_EXTS = {".xlsx", ".xls", ".pptx", ".ppt", ".csv", ".json",
 
 class UnsupportedFormatError(Exception):
     """不支持的文档格式（API 层转 400）。"""
+
+
+class WebFetchError(Exception):
+    """网页抓取或正文提取失败（API 层转 400 + 原因）。"""
+
+
+# 网页抓取 UA：伪装常规浏览器（设计文档第 9 节），避免站点拒绝默认 UA
+_WEB_USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/126.0.0.0 Safari/537.36")
 
 
 def parse_file(path: Path | str) -> str:
@@ -65,3 +78,28 @@ def chunk_text(text: str, size: int, overlap: int) -> list[str]:
     splitter = RecursiveCharacterTextSplitter(chunk_size=size,
                                               chunk_overlap=overlap)
     return splitter.split_text(text)
+
+
+def _fetch_html(url: str) -> str:
+    """httpx 抓取页面 HTML：超时 15s、UA 伪装常规浏览器、跟随重定向；
+    4xx/5xx 与网络错误抛原始异常（由 fetch_webpage 统一包装）。"""
+    import httpx
+    with httpx.Client(timeout=15, headers={"User-Agent": _WEB_USER_AGENT},
+                      follow_redirects=True) as client:
+        resp = client.get(url)
+        resp.raise_for_status()
+        return resp.text
+
+
+def fetch_webpage(url: str) -> str:
+    """抓取网页并提取正文：_fetch_html 拉取 → trafilatura.extract 提取；
+    抓取异常或正文提取结果为空时抛 WebFetchError。"""
+    try:
+        html = _fetch_html(url)
+    except Exception as exc:
+        raise WebFetchError(f"网页抓取失败（{url}）：{exc}") from exc
+    import trafilatura
+    text = trafilatura.extract(html)
+    if not text:
+        raise WebFetchError(f"网页正文提取失败（{url}）：未识别到正文内容")
+    return text

@@ -6,13 +6,15 @@ from pathlib import Path
 from kb.bm25 import BM25Index
 from kb.config import Settings, get_settings
 from kb.embedder import Embedder
-from kb.ingest import UnsupportedFormatError, chunk_text, parse_file
+from kb.ingest import (UnsupportedFormatError, WebFetchError, chunk_text,
+                       fetch_webpage, parse_file)
 from kb.llm import LLMClient, LLMStatus
 from kb.models import Record, RecordType
 from kb.retriever import HybridRetriever
 from kb.storage import ChromaStore
 
-__all__ = ["KBService", "LLMDisabledError", "UnsupportedFormatError"]
+__all__ = ["KBService", "LLMDisabledError", "UnsupportedFormatError",
+           "WebFetchError"]
 
 # RAG 护栏系统提示：强约束仅依据参考文档作答，禁止编造
 RAG_SYSTEM_PROMPT = "仅依据参考文档回答，无相关信息则明确说明，禁止编造。"
@@ -138,6 +140,26 @@ class KBService:
         for r in records:
             self.bm25.add(r)
         return {"source": doc_source, "chunks": len(records)}
+
+    def add_webpage(self, url: str) -> dict:
+        """抓取网页正文 → 切分 → 每 chunk 一条 web_chunk Record 入库。
+
+        返回 {"source": url, "chunks": 入库块数}；抓取/正文提取失败抛
+        WebFetchError（API 层转 400 + 原因）。正文切不出 chunk 时不入库，
+        直接返回 chunks=0。
+        """
+        text = fetch_webpage(url)
+        chunks = chunk_text(text, self.settings.chunk_size,
+                            self.settings.chunk_overlap)
+        if not chunks:
+            return {"source": url, "chunks": 0}
+        records = [Record(content=c, type=RecordType.WEB_CHUNK,
+                          source=url) for c in chunks]
+        vecs = self.embedder.embed_texts([r.content for r in records])
+        self.store.add(records, vecs)
+        for r in records:
+            self.bm25.add(r)
+        return {"source": url, "chunks": len(records)}
 
     def list_documents(self) -> list[dict]:
         """按 source 聚合文档列表（source 非空的所有记录，不限 type）。
