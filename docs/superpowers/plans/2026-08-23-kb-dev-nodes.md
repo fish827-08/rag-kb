@@ -406,7 +406,9 @@ import jieba
 from rank_bm25 import BM25Okapi
 
 def tokenize(text: str) -> list[str]:
-    """jieba.lcut + 小写化 + 去空白/单字符标点。"""
+    """jieba.cut_for_search（搜索引擎模式，含子词，中文关键词召回率更高）
+    + 小写化 + 去空白/单字符标点。
+    注：2026-08-23 人工确认偏离原契约 jieba.lcut——细粒度分词对关键词检索更优。"""
 
 class BM25Index:
     def __init__(self) -> None:
