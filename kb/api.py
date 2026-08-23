@@ -1,10 +1,13 @@
 """REST API：FastAPI 应用工厂 + memories CRUD + healthz + ask + 统一错误格式。"""
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
 from pydantic import BaseModel
 
 from kb.config import Settings, get_settings
+from kb.mcp import create_mcp_server
 from kb.service import KBService, LLMDisabledError
 
 
@@ -37,10 +40,21 @@ class AskRequest(BaseModel):
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    """应用工厂；全局单例 KBService 挂 app.state.kb。
+    """应用工厂；全局单例 KBService 挂 app.state.kb（REST 与 MCP 共享该实例）。
     统一错误 JSON：{"error": "<CODE>", "message": "<人话>"}。"""
     kb = KBService(settings)
-    app = FastAPI(title="kb memory service")
+    # MCP 服务器与 REST 共享同一 KBService 单例；先建 streamable http 应用
+    # （内部懒创建会话管理器，随后由主应用 lifespan 托管启停）
+    mcp_server = create_mcp_server(kb)
+    mcp_app = mcp_server.streamable_http_app(streamable_http_path="/")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """挂载的子应用 lifespan 不会自动执行，在此托管 MCP 会话管理器生命周期。"""
+        async with mcp_server.session_manager.run():
+            yield
+
+    app = FastAPI(title="kb memory service", lifespan=lifespan)
     app.state.kb = kb
 
     @app.exception_handler(HTTPException)
@@ -120,5 +134,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/healthz")
     def healthz() -> dict:
         return {"status": "ok", **kb.stats()}
+
+    # MCP streamable http 端点挂载在 /mcp（子路径 "/"，即完整路径 /mcp/）
+    app.mount("/mcp", mcp_app)
 
     return app
