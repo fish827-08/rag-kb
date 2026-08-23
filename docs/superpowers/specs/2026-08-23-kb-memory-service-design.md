@@ -1,7 +1,7 @@
 # kb：本地 Agent 记忆与知识服务 — 设计文档
 
 - 日期：2026-08-23
-- 状态：已与需求方逐节确认，并按目标硬件（GPU 6GB / 16GB 内存）修订，待实施
+- 状态：✅ 已实施完成（2026-08-24 收口）：N1-N16 全部节点通过验收，M1-M4 里程碑全交付，人工终验通过
 - 项目性质变更：从学习型项目（rag-kb）转向实用产品。旧发展路线（ROADMAP.md 的阶段规划）不再约束本项目。
 
 ## 1. 背景与定位
@@ -334,11 +334,11 @@ Embedding 相关测试用真实小模型（如 `bge-small-zh-v1.5`，约 100MB�
 
 ## 14. 里程碑
 
-| 里程碑 | 内容 | 验收 |
-|---|---|---|
-| M1 数据层+检索 | models / storage / embedder / bm25 / retriever / service / cli | CLI 可 add + search，混合检索三类查询命中 |
-| M2 REST 服务 | api.py + 设备检测 + 错误处理 | memories CRUD / search / documents 列表与删除 / healthz 全部 curl 通过，断网启动正常（/documents 上传在 M4、/ask 在 M3 节点补齐） |
-| M3 MCP + LLM | mcp.py + llm.py 智能路由 + /ask | Claude Code 挂载后可写/读记忆；local/auto/cloud 三模式与降级链正确；路由/压缩/缓存全链路基准报告（11.2 节）产出 |
-| M4 摄取增强 | 网页抓取 + watcher + 文档管理 + markitdown 全格式 | URL 入库、目录新增文件自动索引、按文档删除 |
+| 里程碑 | 内容 | 验收 | 状态 |
+|---|---|---|---|
+| M1 数据层+检索 | models / storage / embedder / bm25 / retriever / service / cli | CLI 可 add + search，混合检索三类查询命中 | ✅ 2026-08-23 完成（N1-N6 + 离线加载 hotfix） |
+| M2 REST 服务 | api.py + 设备检测 + 错误处理 | memories CRUD / search / documents 列表与删除 / healthz 全部 curl 通过，断网启动正常（/documents 上传在 M4、/ask 在 M3 节点补齐） | ✅ 2026-08-23 完成（N7-N8，人工门禁通过） |
+| M3 MCP + LLM | mcp.py + llm.py 智能路由 + /ask | Claude Code 挂载后可写/读记忆；local/auto/cloud 三模式与降级链正确；路由/压缩/缓存全链路基准报告（11.2 节）产出 | ✅ 2026-08-24 完成（N9-N12 + stream hotfix；TraeWork MCP 挂载实测通过，人工门禁通过） |
+| M4 摄取增强 | 网页抓取 + watcher + 文档管理 + markitdown 全格式 | URL 入库、目录新增文件自动索引、按文档删除 | ✅ 2026-08-24 完成（N13-N16，人工终验通过，项目收口） |
 
-每个里程碑附带对应测试。
+每个里程碑附带对应测试。全量回归 60 项全绿（2026-08-24，tests/ 全目录）。

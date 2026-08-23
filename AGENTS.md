@@ -12,11 +12,12 @@
 
 | 路径 | 状态 | 说明 |
 |---|---|---|
-| `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | ✅ 唯一有效设计 | 需求、架构、API、里程碑全在这里 |
+| `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | ✅ 唯一有效设计 | 需求、架构、API、里程碑全在这里（已实施完成，2026-08-24 收口） |
 | `AGENTS.md`（本文件） | ✅ 有效 | AI 工作规则 |
-| `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | ✅ 有效 | 节点计划（门禁与验收测试） |
+| `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | ✅ 有效 | 节点计划（门禁与验收测试，N1-N16 全部完成） |
+| `README.md` | ✅ 有效 | 项目说明（N16 按新定位重写：快速开始 / MCP 挂载 / 端点速查） |
 | `.mcp.json` | ✅ 有效 | 项目级 MCP 挂载配置（Claude Code 等在本目录启动即连 kb 服务） |
-| `_archive/`（含旧 `README.md`、`ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`） | ❌ 已归档（2026-08-23） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写**；根目录 `README.md` 由 N16 按新定位重写 |
+| `_archive/`（含旧 `README.md`、`ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`） | ❌ 已归档（2026-08-23） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写** |
 
 ## 2. 项目定位（一句话）
 
@@ -74,7 +75,9 @@
 
 ## 6. 实施顺序
 
-按节点计划 `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` 串行推进（N1-N16，对应设计文档第 14 节里程碑 M1-M4）：**M1 数据层+检索（N1-N6）→ M2 REST 服务（N7-N8）→ M3 MCP+LLM（N9-N12）→ M4 摄取增强（N13-N16）**。不跳步；不提前实现 P2 功能（鉴权、遗忘机制、Qdrant 接入、Web UI 均在本期范围外）。
+> **状态：✅ 已全部完成（2026-08-24 收口）**。N1-N16 按计划串行推进完毕，M1-M4 四个人工门禁点均通过，tag `node-01` ~ `node-16` 及版本 tag `v1.0.0` 均已推送远程。
+
+按节点计划 `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` 串行推进（N1-N16，对应设计文档第 14 节里程碑 M1-M4）：**M1 数据层+检索（N1-N6）→ M2 REST 服务（N7-N8）→ M3 MCP+LLM（N9-N12）→ M4 摄取增强（N13-N16）**。不跳步；不提前实现 P2 功能（鉴权、遗忘机制、Qdrant 接入、Web UI 均在本期范围外）。后续新需求（P2）先修订设计文档再立项，不在本节点计划上续写。
 
 ## 7. 环境备忘
 

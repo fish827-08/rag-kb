@@ -23,24 +23,26 @@
 
 ## 节点总览
 
-| 节点 | 内容 | 主要交付 | 里程碑 |
-|---|---|---|---|
-| N1 | 项目骨架与配置系统 | kb/ 包、config.py、.env.example、requirements.txt、pytest 基建 | M1 |
-| N2 | 数据模型 | models.py（Record） | M1 |
-| N3 | 嵌入器 | embedder.py（BGE-M3 延迟加载） | M1 |
-| N4 | 存储层 | storage.py（VectorStore 抽象 + ChromaStore） | M1 |
-| N5 | BM25 索引 | bm25.py（jieba 分词 + BM25） | M1 |
-| N6 | 混合检索与服务编排 | retriever.py（RRF）、service.py、cli.py | M1 |
-| N7 | REST API 骨架 | api.py（memories CRUD + healthz + 错误处理） | M2 |
-| N8 | 检索端点与设备检测 | /search、/documents 列表删除、设备检测交互、serve 启动 | M2 |
-| N9 | LLM 接入层 | llm.py（探测、模式解析、护栏参数、双客户端） | M3 |
-| N10 | /ask 基础 RAG | 检索→拼装→生成→sources，上下文预算 | M3 |
-| N11 | 智能路由 | 复杂度分类、上下文压缩、答案缓存、隐私隔离 | M3 |
-| N12 | MCP 服务 | mcp.py（8 个 tools 挂载） | M3 |
-| N13 | 文档摄取 | ingest.py 文档解析、切分、POST /documents | M4 |
-| N14 | 网页摄取 | /ingest/web（httpx + trafilatura） | M4 |
-| N15 | 目录监听 | watcher.py（去抖、删除级联） | M4 |
-| N16 | 收尾与清理 | 删旧代码、重写 README、全量回归 | 全局 |
+> **项目状态：✅ 全部完成并收口（2026-08-24）**。N1-N16 全部通过验收，每节点均有独立 git tag（node-01 ~ node-16）；全量回归 60 项全绿；M1/M2/M3/M4 四个人工门禁点均经人工确认。旧代码已于 N16 前按人工指示提前归档至 `_archive/`。
+
+| 节点 | 内容 | 主要交付 | 里程碑 | 状态 |
+|---|---|---|---|---|
+| N1 | 项目骨架与配置系统 | kb/ 包、config.py、.env.example、requirements.txt、pytest 基建 | M1 | ✅ |
+| N2 | 数据模型 | models.py（Record） | M1 | ✅ |
+| N3 | 嵌入器 | embedder.py（BGE-M3 延迟加载） | M1 | ✅ |
+| N4 | 存储层 | storage.py（VectorStore 抽象 + ChromaStore） | M1 | ✅ |
+| N5 | BM25 索引 | bm25.py（jieba 分词 + BM25） | M1 | ✅ |
+| N6 | 混合检索与服务编排 | retriever.py（RRF）、service.py、cli.py | M1 | ✅ |
+| N7 | REST API 骨架 | api.py（memories CRUD + healthz + 错误处理） | M2 | ✅ |
+| N8 | 检索端点与设备检测 | /search、/documents 列表删除、设备检测交互、serve 启动 | M2 | ✅ |
+| N9 | LLM 接入层 | llm.py（探测、模式解析、护栏参数、双客户端） | M3 | ✅ |
+| N10 | /ask 基础 RAG | 检索→拼装→生成→sources，上下文预算 | M3 | ✅ |
+| N11 | 智能路由 | 复杂度分类、上下文压缩、答案缓存、隐私隔离 | M3 | ✅ |
+| N12 | MCP 服务 | mcp.py（8 个 tools 挂载） | M3 | ✅ |
+| N13 | 文档摄取 | ingest.py 文档解析、切分、POST /documents | M4 | ✅ |
+| N14 | 网页摄取 | /ingest/web（httpx + trafilatura） | M4 | ✅ |
+| N15 | 目录监听 | watcher.py（去抖、删除级联） | M4 | ✅ |
+| N16 | 收尾与清理 | 删旧代码、重写 README、全量回归 | 全局 | ✅ |
 
 ---
 
