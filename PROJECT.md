@@ -110,6 +110,7 @@ venv\Scripts\python.exe orchestra\board.py new-worker worker-1   # 生成 worker
 
 | 文档 | 内容 |
 |---|---|
+| `docs/USER_GUIDE.md` | **用户使用手册**（人类用户入口：安装/挂载/协作流程/FAQ） |
 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | kb 唯一设计（需求/架构/API/基准） |
 | `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | kb 节点计划 N1-N16（全部 ✅） |
 | `orchestra/docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md` | orchestra 设计 |

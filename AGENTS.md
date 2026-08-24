@@ -15,6 +15,7 @@
 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | ✅ 唯一有效设计 | 需求、架构、API、里程碑全在这里（已实施完成，2026-08-24 收口） |
 | `AGENTS.md`（本文件） | ✅ 有效 | AI 工作规则 |
 | `PROJECT.md` | ✅ 有效 | **接力文档**（项目状态/进度看板/接手指南；新 AI 必读第 2 份，2026-08-24 新增） |
+| `docs/USER_GUIDE.md` | ✅ 有效 | **用户使用手册**（人类用户入口：kb 使用 + MCP 挂载 + orchestra 协作流程，2026-08-24 新增） |
 | `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | ✅ 有效 | 节点计划（门禁与验收测试，N1-N16 全部完成） |
 | `docs/superpowers/specs/2026-08-24-logging-design.md` | ✅ 有效 | P2-1 日志设计（N17-N18 实施依据） |
 | `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | ✅ 有效 | P2 路线图（日志→鉴权→遗忘→Web UI/CLI） |

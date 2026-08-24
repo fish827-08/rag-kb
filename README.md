@@ -1,8 +1,17 @@
-# kb — 本地优先的 Agent 记忆与知识服务
+# rag-kb — 本地 Agent 记忆服务 + 多 Agent 协作系统
 
-本地优先、完全免费的 Agent 记忆与知识服务：Windows 单进程常驻（`python -m kb serve`），
-REST + MCP 双协议，向 Claude Code / Cursor / TraeWork / 自建 Agent 提供记忆写入、
-文档与网页入库、混合检索（向量 + BM25/RRF 融合）与 RAG 问答。
+本仓库含两个子系统：
+
+| 子系统 | 一句话定位 | 状态 |
+|---|---|---|
+| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品） | v1.0.1 生产可用 |
+| **agent-orchestra** | 基于 kb 共享任务板的跨任务多 Agent 协作系统（实验） | MVP 真机验证通过 |
+
+## kb — 本地优先的 Agent 记忆与知识服务
+
+Windows 单进程常驻（`python -m kb serve`），REST + MCP 双协议，向 Claude Code /
+Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、混合检索
+（向量 + BM25/RRF 融合）与 RAG 问答。
 
 **无 LLM 时存取与检索完整可用**——记忆写入、文档入库、混合检索不依赖任何大模型；
 配置本地 Ollama 或云端 API 后，`/ask` 问答能力自动启用。
@@ -123,18 +132,37 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask `
 | `KB_CHUNK_SIZE` / `KB_CHUNK_OVERLAP` | `500` / `100` | 文档切分参数 |
 | `KB_SENSITIVE_NAMESPACES` | 空 | 逗号分隔的敏感 namespace，命中强制本地回答不出网 |
 
+## agent-orchestra — 多 Agent 协作系统（实验）
+
+让多个 AI 助手（不同 TraeWork 任务 / Claude Code 会话，模型可不同）通过 kb 共享任务板
+协作开发：协调者 AI 拆卡分发，worker AI 领卡执行、单卡单轮、回写结果，协调者核验流转。
+
+```powershell
+# 前置：kb serve 已运行。开一个新 TraeWork 任务，粘贴以下引导语即可唤醒一个 worker：
+venv\Scripts\python.exe orchestra\board.py new-worker worker-1
+```
+
+完整使用方法（协调者怎么拆卡、多个 worker 怎么并行、协作纪律与已知限制）
+见 [用户使用手册](docs/USER_GUIDE.md) 第 4 节。
+
 ## 目录结构
 
 ```
-kb/          服务源码（config / models / embedder / storage / bm25 / retriever /
-             service / llm / ingest / watcher / api / mcp / cli）
-tests/       各节点 pytest 验收测试
-docs/        设计文档与节点计划（唯一有效需求来源）
-_archive/    旧学习项目归档（仅保留历史，禁止参考）
+kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
+               service / llm / ingest / watcher / api / mcp / cli）
+tests/         kb 验收测试（65 项）
+orchestra/     多 Agent 协作系统（board.py CLI + 协议三件套 + skill + 24 项测试）
+docs/          设计文档、节点计划、用户使用手册
+kb_data/       kb 运行数据（gitignore）
+_archive/      旧学习项目归档（仅保留历史，禁止参考）
 ```
 
 ## 更多文档
 
+- **用户使用手册（人类用户入口）**：[docs/USER_GUIDE.md](docs/USER_GUIDE.md)
+- **AI 接力文档（AI 助手入口）**：[PROJECT.md](PROJECT.md)（项目状态 / 进度看板 / 接手指南）
 - 设计文档（需求、架构、API、里程碑）：`docs/superpowers/specs/2026-08-23-kb-memory-service-design.md`
+- P2 日志设计：`docs/superpowers/specs/2026-08-24-logging-design.md`
+- P2 路线图：`docs/superpowers/plans/2026-08-24-p2-roadmap.md`
 - 节点开发计划：`docs/superpowers/plans/2026-08-23-kb-dev-nodes.md`
 - AI 协作规范：`AGENTS.md`
