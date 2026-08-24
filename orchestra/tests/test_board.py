@@ -1,5 +1,6 @@
 """board.py 单测：HTTP 客户端、卡片纯函数、五个子命令。"""
 import json
+import sys
 
 import pytest
 
@@ -224,3 +225,34 @@ class TestVerify:
             "total": 1}
         with pytest.raises(SystemExit):
             board.cmd_verify("TASK-0006", action="pass", note="")
+
+
+class TestNewWorker:
+    def test_new_worker_输出引导语含名字与skill指令(self, capsys):
+        import board
+        board.cmd_new_worker("worker-1")
+        out = capsys.readouterr().out
+        assert "worker-1" in out
+        assert "orchestra-worker" in out
+
+
+class TestMain:
+    def test_main_status分发(self, mock_request, monkeypatch, capsys):
+        import board
+        monkeypatch.setattr(sys, "argv", ["board.py", "status"])
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [], "total": 0}
+        board.main()
+        assert "无任务卡" in capsys.readouterr().out
+
+    def test_main_服务不可达退出码2(self, mock_request, monkeypatch, capsys):
+        import board
+        monkeypatch.setattr(sys, "argv", ["board.py", "status"])
+        mock_request.responses["GET /boom*"] = None  # 触发 AssertionError 前，
+        # 直接让 fake 抛 BoardUnavailable：
+        monkeypatch.setattr(board, "_request",
+                            lambda *a, **k: (_ for _ in ()).throw(
+                                board.BoardUnavailable("down")))
+        with pytest.raises(SystemExit) as ei:
+            board.main()
+        assert ei.value.code == 2

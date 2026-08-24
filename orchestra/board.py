@@ -11,6 +11,7 @@
     board.py verify TASK-0003 --pass | --reject [--note 原因]
     board.py new-worker NAME
 """
+import argparse
 import json
 import re
 import sys
@@ -188,3 +189,70 @@ def cmd_verify(task_id: str, action: str, note: str) -> None:
                    + ("\n" + rest if rest else ""))
     _request("PATCH", f"/memories/{card['id']}", {"content": new_content})
     print(f"{task_id} → {new_status}" + (f"（备注：{note}）" if note else ""))
+
+
+WORKER_INTRO = """你是 {name}，agent-orchestra 的执行者（worker）。
+请在当前任务中执行 skill：orchestra-worker，然后按其协议开始工作：
+查卡 → 认领 → 执行 → 回写 → 停止。若无待办任务，回复待命即可。"""
+
+
+def cmd_new_worker(name: str) -> None:
+    """打印该 worker 的引导语（用户复制到新 TraeWork 任务）。"""
+    print(WORKER_INTRO.format(name=name))
+
+
+def main() -> None:
+    """CLI 入口；退出码 0 成功 / 1 参数或校验失败 / 2 服务不可达。"""
+    parser = argparse.ArgumentParser(description="agent-orchestra 任务板")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_add = sub.add_parser("add", help="创建任务卡")
+    p_add.add_argument("--assignee", required=True)
+    p_add.add_argument("--title", required=True)
+    p_add.add_argument("--goal", required=True)
+    p_add.add_argument("--input", required=True)
+    p_add.add_argument("--constraints", required=True)
+    p_add.add_argument("--acceptance", required=True)
+
+    sub.add_parser("status", help="一行一卡看板")
+
+    p_show = sub.add_parser("show", help="打印整卡")
+    p_show.add_argument("task_id")
+
+    p_verify = sub.add_parser("verify", help="核验流转")
+    p_verify.add_argument("task_id")
+    group = p_verify.add_mutually_exclusive_group(required=True)
+    group.add_argument("--pass", dest="action", action="store_const",
+                       const="pass")
+    group.add_argument("--reject", dest="action", action="store_const",
+                       const="reject")
+    p_verify.add_argument("--note", default="")
+
+    p_new = sub.add_parser("new-worker", help="打印 worker 引导语")
+    p_new.add_argument("name")
+
+    args = parser.parse_args()
+    try:
+        if args.command == "add":
+            cmd_add(assignee=args.assignee, title=args.title, goal=args.goal,
+                    input_=args.input, constraints=args.constraints,
+                    acceptance=args.acceptance)
+        elif args.command == "status":
+            cmd_status()
+        elif args.command == "show":
+            cmd_show(args.task_id)
+        elif args.command == "verify":
+            cmd_verify(args.task_id, action=args.action, note=args.note)
+        elif args.command == "new-worker":
+            cmd_new_worker(args.name)
+    except BoardUnavailable as e:
+        print(f"错误：{e}\n请先启动 kb 服务：python -m kb serve",
+              file=sys.stderr)
+        raise SystemExit(2) from e
+    except ValueError as e:
+        print(f"错误：{e}", file=sys.stderr)
+        raise SystemExit(1) from e
+
+
+if __name__ == "__main__":
+    main()
