@@ -52,3 +52,41 @@ def _request(method: str, path: str, body: dict | None = None) -> dict:
         raise RuntimeError(f"kb 拒绝请求 HTTP {e.code}: {detail}") from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise BoardUnavailable(f"kb 服务不可达：{e}") from e
+
+
+def render_card(task_id: str, status: str, assignee: str, title: str,
+                goal: str, input_: str, constraints: str,
+                acceptance: str, result: str = "", note: str = "") -> str:
+    """渲染完整卡片文本；首行为可检索状态行。"""
+    lines = [
+        f"{task_id} {status} {assignee} | {title}",
+        f"目标：{goal}",
+        f"输入：{input_}",
+        f"约束：{constraints}",
+        f"验收：{acceptance}",
+        f"结果：{result}",
+    ]
+    if note:
+        lines.append(f"备注：{note}")
+    return "\n".join(lines)
+
+
+_HEADER_RE = re.compile(r"^(TASK-\d{4}) (\w+) (\S+) \| (.+)$")
+
+
+def parse_header(content: str) -> dict:
+    """解析卡片首行 → {task_id, status, assignee, title}；非法格式抛 ValueError。"""
+    header = content.split("\n", 1)[0].strip()
+    m = _HEADER_RE.match(header)
+    if not m:
+        raise ValueError(f"卡片首行格式非法：{header!r}")
+    return {"task_id": m.group(1), "status": m.group(2),
+            "assignee": m.group(3), "title": m.group(4)}
+
+
+def check_limits(**fields: str) -> None:
+    """字段长度校验；超限抛 ValueError（中文提示字段名与上限）。"""
+    for name, value in fields.items():
+        if value and len(value) > LIMITS[name]:
+            raise ValueError(
+                f"字段 {name} 超长：{len(value)} 字符 > 上限 {LIMITS[name]}")
