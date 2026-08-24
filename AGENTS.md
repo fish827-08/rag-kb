@@ -14,10 +14,13 @@
 |---|---|---|
 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | ✅ 唯一有效设计 | 需求、架构、API、里程碑全在这里（已实施完成，2026-08-24 收口） |
 | `AGENTS.md`（本文件） | ✅ 有效 | AI 工作规则 |
+| `PROJECT.md` | ✅ 有效 | **接力文档**（项目状态/进度看板/接手指南；新 AI 必读第 2 份，2026-08-24 新增） |
 | `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | ✅ 有效 | 节点计划（门禁与验收测试，N1-N16 全部完成） |
+| `docs/superpowers/specs/2026-08-24-logging-design.md` | ✅ 有效 | P2-1 日志设计（N17-N18 实施依据） |
+| `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | ✅ 有效 | P2 路线图（日志→鉴权→遗忘→Web UI/CLI） |
 | `README.md` | ✅ 有效 | 项目说明（N16 按新定位重写：快速开始 / MCP 挂载 / 端点速查） |
 | `.mcp.json` | ✅ 有效 | 项目级 MCP 挂载配置（Claude Code 等在本目录启动即连 kb 服务） |
-| `_archive/`（含旧 `README.md`、`ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`） | ❌ 已归档（2026-08-23） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写** |
+| `_archive/`（含旧 `README.md`、`ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`、`data/`） | ❌ 已归档（2026-08-23/24） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写** |
 
 ## 2. 项目定位（一句话）
 
@@ -77,7 +80,7 @@
 
 > **状态：✅ 已全部完成（2026-08-24 收口）**。N1-N16 按计划串行推进完毕，M1-M4 四个人工门禁点均通过，tag `node-01` ~ `node-16` 及版本 tag `v1.0.0` 均已推送远程。
 
-按节点计划 `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` 串行推进（N1-N16，对应设计文档第 14 节里程碑 M1-M4）：**M1 数据层+检索（N1-N6）→ M2 REST 服务（N7-N8）→ M3 MCP+LLM（N9-N12）→ M4 摄取增强（N13-N16）**。不跳步；不提前实现 P2 功能（鉴权、遗忘机制、Qdrant 接入、Web UI 均在本期范围外）。后续新需求（P2）先修订设计文档再立项，不在本节点计划上续写。
+P1（N1-N16，kb v1.0.1）已收口；agent-orchestra MVP 已合入 main（`orchestra/`，见 PROJECT.md）。当前进入 **P2**：按 `docs/superpowers/plans/2026-08-24-p2-roadmap.md` 顺序推进——**P2-1 日志（N17-N18）→ P2-2 鉴权 → P2-3 遗忘机制 → P2-4 Web UI/CLI（CLI 优先）**；Qdrant 已砍掉（违反零常驻约束）。不跳步；各功能 spec 定稿后仍走节点门禁制。后续新需求（P2）先修订设计文档再立项，不在本节点计划上续写。
 
 ## 7. 环境备忘
 
