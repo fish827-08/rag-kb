@@ -128,3 +128,43 @@ class TestStatus:
         out = capsys.readouterr().out
         assert "TASK-0009" in out
         assert "非法" in out
+
+
+class TestAdd:
+    """add：字段校验、编号递增、创建调用。"""
+
+    def test_add_创建首张卡编号0001(self, mock_request, capsys):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [], "total": 0}
+        mock_request.responses["POST /memories"] = {"id": "new-id"}
+        board.cmd_add(assignee="worker-1", title="重构异常", goal="统一异常",
+                      input_="kb/storage.py", constraints="不改接口",
+                      acceptance="测试全绿")
+        out = capsys.readouterr().out
+        assert "TASK-0001" in out
+        post = [c for c in mock_request.calls if c[0] == "POST"][0]
+        body = post[2]
+        assert body["tags"] == ["taskboard"]
+        assert body["content"].startswith(
+            "TASK-0001 pending worker-1 | 重构异常")
+
+    def test_add_编号取最大值加一(self, mock_request):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [
+                _card("TASK-0007 done worker-1 | 旧卡"),
+                _card("TASK-0003 pending worker-2 | 旧卡"),
+            ], "total": 2}
+        mock_request.responses["POST /memories"] = {"id": "x"}
+        board.cmd_add(assignee="worker-1", title="t", goal="g", input_="i",
+                      constraints="c", acceptance="a")
+        post = [c for c in mock_request.calls if c[0] == "POST"][0]
+        assert post[2]["content"].startswith("TASK-0008 pending worker-1 | t")
+
+    def test_add_字段超长拒绝(self, mock_request):
+        import board
+        with pytest.raises(ValueError):
+            board.cmd_add(assignee="w1", title="x" * 31, goal="g",
+                          input_="i", constraints="c", acceptance="a")
+        assert not any(c[0] == "POST" for c in mock_request.calls)

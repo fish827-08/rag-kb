@@ -114,3 +114,32 @@ def cmd_status() -> None:
             continue
         print(f"{h['task_id']} {h['status']} {h['assignee']} "
               f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
+
+
+def _next_task_id(cards: list[dict]) -> str:
+    """现有卡最大编号 +1，四位数零填充。"""
+    max_num = 0
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+            num = int(h["task_id"].split("-")[1])
+            max_num = max(max_num, num)
+        except (ValueError, IndexError):
+            continue  # 非法卡不参与编号
+    return f"TASK-{max_num + 1:04d}"
+
+
+def cmd_add(assignee: str, title: str, goal: str, input_: str,
+            constraints: str, acceptance: str) -> None:
+    """创建任务卡（pending）；字段超长抛 ValueError。"""
+    # 注意：input 用作 kwargs 键以对齐 LIMITS["input"]（而非形参名 input_）
+    check_limits(title=title, goal=goal, input=input_,
+                 constraints=constraints, acceptance=acceptance)
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    task_id = _next_task_id(cards)
+    content = render_card(task_id, "pending", assignee, title,
+                          goal=goal, input_=input_, constraints=constraints,
+                          acceptance=acceptance)
+    resp = _request("POST", "/memories",
+                    {"content": content, "tags": [TAG]})
+    print(f"已创建 {task_id} → 记录 {resp['id']}（assignee: {assignee}）")
