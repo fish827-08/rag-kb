@@ -143,3 +143,48 @@ def cmd_add(assignee: str, title: str, goal: str, input_: str,
     resp = _request("POST", "/memories",
                     {"content": content, "tags": [TAG]})
     print(f"已创建 {task_id} → 记录 {resp['id']}（assignee: {assignee}）")
+
+
+def _find_card(task_id: str) -> tuple[dict, dict]:
+    """按 TASK 编号找卡；返回 (记录, 首行解析)，找不到 SystemExit(1)。"""
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+        except ValueError:
+            continue
+        if h["task_id"] == task_id:
+            return card, h
+    print(f"错误：任务卡 {task_id} 不存在", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def cmd_show(task_id: str) -> None:
+    """打印整卡（核验用）。"""
+    card, _ = _find_card(task_id)
+    print(card["content"])
+
+
+def cmd_verify(task_id: str, action: str, note: str) -> None:
+    """核验流转：pass → verified；reject → pending（note 写入备注行）。
+
+    仅 done/failed 状态可流转；其他状态 SystemExit(1)。
+    """
+    card, h = _find_card(task_id)
+    if h["status"] not in ("done", "failed"):
+        print(f"错误：{task_id} 状态为 {h['status']}，"
+              f"仅 done/failed 可核验", file=sys.stderr)
+        raise SystemExit(1)
+    new_status = "verified" if action == "pass" else "pending"
+    content = card["content"].split("\n", 1)
+    # 重写首行；reject 时若有 note 追加备注行
+    rest = content[1] if len(content) > 1 else ""
+    if action == "reject" and note:
+        # 去掉旧备注行（若有）再追加新备注
+        rest = "\n".join(l for l in rest.split("\n")
+                         if not l.startswith("备注："))
+        rest = (rest + f"\n备注：{note}").strip("\n")
+    new_content = (f"{task_id} {new_status} {h['assignee']} | {h['title']}"
+                   + ("\n" + rest if rest else ""))
+    _request("PATCH", f"/memories/{card['id']}", {"content": new_content})
+    print(f"{task_id} → {new_status}" + (f"（备注：{note}）" if note else ""))

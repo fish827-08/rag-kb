@@ -168,3 +168,59 @@ class TestAdd:
             board.cmd_add(assignee="w1", title="x" * 31, goal="g",
                           input_="i", constraints="c", acceptance="a")
         assert not any(c[0] == "POST" for c in mock_request.calls)
+
+
+CARD_FULL = ("TASK-0005 done worker-1 | 修复空指针\n"
+             "目标：修复检索空指针\n输入：kb/retriever.py\n"
+             "约束：不改接口\n验收：测试全绿\n"
+             "结果：已修复第 42 行，测试通过")
+
+
+class TestShow:
+    def test_show_打印整卡(self, mock_request, capsys):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [_card(CARD_FULL)], "total": 1}
+        board.cmd_show("TASK-0005")
+        out = capsys.readouterr().out
+        assert "修复空指针" in out and "结果：已修复" in out
+
+    def test_show_卡不存在报错(self, mock_request, capsys):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [], "total": 0}
+        with pytest.raises(SystemExit):
+            board.cmd_show("TASK-0099")
+        # readouterr() 只能读一次：统一读取后拼接 err+out 再断言
+        captured = capsys.readouterr()
+        assert "不存在" in captured.err + captured.out
+
+
+class TestVerify:
+    def test_verify_pass_done转verified(self, mock_request):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [_card(CARD_FULL)], "total": 1}
+        mock_request.responses["PATCH /memories/abc123"] = {}
+        board.cmd_verify("TASK-0005", action="pass", note="")
+        patch = [c for c in mock_request.calls if c[0] == "PATCH"][0]
+        assert patch[2]["content"].startswith("TASK-0005 verified worker-1")
+
+    def test_verify_reject_回pending带备注(self, mock_request):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [_card(CARD_FULL)], "total": 1}
+        mock_request.responses["PATCH /memories/abc123"] = {}
+        board.cmd_verify("TASK-0005", action="reject", note="结果超长")
+        patch = [c for c in mock_request.calls if c[0] == "PATCH"][0]
+        content = patch[2]["content"]
+        assert content.startswith("TASK-0005 pending worker-1")
+        assert "备注：结果超长" in content
+
+    def test_verify_仅done_failed可流转(self, mock_request):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [_card("TASK-0006 pending worker-1 | 未完成\n目标：x")],
+            "total": 1}
+        with pytest.raises(SystemExit):
+            board.cmd_verify("TASK-0006", action="pass", note="")
