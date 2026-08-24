@@ -131,6 +131,48 @@ class TestStatus:
         assert "非法" in out
 
 
+class TestListPending:
+    """list-pending：只显示 pending 状态的任务卡。"""
+
+    def test_list_pending_只列pending过滤其他状态(self, mock_request, capsys):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [
+                _card("TASK-0001 pending worker-1 | 待办甲\n目标：x"),
+                _card("TASK-0002 claimed worker-2 | 进行中\n目标：y",
+                      updated_at="2026-08-24T09:15:00"),
+                _card("TASK-0003 done worker-1 | 已完成\n目标：z"),
+                _card("TASK-0004 verified worker-2 | 已核验\n目标：w"),
+                _card("TASK-0005 failed worker-1 | 已失败\n目标：v"),
+            ], "total": 5}
+        board.cmd_list_pending()
+        out = capsys.readouterr().out
+        assert "TASK-0001 pending worker-1 12:30 待办甲" in out
+        assert "TASK-0002" not in out
+        assert "TASK-0003" not in out
+        assert "TASK-0004" not in out
+        assert "TASK-0005" not in out
+
+    def test_list_pending_全是非pending时明确提示(self, mock_request, capsys):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [
+                _card("TASK-0002 claimed worker-2 | 进行中\n目标：y"),
+                _card("TASK-0003 done worker-1 | 已完成\n目标：z"),
+            ], "total": 2}
+        board.cmd_list_pending()
+        out = capsys.readouterr().out
+        assert "无待办任务卡" in out
+        assert "TASK-0002" not in out and "TASK-0003" not in out
+
+    def test_list_pending_空板提示(self, mock_request, capsys):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [], "total": 0}
+        board.cmd_list_pending()
+        assert "无待办任务卡" in capsys.readouterr().out
+
+
 class TestAdd:
     """add：字段校验、编号递增、创建调用。"""
 
@@ -244,6 +286,16 @@ class TestMain:
             "items": [], "total": 0}
         board.main()
         assert "无任务卡" in capsys.readouterr().out
+
+    def test_main_list_pending分发(self, mock_request, monkeypatch, capsys):
+        import board
+        monkeypatch.setattr(sys, "argv", ["board.py", "list-pending"])
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [_card("TASK-0001 pending worker-1 | 待办\n目标：x")],
+            "total": 1}
+        board.main()
+        assert "TASK-0001 pending worker-1 12:30 待办" in \
+            capsys.readouterr().out
 
     def test_main_服务不可达退出码2(self, mock_request, monkeypatch, capsys):
         import board

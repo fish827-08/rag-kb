@@ -7,6 +7,7 @@
 用法：
     board.py add --assignee w1 --title T --goal G --input I --constraints C --acceptance A
     board.py status
+    board.py list-pending
     board.py show TASK-0003
     board.py verify TASK-0003 --pass | --reject [--note 原因]
     board.py new-worker NAME
@@ -117,6 +118,28 @@ def cmd_status() -> None:
               f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
 
 
+def cmd_list_pending() -> None:
+    """只列出 pending 状态的任务卡；无待办时给出明确提示。
+
+    取卡与解析复用 cmd_status 的方式（_request + parse_header），
+    一行一卡格式与 status 完全一致。
+    """
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    lines = []
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+        except ValueError:
+            continue  # 非法卡无法判定状态，不参与过滤
+        if h["status"] == "pending":
+            lines.append(f"{h['task_id']} {h['status']} {h['assignee']} "
+                         f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
+    if lines:
+        print("\n".join(lines))
+    else:
+        print("无待办任务卡")
+
+
 def _next_task_id(cards: list[dict]) -> str:
     """现有卡最大编号 +1，四位数零填充。"""
     max_num = 0
@@ -215,6 +238,7 @@ def main() -> None:
     p_add.add_argument("--acceptance", required=True)
 
     sub.add_parser("status", help="一行一卡看板")
+    sub.add_parser("list-pending", help="只列待办卡")
 
     p_show = sub.add_parser("show", help="打印整卡")
     p_show.add_argument("task_id")
@@ -239,6 +263,8 @@ def main() -> None:
                     acceptance=args.acceptance)
         elif args.command == "status":
             cmd_status()
+        elif args.command == "list-pending":
+            cmd_list_pending()
         elif args.command == "show":
             cmd_show(args.task_id)
         elif args.command == "verify":
