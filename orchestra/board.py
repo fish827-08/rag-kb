@@ -90,3 +90,27 @@ def check_limits(**fields: str) -> None:
         if value and len(value) > LIMITS[name]:
             raise ValueError(
                 f"字段 {name} 超长：{len(value)} 字符 > 上限 {LIMITS[name]}")
+
+
+def _fmt_time(updated_at: str) -> str:
+    """ISO 时间 → HH:MM；解析失败返回 '???'。"""
+    try:
+        return datetime.fromisoformat(updated_at).strftime("%H:%M")
+    except (ValueError, TypeError):
+        return "???"
+
+
+def cmd_status() -> None:
+    """每卡一行：TASK-0003 claimed worker-1 12:30 标题。"""
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    if not cards:
+        print("无任务卡")
+        return
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+        except ValueError:
+            print(f"[警告] 记录 {card.get('id', '?')} 首行非法，已跳过")
+            continue
+        print(f"{h['task_id']} {h['status']} {h['assignee']} "
+              f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")

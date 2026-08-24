@@ -88,3 +88,43 @@ class TestCardFunctions:
         assert "title" in str(ei.value)
         # 恰好 30 字符不报错
         board.check_limits(title="x" * 30)
+
+
+def _card(content, updated_at="2026-08-24T12:30:00"):
+    """构造 kb list 返回的单条记录。"""
+    return {"id": "abc123", "content": content, "tags": ["taskboard"],
+            "updated_at": updated_at}
+
+
+class TestStatus:
+    """status：列出全部任务卡，一行一卡。"""
+
+    def test_status_一行一卡含时间与标题(self, mock_request, capsys):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [
+                _card("TASK-0001 pending worker-1 | 重构异常\n目标：x"),
+                _card("TASK-0002 done worker-2 | 修复空指针\n目标：y",
+                      updated_at="2026-08-24T09:15:00"),
+            ], "total": 2}
+        board.cmd_status()
+        out = capsys.readouterr().out
+        assert "TASK-0001 pending worker-1 12:30 重构异常" in out
+        assert "TASK-0002 done worker-2 09:15 修复空指针" in out
+
+    def test_status_空板提示(self, mock_request, capsys):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [], "total": 0}
+        board.cmd_status()
+        assert "无任务卡" in capsys.readouterr().out
+
+    def test_status_非法卡片跳过并警告(self, mock_request, capsys):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [_card("坏卡片内容"), _card("TASK-0009 pending w1 | 正常|卡")],
+            "total": 2}
+        board.cmd_status()
+        out = capsys.readouterr().out
+        assert "TASK-0009" in out
+        assert "非法" in out
