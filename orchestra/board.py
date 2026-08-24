@@ -8,6 +8,7 @@
     board.py add --assignee w1 --title T --goal G --input I --constraints C --acceptance A
     board.py status
     board.py list-pending
+    board.py claim TASK-XXXX --assignee worker-N
     board.py show TASK-0003
     board.py verify TASK-0003 --pass | --reject [--note 原因]
     board.py new-worker NAME
@@ -189,6 +190,25 @@ def cmd_show(task_id: str) -> None:
     print(card["content"])
 
 
+def cmd_claim(task_id: str, assignee: str) -> None:
+    """认领卡片：pending→claimed 并更新 assignee。
+
+    仅 pending 状态可认领；其他状态报错不误改。
+    """
+    card, h = _find_card(task_id)
+    if h["status"] != "pending":
+        print(f"错误：{task_id} 状态为 {h['status']}，"
+              f"仅 pending 可认领", file=sys.stderr)
+        raise SystemExit(1)
+    # 重写首行：status 改 claimed，assignee 更新为指定值
+    content = card["content"].split("\n", 1)
+    rest = content[1] if len(content) > 1 else ""
+    new_content = (f"{task_id} claimed {assignee} | {h['title']}"
+                   + ("\n" + rest if rest else ""))
+    _request("PATCH", f"/memories/{card['id']}", {"content": new_content})
+    print(f"{task_id} → claimed（assignee: {assignee}）")
+
+
 def cmd_verify(task_id: str, action: str, note: str) -> None:
     """核验流转：pass → verified；reject → pending（note 写入备注行）。
 
@@ -240,6 +260,11 @@ def main() -> None:
     sub.add_parser("status", help="一行一卡看板")
     sub.add_parser("list-pending", help="只列待办卡")
 
+    p_claim = sub.add_parser("claim", help="认领卡片（pending→claimed）")
+    p_claim.add_argument("task_id")
+    p_claim.add_argument("--assignee", required=True,
+                         help="认领者 worker 名字")
+
     p_show = sub.add_parser("show", help="打印整卡")
     p_show.add_argument("task_id")
 
@@ -265,6 +290,8 @@ def main() -> None:
             cmd_status()
         elif args.command == "list-pending":
             cmd_list_pending()
+        elif args.command == "claim":
+            cmd_claim(task_id=args.task_id, assignee=args.assignee)
         elif args.command == "show":
             cmd_show(args.task_id)
         elif args.command == "verify":

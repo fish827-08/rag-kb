@@ -94,6 +94,45 @@ def _wrap_sse_charset(app):
     return middleware
 
 
+def _wrap_json_charset(app):
+    """轻量 ASGI 中间件：给 JSON REST 响应头补 charset=utf-8。
+
+    与 v1.0.1 的 SSE 中间件同构：拦截 http.response.start 消息，
+    content-type 为 application/json 且未声明 charset 时追加
+    "; charset=utf-8"，解决 PowerShell 等按默认编码解码的客户端
+    对中文 JSON 的乱码问题；其余消息与作用域原样透传（含挂载的
+    /mcp SSE 子应用，其 text/event-stream 头不在此匹配范围）。
+    """
+
+    async def middleware(scope, receive, send):
+        # 非 HTTP 作用域（如 lifespan）直接透传
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+
+        async def send_wrapper(message):
+            # 只在响应起始消息上补头；命中时构造新消息，不改动原 dict
+            if message["type"] == "http.response.start":
+                headers = message.get("headers") or []
+                new_headers = []
+                patched = False
+                for k, v in headers:
+                    if (k.lower() == b"content-type"
+                            and v.lower().startswith(b"application/json")
+                            and b"charset" not in v.lower()):
+                        new_headers.append((k, v + b"; charset=utf-8"))
+                        patched = True
+                    else:
+                        new_headers.append((k, v))
+                if patched:
+                    message = {**message, "headers": new_headers}
+            await send(message)
+
+        await app(scope, receive, send_wrapper)
+
+    return middleware
+
+
 def create_app(settings: Settings | None = None,
                enable_watcher: bool = False) -> FastAPI:
     """应用工厂；全局单例 KBService 挂 app.state.kb（REST 与 MCP 共享该实例）。
@@ -261,5 +300,8 @@ def create_app(settings: Settings | None = None,
     # MCP streamable http 端点挂载在 /mcp（子路径 "/"，即完整路径 /mcp/）；
     # 外包 SSE charset 中间件，保证 text/event-stream 响应头带 charset=utf-8
     app.mount("/mcp", _wrap_sse_charset(mcp_app))
+    # 兜底：整体再包 JSON charset 中间件，保证所有 application/json
+    # 响应头带 charset=utf-8（含 422 校验错误与错误 JSON）
+    app = _wrap_json_charset(app)
 
     return app

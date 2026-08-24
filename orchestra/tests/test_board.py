@@ -269,6 +269,41 @@ class TestVerify:
             board.cmd_verify("TASK-0006", action="pass", note="")
 
 
+class TestClaim:
+    """claim：pending→claimed 并更新 assignee；非 pending 拒绝。"""
+
+    def test_claim_pending卡成功转claimed且更新assignee(self, mock_request):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [_card("TASK-0010 pending worker-1 | 待认领\n目标：x")],
+            "total": 1}
+        mock_request.responses["PATCH /memories/abc123"] = {}
+        board.cmd_claim("TASK-0010", assignee="worker-2")
+        patch = [c for c in mock_request.calls if c[0] == "PATCH"][0]
+        content = patch[2]["content"]
+        assert content.startswith("TASK-0010 claimed worker-2 | 待认领")
+        # 其余字段原样保留
+        assert "目标：x" in content
+
+    def test_claim_非pending卡报错不误改(self, mock_request):
+        import board
+        for status in ("claimed", "done", "failed", "verified"):
+            mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+                "items": [_card(f"TASK-0010 {status} worker-1 | 进行中\n目标：x")],
+                "total": 1}
+            with pytest.raises(SystemExit):
+                board.cmd_claim("TASK-0010", assignee="worker-2")
+            # 没有发出 PATCH
+            assert not any(c[0] == "PATCH" for c in mock_request.calls)
+
+    def test_claim_卡不存在报错(self, mock_request):
+        import board
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [], "total": 0}
+        with pytest.raises(SystemExit):
+            board.cmd_claim("TASK-0099", assignee="worker-2")
+
+
 class TestNewWorker:
     def test_new_worker_输出引导语含名字与skill指令(self, capsys):
         import board
@@ -296,6 +331,18 @@ class TestMain:
         board.main()
         assert "TASK-0001 pending worker-1 12:30 待办" in \
             capsys.readouterr().out
+
+    def test_main_claim分发(self, mock_request, monkeypatch, capsys):
+        import board
+        monkeypatch.setattr(sys, "argv",
+                            ["board.py", "claim", "TASK-0001", "--assignee", "worker-2"])
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [_card("TASK-0001 pending worker-1 | 待办\n目标：x")],
+            "total": 1}
+        mock_request.responses["PATCH /memories/abc123"] = {}
+        board.main()
+        out = capsys.readouterr().out
+        assert "TASK-0001" in out and "claimed" in out
 
     def test_main_服务不可达退出码2(self, mock_request, monkeypatch, capsys):
         import board
