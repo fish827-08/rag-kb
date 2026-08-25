@@ -118,6 +118,26 @@ curl -X POST http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/j
 curl -X POST http://127.0.0.1:8000/api/v1/ask -H "Content-Type: application/json" -d '{"question": "用户喜欢什么主题？"}'
 ```
 
+#### 3.3.1 日志查看（N18，不开终端看日志）
+
+两个只读端点，查看服务运行日志（含每次请求的 request.start/request.end 事件）：
+
+```powershell
+# 最近 20 条日志（limit 默认 100，上限 1000）
+curl "http://127.0.0.1:8000/api/v1/logs?limit=20"
+
+# 只看 request 事件（event 按消息子串匹配）
+curl "http://127.0.0.1:8000/api/v1/logs?limit=20&event=request"
+
+# 按级别过滤（DEBUG/INFO/WARNING/ERROR/CRITICAL，可缩写 warn/err/fatal）
+curl "http://127.0.0.1:8000/api/v1/logs?limit=50&level=WARNING"
+
+# 日志事件统计（按 level 与 logger 两维度）
+curl "http://127.0.0.1:8000/api/v1/logs/events"
+```
+
+返回 `items`（按文件序、每条含 time/level/logger/message/line）与 `total`、`truncated`；`/logs/events` 返回 `by_level` / `by_logger` 统计。
+
 ### 3.4 知识入库
 
 | 方式 | 操作 |
