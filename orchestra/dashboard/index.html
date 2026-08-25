@@ -128,6 +128,14 @@
     </div>
     <div id="comm-list" class="comm-scroll"></div>
   </section>
+
+  <!-- ④ 日志区（N18/TASK-0027）：折叠显示最近 20 条 request 事件 -->
+  <section>
+    <details id="logs-details">
+      <summary><h2>日志（最近 20 条 request）</h2></summary>
+      <div id="logs-list" class="comm-scroll"></div>
+    </details>
+  </section>
 </main>
 
 <script>
@@ -270,6 +278,34 @@ function escapeHtml(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// /logs 响应项 → 行对象；time 形如 "2026-08-26 00:43:12,345" → 切 HH:MM
+function parseLogs(items) {
+  var rows = [];
+  for (var i = 0; i < (items || []).length; i++) {
+    var it = items[i] || {};
+    rows.push({
+      time: String(it.time || '').slice(11, 16),
+      level: it.level || '?',
+      logger: it.logger || '?',
+      message: it.message || ''
+    });
+  }
+  return rows;
+}
+
+function logsListHTML(rows) {
+  if (!rows.length) { return '<div class="empty">无日志</div>'; }
+  var html = '';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    html += '<div class="comm-item"><span class="comm-time">' + escapeHtml(r.time)
+      + '</span><span class="comm-tag">' + escapeHtml(r.level) + '</span>'
+      + '<span class="comm-src">' + escapeHtml(r.logger) + '</span>'
+      + '<span class="comm-text">' + escapeHtml(r.message) + '</span></div>';
+  }
+  return html;
+}
+
 // ============ 渲染（行 → HTML 片段） ============
 
 function registryTableHTML(rows) {
@@ -363,7 +399,8 @@ function load() {
   var reqs = [
     fetch(base + '/memories?tag=registry&limit=1000'),
     fetch(base + '/memories?tag=taskboard&limit=1000'),
-    fetch(base + '/memories?limit=1000')
+    fetch(base + '/memories?limit=1000'),
+    fetch(base + '/logs?limit=20&event=request')
   ];
   Promise.all(reqs.map(function (p) {
     return p.then(function (r) { return r.json(); });
@@ -371,9 +408,11 @@ function load() {
     var reg = (arr[0] && arr[0].items) || [];
     var tasks = (arr[1] && arr[1].items) || [];
     var all = (arr[2] && arr[2].items) || [];
+    var logs = (arr[3] && arr[3].items) || [];
     renderWorkers(reg, tasks);
     document.getElementById('tasks-body').innerHTML = taskTableHTML(parseTasks(tasks));
     document.getElementById('comm-list').innerHTML = commListHTML(parseComm(all, COMM_LIMIT));
+    document.getElementById('logs-list').innerHTML = logsListHTML(parseLogs(logs));
     document.getElementById('last-updated').textContent = nowText();
     setStatus(true);
   }).catch(function () { setStatus(false); });
