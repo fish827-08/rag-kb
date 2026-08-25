@@ -1,6 +1,6 @@
 # agent-orchestra 协议总纲
 
-版本：v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
+版本：v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
 
 ## 1. 角色
 
@@ -32,7 +32,7 @@ done/failed 可被协调者打回 → pending
 
 ## 4. 硬纪律（全体 agent）
 
-1. 单卡单轮：一次唤醒只处理一张卡
+1. 单卡单轮：默认一次唤醒只处理一张卡；用户发"继续"且仍有可领卡时按批量模式连续处理（上限 5 轮，见 §9）
 2. 禁止轮询：回合结束即待命，不主动重复查询
 3. 禁止超范围：只做卡片"目标"内的事
 4. 字符上限：结果 ≤1000，执行摘要 ≤200
@@ -73,3 +73,12 @@ worker 有权把**重要过程信息**写入 kb 供其他 agent 检索（用现�
 - worker：`search_memory("TASK pending {我的名字}")` + `search_memory("TASK claimed {我的名字}")`（中断恢复优先续做 claimed）
 - 协调者：`board.py status`（一行一卡，不读整卡）
 - 全员状态了解：`search_memory("comm:")` 按频道检索
+
+## 9. 批量模式（v1.2 新增）
+
+- 触发：用户对 worker 本回合回复"继续"且仍有可领的 pending 卡 → 连续领卡执行
+- 上限：单次唤醒累计最多 5 轮（含续做的 claimed 卡）
+- 保险丝：达轮次上限（5 轮）或时间窗（30 分钟，先到为准）即停止待命
+- 停止：无 pending 卡立即停止，不空转、不轮询
+- 交流窗：每卡完成即写 comm:done（结论级 ≤300 字符）
+- 默认仍是单卡单轮；批量是"继续"下的增量行为，不改变单卡原子语义
