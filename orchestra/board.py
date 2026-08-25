@@ -13,6 +13,7 @@
     board.py workers
     board.py report --channel done|issue|test|system --from NAME --text "..."
     board.py list-comm [--channel X] [--limit N]
+    board.py watch [--interval N] [--comm] [--once]
     board.py show TASK-0003
     board.py verify TASK-0003 --pass | --reject [--note 原因]
     board.py new-worker NAME
@@ -21,6 +22,7 @@ import argparse
 import json
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -359,6 +361,68 @@ def cmd_list_comm(channel: str | None = None, limit: int = 10) -> None:
               f"{_truncate(card.get('content', ''))}")
 
 
+def _watch_frame(include_comm: bool = False) -> str:
+    """渲染看板一轮文本：worker 段 + 任务卡段 +（可选）交流窗段。
+
+    纯函数便于单测；行格式分别复用 cmd_workers / cmd_status / cmd_list_comm。
+    """
+    lines = []
+    # worker 段（名字 模型 状态 最后活跃）
+    cards = _request("GET", f"/memories?tag={REGISTRY_TAG}&limit=1000") \
+        .get("items", [])
+    if not cards:
+        lines.append("无已注册 worker")
+    else:
+        for card in cards:
+            try:
+                data = json.loads(card["content"])
+            except (ValueError, TypeError):
+                continue
+            lines.append(f"{data.get('worker', '?')} {data.get('model', '?')} "
+                         f"{data.get('status', '?')} "
+                         f"{data.get('last_seen', '?')}")
+    # 任务卡段（TASK 状态 assignee HH:MM 标题）
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+        except ValueError:
+            continue
+        lines.append(f"{h['task_id']} {h['status']} {h['assignee']} "
+                     f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
+    # 交流窗段（--comm 时附最近 5 条）
+    if include_comm:
+        comms = _request("GET", "/memories?limit=1000").get("items", [])
+        comms = [c for c in comms if _comm_tag(c.get("tags")) is not None]
+        comms.sort(key=lambda c: c.get("updated_at", ""), reverse=True)
+        if comms:
+            lines.append("-- 交流窗 --")
+            for card in comms[:5]:
+                tag = _comm_tag(card.get("tags")) or "comm:?"
+                lines.append(f"{_fmt_time(card.get('updated_at', ''))} | {tag} "
+                             f"| {card.get('source') or '?'} | "
+                             f"{_truncate(card.get('content', ''))}")
+    return "\n".join(lines)
+
+
+def cmd_watch(interval: int = 5, comm: bool = False, once: bool = False) -> None:
+    """终端看板：前台轮询重绘 worker 行 + 卡行（+--comm 交流窗）。
+
+    interval 须 ≥1（秒）；--once 单轮模式便于测试/脚本；
+    Ctrl+C 捕获后打印"watch 已退出"并干净返回（退出码 0）。
+    """
+    if interval < 1:
+        raise ValueError(f"interval 须 ≥1，收到 {interval}")
+    try:
+        while True:
+            print(_watch_frame(include_comm=comm))
+            if once:
+                return
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("watch 已退出")
+
+
 WORKER_INTRO = """你是 {name}，agent-orchestra 的执行者（worker）。
 请在当前任务中执行 skill：orchestra-worker，然后按其协议开始工作：
 查卡 → 认领 → 执行 → 回写 → 停止。若无待办任务，回复待命即可。"""
@@ -425,6 +489,14 @@ def main() -> None:
     p_list_comm.add_argument("--limit", type=int, default=10,
                              help="最多列几条（默认 10）")
 
+    p_watch = sub.add_parser("watch", help="终端看板（实时监控）")
+    p_watch.add_argument("--interval", type=int, default=5,
+                         help="轮询间隔秒（默认 5，须 ≥1）")
+    p_watch.add_argument("--comm", action="store_true",
+                         help="底部附交流窗最近 5 条")
+    p_watch.add_argument("--once", action="store_true",
+                         help="单轮模式（便于测试/脚本）")
+
     args = parser.parse_args()
     try:
         if args.command == "add":
@@ -451,6 +523,8 @@ def main() -> None:
             cmd_report(channel=args.channel, from_=args.from_, text=args.text)
         elif args.command == "list-comm":
             cmd_list_comm(channel=args.channel, limit=args.limit)
+        elif args.command == "watch":
+            cmd_watch(interval=args.interval, comm=args.comm, once=args.once)
     except BoardUnavailable as e:
         print(f"错误：{e}\n请先启动 kb 服务：python -m kb serve",
               file=sys.stderr)
