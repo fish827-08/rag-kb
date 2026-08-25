@@ -1,6 +1,7 @@
 """REST API：FastAPI 应用工厂 + memories CRUD + healthz + ask + 统一错误格式。"""
 import logging
 import tempfile
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
@@ -132,6 +133,42 @@ def _wrap_json_charset(app):
             await send(message)
 
         await app(scope, receive, send_wrapper)
+
+    return middleware
+
+
+def _wrap_request_log(app):
+    """请求访问日志中间件（N17/TASK-0012）：ASGI 栈最外层，REST 与 MCP 统一覆盖。
+
+    请求进入记录 event=request.start（method/path），请求结束记录
+    event=request.end（method/path/status/耗时ms）。不记录请求 body
+    （日志设计第 5 节敏感红线）；MCP 挂载子应用（/mcp）同样经过本层。
+    """
+
+    async def middleware(scope, receive, send):
+        # 非 HTTP 作用域（lifespan 等）原样透传
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        api_log = logging.getLogger("kb.api")
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+        api_log.info("request.start method=%s path=%s", method, path)
+        start = time.perf_counter()
+        status = 0
+
+        async def send_wrapper(message):
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = message.get("status", 0)
+            await send(message)
+
+        try:
+            await app(scope, receive, send_wrapper)
+        finally:
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            api_log.info("request.end method=%s path=%s status=%s 耗时=%.1fms",
+                         method, path, status, elapsed_ms)
 
     return middleware
 
@@ -313,5 +350,7 @@ def create_app(settings: Settings | None = None,
     # 兜底：整体再包 JSON charset 中间件，保证所有 application/json
     # 响应头带 charset=utf-8（含 422 校验错误与错误 JSON）
     app = _wrap_json_charset(app)
+    # 请求访问日志中间件（N17/TASK-0012）：ASGI 栈最外层，REST 与 MCP 统一覆盖
+    app = _wrap_request_log(app)
 
     return app
