@@ -1,6 +1,6 @@
 # agent-orchestra 协议总纲
 
-版本：v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
+版本：v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
 
 ## 1. 角色
 
@@ -38,12 +38,17 @@ done/failed 可被协调者打回 → pending
 4. 字符上限：结果 ≤1000，执行摘要 ≤200
 5. 超时：claimed 超 30 分钟无 done → 协调者打回 pending
 
-## 5. 任务分支模式（v1.1 新增）
+## 5. 任务分支模式（v1.1 新增；v1.3 增补 worktree 隔离）
 
-- 协调者建卡时在"约束"字段注明分支名：`分支 task/TASK-NNNN`
-- worker 在该分支上开发与提交（**禁止直接提交 main**）；卡内未指定分支时按旧模式工作、不提交，留给协调者
+- 协调者建卡时在"约束"字段注明分支名：`分支 task/TASK-NNNN`；分支由协调者预建
+- **worktree 物理隔离（v1.3 治本，杜绝并发串扰）**：每张有分支的任务卡在独立目录 `rag-kb/.worktrees/TASK-NNNN` 内工作：
+  - `board.py worktree setup TASK-NNNN`：在 `.worktrees/TASK-NNNN` 检出 `task/TASK-NNNN` 分支（worktree 独占该分支，主工作区无法再 checkout → 天然防串扰）；分支不存在 / 目录已注册 / 目标目录脏（非空）时拒绝
+  - `board.py worktree enter TASK-NNNN`：打印进入路径，worker 在该目录内开发、测试与提交
+  - `board.py worktree clean TASK-NNNN`：清理目录（提交保留在分支上，可再 setup 重建）
+  - `.worktrees/` 已被 `.gitignore` 忽略
+- worker 在 worktree 内开发并提交（**禁止直接提交 main**）；卡内未指定分支时按旧模式工作、不提交，留给协调者
 - worker 回写 done 时在"结果"中注明分支提交哈希
-- 协调者核验通过后：`git merge --no-ff task/TASK-NNNN` 合入 main → verify → 推送 → 删分支
+- 协调者核验通过后：`git merge --no-ff task/TASK-NNNN` 合入 main → verify → 推送 → 删分支 → `worktree clean` 对应卡目录
 - 并行各卡分支零文件交集（拆卡时保证），合并冲突即打回
 
 ## 6. 服务重启管控（v1.1 新增，铁律）
