@@ -37,11 +37,12 @@ class Settings(BaseSettings):
     log_dir: Path = Path("logs")                # 日志目录（相对仓库根；gitignore 排除）
     log_max_bytes: int = 1048576                # 单文件 1MB，超限轮转
     log_backup_count: int = 5                   # 轮转保留备份数（合计 ≤6MB）
-    # ---- 本地监控 Agent（0015 设计书，N18）----
-    monitor_enabled: bool = True                # 是否启用监控线程
-    monitor_interval: int = 10                  # 轮询间隔（分钟），≥1，非法回退默认
-    monitor_startup_run: bool = True             # 启动时立即跑一轮（便于验证）
+    # ---- 本地监控 Agent（0015 设计书，N18；TASK-0021 去常驻改按需）----
+    monitor_enabled: bool = False               # 默认不启常驻线程（去常驻：按需端点/看板按钮触发）
+    monitor_interval: int = 10                  # 轮询间隔（分钟），≥1，非法回退默认（常驻模式用）
+    monitor_startup_run: bool = True            # 启动时立即跑一轮（便于验证；常驻模式用）
     monitor_max_tokens: int = 300               # 摘要输出上限（护栏：≤300，硬约束）
+    monitor_autotimer: int = 0                  # KB_MONITOR_AUTOTIMER：看板前端自动轮询间隔（分钟），0=关
     dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
     dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 

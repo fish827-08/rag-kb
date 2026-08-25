@@ -31,6 +31,15 @@
   }
   .toolbar button:hover { background: rgba(255,255,255,0.25); }
   #svc-status.err { color: #ff6b6b; font-weight: 700; }
+  /* 交流窗"生成摘要"操作条（TASK-0021 去常驻按需） */
+  .comm-actions { display: flex; gap: 10px; align-items: center; margin: -4px 0 8px; font-size: 13px; }
+  .comm-actions button {
+    border: 1px solid #c8d0da; background: #f4f6f8; color: #24292f;
+    border-radius: 6px; padding: 4px 12px; font-size: 13px; cursor: pointer;
+  }
+  .comm-actions button:hover { background: #e8ecf0; }
+  .comm-actions button:disabled { opacity: 0.6; cursor: wait; }
+  #summary-status { color: #57606a; }
   /* ===== 主体三区块 ===== */
   main { padding: 16px 24px; display: grid; gap: 16px; }
   section {
@@ -109,6 +118,10 @@
   <!-- ③ 交流窗滚动区 -->
   <section>
     <h2>交流窗</h2>
+    <div class="comm-actions">
+      <button id="gen-summary-btn" type="button">生成摘要</button>
+      <span id="summary-status"></span>
+    </div>
     <div id="comm-list" class="comm-scroll"></div>
   </section>
 </main>
@@ -342,6 +355,33 @@ function togglePause() {
 // ============ 启动 ============
 document.getElementById('refresh-btn').addEventListener('click', function () { load(); });
 document.getElementById('pause-btn').addEventListener('click', togglePause);
+
+// 生成摘要（TASK-0021 去常驻按需）：POST /api/v1/monitor/summary → 刷新交流窗
+function generateSummary() {
+  var btn = document.getElementById('gen-summary-btn');
+  var st = document.getElementById('summary-status');
+  btn.disabled = true;
+  st.textContent = '生成中…';
+  fetch(apiBase() + '/monitor/summary', { method: 'POST' })
+    .then(function (r) {
+      return r.json().then(function (d) { return { ok: r.ok, d: d }; });
+    })
+    .then(function (res) {
+      if (res.ok) { st.textContent = '已生成'; load(); }
+      else { st.textContent = '失败：' + (res.d.message || res.d.error || '未知'); }
+    })
+    .catch(function () { st.textContent = '失败：服务不可用'; })
+    .then(function () { btn.disabled = false; });
+}
+document.getElementById('gen-summary-btn').addEventListener('click', generateSummary);
+
+// KB_MONITOR_AUTOTIMER>0 时前端自动定时生成摘要（分钟）
+fetch(apiBase() + '/config').then(function (r) { return r.json(); })
+  .then(function (d) {
+    var mins = (d && d.monitor_autotimer) || 0;
+    if (mins > 0) { setInterval(generateSummary, mins * 60 * 1000); }
+  })
+  .catch(function () { /* 配置读取失败静默：默认不自动 */ });
 
 load();       // 首屏立即渲染一轮
 startTimer(); // 默认 5 秒轮询
