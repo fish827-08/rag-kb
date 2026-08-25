@@ -9,6 +9,7 @@
   内部走 store.delete_by_source 并同步清理 BM25 索引）；
 - 重命名视为"删旧 + 加新"（下载工具常见的 .crdownload → 正式名收尾）。
 """
+import logging
 import queue
 import threading
 import time
@@ -18,6 +19,9 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from kb.ingest import _DIRECT_EXTS, _MARKITDOWN_EXTS
+
+# 模块日志器：目录缺失等容错警告（不配置 handler，交由服务入口统一接管）
+logger = logging.getLogger("kb.watcher")
 
 # 支持入库的扩展名白名单（与 ingest.parse_file 的解析分派一致）
 SUPPORTED_EXTS = _DIRECT_EXTS | {".pdf", ".docx"} | _MARKITDOWN_EXTS
@@ -64,7 +68,15 @@ class KBWatcher:
         若留到 worker 线程处理首个事件时才加载，会远超事件入库的时效
         预期；此处同步预热一次，worker 复用已加载的模型。预热失败不
         阻断监听启动（worker 首次处理时再按需加载并容忍失败）。
+
+        容错（V2-0）：监听目录不存在（或不是目录）时记 warning 并
+        直接跳过监听——服务其余功能不受影响，serve 不因此崩溃；
+        此刻不启动 Observer 与 worker 线程，stop() 对未启动状态安全。
         """
+        if not self.watch_dir.is_dir():
+            logger.warning("监听目录不存在或不可用，跳过目录监听：%s",
+                           self.watch_dir)
+            return
         try:
             self.service.embedder.embed_texts(["warmup"])
         except Exception:
