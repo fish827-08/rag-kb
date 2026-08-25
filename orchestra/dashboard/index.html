@@ -13,35 +13,43 @@
   }
   /* ===== 顶栏：标题 / 上次刷新 / 间隔 / 手动刷新 / 暂停继续 ===== */
   header {
-    background: #1f2937; color: #fff; padding: 12px 24px;
+    background: linear-gradient(135deg, #1e293b 0%, #312e81 100%);
+    color: #fff; padding: 12px 24px;
     display: flex; flex-wrap: wrap; gap: 12px;
     align-items: center; justify-content: space-between;
+    box-shadow: 0 2px 8px rgba(30, 41, 59, 0.25);
   }
-  header h1 { font-size: 18px; margin: 0; }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: 0.5px; }
   .toolbar {
     display: flex; flex-wrap: wrap; gap: 14px;
     align-items: center; font-size: 13px;
   }
   .toolbar button {
-    border: 1px solid #4b5563; background: #374151; color: #fff;
-    border-radius: 6px; padding: 4px 12px; font-size: 13px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.12);
+    color: #fff; border-radius: 6px; padding: 4px 12px; font-size: 13px;
+    cursor: pointer; transition: background 0.15s;
   }
-  .toolbar button:hover { background: #4b5563; }
+  .toolbar button:hover { background: rgba(255,255,255,0.25); }
   #svc-status.err { color: #ff6b6b; font-weight: 700; }
   /* ===== 主体三区块 ===== */
   main { padding: 16px 24px; display: grid; gap: 16px; }
   section {
     background: #fff; border: 1px solid #e3e8ee;
-    border-radius: 8px; padding: 12px 16px;
+    border-radius: 10px; padding: 12px 16px;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.06);
   }
   section h2 { font-size: 15px; margin: 2px 0 10px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eef1f4; }
   th { color: #57606a; font-weight: 600; }
+  tbody tr:nth-child(even) { background: #fafbfc; }
   /* Worker 状态：busy 高亮 / idle 灰 / 超阈值标离线 */
   tr.busy { background: #e7f6ec; font-weight: 600; }
+  tr.busy td:nth-child(3)::before { content: "● "; color: #2e7d32; }
   tr.idle { color: #8a919b; }
+  tr.idle td:nth-child(3)::before { content: "○ "; color: #9aa2ac; }
   tr.offline { color: #b0b6bf; font-style: italic; }
+  tr.offline td:nth-child(3)::before { content: "✕ "; color: #b0b6bf; }
   /* 任务卡按状态着色：pending 黄 / claimed 蓝 / done 橙 / verified 灰 */
   .st-pending  { background: #fff7d6; }
   .st-claimed  { background: #e3efff; }
@@ -72,7 +80,7 @@
   <h1>agent-orchestra 看板</h1>
   <div class="toolbar">
     <span>上次刷新：<b id="last-updated">--</b></span>
-    <span>轮询间隔：5 秒</span>
+    <span>轮询间隔：10 秒</span>
     <button id="refresh-btn" type="button">手动刷新</button>
     <button id="pause-btn" type="button">暂停</button>
     <span id="svc-status"></span>
@@ -107,8 +115,8 @@
 
 <script>
 // ============ 常量 ============
-var INTERVAL_MS = 5000;           // 默认轮询间隔 5 秒（设计书 §3.2）
-var OFFLINE_MS = 10 * 60 * 1000;  // worker 离线判定阈值（设计书 §3.2）
+var INTERVAL_MS = 10000;          // 默认轮询间隔 10 秒（用户反馈调长，有手动刷新兜底）
+var OFFLINE_MS = 30 * 60 * 1000;  // worker 离线判定阈值 30 分钟（挂载态心跳长，阈值放宽）
 var COMM_LIMIT = 50;              // 交流窗最多显示条数
 
 // ============ 纯函数（无副作用，便于测试） ============
@@ -276,12 +284,21 @@ function nowText() {
   return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
 }
 
-function renderWorkers(items) {
+function renderWorkers(items, taskItems) {
   var rows = parseRegistry(items);
   var flags = offlineFlags(items);
-  // 离线判定优先于 busy/idle 展示（心跳超时即不可信）
-  for (var i = 0; i < rows.length; i++) {
-    if (flags[i]) { rows[i].status = 'offline'; }
+  // busy 推断（协调者热修）：registry 只在注册时写一次，之后不更新；
+  // 改从任务板推断——有 claimed 卡的 assignee 即 busy（零协议改动）
+  var busySet = {};
+  var taskRows = parseTasks(taskItems || []);
+  for (var i = 0; i < taskRows.length; i++) {
+    if (taskRows[i].status === 'claimed') { busySet[taskRows[i].assignee] = true; }
+  }
+  // 离线判定优先；其次任务板推断 busy；否则 idle
+  for (var j = 0; j < rows.length; j++) {
+    if (flags[j]) { rows[j].status = 'offline'; }
+    else if (busySet[rows[j].name]) { rows[j].status = 'busy'; }
+    else { rows[j].status = 'idle'; }
   }
   document.getElementById('workers-body').innerHTML = registryTableHTML(rows);
 }
@@ -300,7 +317,7 @@ function load() {
     var reg = (arr[0] && arr[0].items) || [];
     var tasks = (arr[1] && arr[1].items) || [];
     var all = (arr[2] && arr[2].items) || [];
-    renderWorkers(reg);
+    renderWorkers(reg, tasks);
     document.getElementById('tasks-body').innerHTML = taskTableHTML(parseTasks(tasks));
     document.getElementById('comm-list').innerHTML = commListHTML(parseComm(all, COMM_LIMIT));
     document.getElementById('last-updated').textContent = nowText();

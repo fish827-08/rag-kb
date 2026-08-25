@@ -40,9 +40,9 @@ class Settings(BaseSettings):
     # ---- 本地监控 Agent（0015 设计书，N18）----
     monitor_enabled: bool = True                # 是否启用监控线程
     monitor_interval: int = 10                  # 轮询间隔（分钟），≥1，非法回退默认
-    monitor_startup_run: bool = True            # 启动时立即跑一轮（便于验证）
+    monitor_startup_run: bool = True             # 启动时立即跑一轮（便于验证）
     monitor_max_tokens: int = 300               # 摘要输出上限（护栏：≤300，硬约束）
-    dashboard_autoopen: bool = True             # serve 启动自动打开看板
+    dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
     dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 
     @property

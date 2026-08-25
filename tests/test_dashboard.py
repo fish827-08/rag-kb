@@ -119,12 +119,12 @@ def test_dashboard_html_存在且含三数据源():
 
 
 def test_页面控件():
-    """卡内顶部要素：标题/上次刷新/间隔/手动刷新/暂停继续；默认轮询 5 秒。"""
+    """卡内顶部要素：标题/上次刷新/间隔/手动刷新/暂停继续；默认轮询 10 秒（用户反馈调长）。"""
     html = _html()
     assert "手动刷新" in html
     assert "暂停" in html
     assert "继续" in html
-    assert "5000" in html
+    assert "10000" in html
 
 
 @need_node

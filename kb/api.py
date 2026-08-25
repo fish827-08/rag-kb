@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 from kb import __version__
 from kb.config import Settings, get_settings
 from kb.logging_setup import setup_logging
+from kb.monitor import MonitorAgent
 from kb.mcp import create_mcp_server
 from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
                         WebFetchError)
@@ -251,11 +252,12 @@ def create_app(settings: Settings | None = None,
     mcp_server = create_mcp_server(kb)
     mcp_app = mcp_server.streamable_http_app(streamable_http_path="/")
     watcher: KBWatcher | None = None
+    monitor: MonitorAgent | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        """托管 MCP 会话管理器与目录监听线程的生命周期（含启停日志）。"""
-        nonlocal watcher
+        """托管 MCP 会话管理器、目录监听线程与本地监控线程的生命周期（含启停日志）。"""
+        nonlocal watcher, monitor
         serve_log = logging.getLogger("kb.serve")
         serve_log.info("服务启动 version=%s host=%s port=%s", __version__,
                        kb.settings.api_host, kb.settings.api_port)
@@ -263,11 +265,19 @@ def create_app(settings: Settings | None = None,
         if enable_watcher and str(wd) not in ("", "."):
             watcher = KBWatcher(kb, wd)
             watcher.start()
+        # 本地监控 Agent（TASK-0017）：serve 模式默认启用，仅读配置决定间隔；
+        # TestClient 测试默认不启动（monitor_enabled 默认 False，测试按需开）
+        if kb.settings.monitor_enabled and str(wd) not in ("", "."):
+            monitor = MonitorAgent(kb, kb.settings.monitor_interval)
+            monitor.start()
+            serve_log.info("监控线程启动 interval=%s分钟", kb.settings.monitor_interval)
         try:
             async with mcp_server.session_manager.run():
                 serve_log.info("服务就绪 records=%s", kb.stats().get("records"))
                 yield
         finally:
+            if monitor is not None:
+                monitor.stop()
             if watcher is not None:
                 watcher.stop()
             serve_log.info("服务停止")
