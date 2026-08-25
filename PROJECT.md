@@ -51,15 +51,18 @@
 - 合并提交：`c494e7f`；skill 已装本机 `~\.trae-cn\skills\orchestra-worker\`（**硬链接**，git checkout 后可能断链需重装）
 - 并行协作：已支持多 worker（各自 assignee 领卡）；限制 = 手动唤醒、无依赖图、并行卡不共改同一文件
 
-### ③ P2 — 已规划待实施（2026-08-24 人工拍板顺序）
+### ③ 发展总线 — v2（2026-08-24 人工定稿，生产级多Agent路线）
 
-| 优先级 | 功能 | 路线图 |
+项目总线见 **[ROADMAP.md](ROADMAP.md)**（树形路线+进度，人类入口）。两条主线并行：
+
+| 主线 | 当前阶段 | 下一步 |
 |---|---|---|
-| P2-1 | **日志功能**（整项目统一日志体系） | 见 `docs/superpowers/specs/2026-08-24-logging-design.md` |
-| P2-2 | **鉴权**（API Key） | `docs/superpowers/plans/2026-08-24-p2-roadmap.md` |
-| P2-3 | **遗忘机制**（衰减/去重/冲突覆盖） | 同上 |
-| P2-4 | Web UI（**最后**；方向已定：先 CLI，终端 + agent 交流优先） | 同上 |
-| 砍掉 | Qdrant 接入（与本地优先零常驻约束冲突） | — |
+| **A：kb 记忆服务**（常驻地基） | A1 稳定性（v1.0.2 已交付） | A1.1 watcher 容错 → A1.2 日志 N17-N18 |
+| **B：orchestra 协作**（→生产级） | v1 MVP ✅，B1 P0 三角色闭环启动 | B1.1-B1.7（设计者/registry/交流窗/批量/重启管控/分支/skill） |
+| 支线 | — | L2 终端 REPL（备选）、本地统计 worker（依赖 B1.2） |
+
+- 演进节奏：B1（★）→ B2 反馈闭环（★★）→ B3 成本管控（★★★）→ B4 自适应（★★★★），每阶段闭环稳定一周再进下一阶段
+- 协议已升 **v1.1**：任务分支模式（task/分支→协调者合并）、服务重启管控（worker 只申请，协调者执行）、交流窗（comm: 频道）
 
 ## 3. 目录导览
 
@@ -67,6 +70,7 @@
 rag-kb/
 ├── AGENTS.md            # AI 工作规则（接力必读第 1 份）
 ├── PROJECT.md           # 本文档（接力必读第 2 份）
+├── ROADMAP.md           # 项目发展总线设计书（人类入口，树形路线+进度）
 ├── README.md            # kb 产品说明（快速开始/MCP 挂载/端点速查）
 ├── kb/                  # ① kb 服务源码（8 模块，见设计文档 4.2）
 ├── tests/               # kb 验收测试（65 项）
@@ -104,20 +108,22 @@ venv\Scripts\python.exe orchestra\board.py new-worker worker-1   # 生成 worker
 5. **协作开发**（orchestra 流程）：
    - 协调者任务：用户提需求 → 你拆卡（board.py add，五字段齐+assignee）→ 用户开 worker 任务粘贴 new-worker 引导语 → worker 领卡执行 → 你核验（diff+测试+真服务复验）→ verify 流转 → 统一提交
    - 你当 worker（被粘贴引导语时）：加载 orchestra-worker skill → 查卡 → 单卡单轮 → 回写 → 停止
-6. **接续 P2**：按 `docs/superpowers/plans/2026-08-24-p2-roadmap.md` 的节点顺序，走 TDD + 节点门禁制
+6. **接续总线**：读 `ROADMAP.md` 确认当前位置（当前活跃：A1 稳定性 + B1 P0），按对应计划节点走 TDD + 节点门禁制
 
 ## 6. 文档索引（唯一有效集）
 
 | 文档 | 内容 |
 |---|---|
+| `ROADMAP.md` | **项目发展总线设计书**（人类入口：树形路线+进度+优先级） |
 | `docs/USER_GUIDE.md` | **用户使用手册**（人类用户入口：安装/挂载/协作流程/FAQ） |
 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | kb 唯一设计（需求/架构/API/基准） |
 | `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | kb 节点计划 N1-N16（全部 ✅） |
 | `orchestra/docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md` | orchestra 设计 |
 | `orchestra/docs/superpowers/plans/2026-08-24-agent-orchestra-mvp.md` | orchestra 实施计划（全部 ✅） |
-| `docs/superpowers/specs/2026-08-24-logging-design.md` | P2-1 日志设计 |
-| `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | P2 路线图（本表第 2③节顺序） |
-| `orchestra/protocol.md` + `worker-prompt.md` + `coordinator-prompt.md` | 协作协议三件套 |
+| `docs/superpowers/specs/2026-08-24-logging-design.md` | 日志设计（总线 A1.2，N17-N18） |
+| `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | kb 功能路线（总线 A2-A4） |
+| `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` | orchestra v2 迭代计划（总线 B1 载体） |
+| `orchestra/protocol.md` + `worker-prompt.md` + `coordinator-prompt.md` | 协作协议三件套（v1.1：分支/重启管控/交流窗） |
 | `orchestra/EXPERIMENT.md` | 真机实验指引（可复用作下次实验模板） |
 
 ## 7. 环境备忘（详见 AGENTS.md 第 7 节）

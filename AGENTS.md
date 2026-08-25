@@ -14,14 +14,17 @@
 |---|---|---|
 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | ✅ 唯一有效设计 | 需求、架构、API、里程碑全在这里（已实施完成，2026-08-24 收口） |
 | `AGENTS.md`（本文件） | ✅ 有效 | AI 工作规则 |
+| `ROADMAP.md` | ✅ 有效 | **项目发展总线设计书**（人类入口：树形路线+进度；2026-08-24 v2 总线定稿） |
 | `PROJECT.md` | ✅ 有效 | **接力文档**（项目状态/进度看板/接手指南；新 AI 必读第 2 份，2026-08-24 新增） |
 | `docs/USER_GUIDE.md` | ✅ 有效 | **用户使用手册**（人类用户入口：kb 使用 + MCP 挂载 + orchestra 协作流程，2026-08-24 新增） |
 | `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | ✅ 有效 | 节点计划（门禁与验收测试，N1-N16 全部完成） |
-| `docs/superpowers/specs/2026-08-24-logging-design.md` | ✅ 有效 | P2-1 日志设计（N17-N18 实施依据） |
-| `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | ✅ 有效 | P2 路线图（日志→鉴权→遗忘→Web UI/CLI） |
+| `docs/superpowers/specs/2026-08-24-logging-design.md` | ✅ 有效 | 日志设计（总线 A1.2，N17-N18 实施依据） |
+| `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | ✅ 有效 | kb 功能路线（总线 A2-A4：鉴权→遗忘→CLI/Web UI） |
+| `orchestra/protocol.md` + `worker-prompt.md` + `coordinator-prompt.md` | ✅ 有效 | orchestra 协作协议三件套（v1.1：任务分支/重启管控/交流窗） |
+| `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` | ✅ 有效 | orchestra v2 迭代计划（总线 B1 P0 载体；V2-0 修复卡保留，其余节点按总线 B1.1-B1.7 编号演进） |
 | `README.md` | ✅ 有效 | 项目说明（N16 按新定位重写：快速开始 / MCP 挂载 / 端点速查） |
 | `.mcp.json` | ✅ 有效 | 项目级 MCP 挂载配置（Claude Code 等在本目录启动即连 kb 服务） |
-| `_archive/`（含旧 `README.md`、`ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`、`data/`） | ❌ 已归档（2026-08-23/24） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写** |
+| `_archive/`（含旧 `README.md`、旧 `ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`、`data/`） | ❌ 已归档（2026-08-23/24） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写**（注意：归档内旧 ROADMAP.md 与根目录新 ROADMAP.md 无关） |
 
 ## 2. 项目定位（一句话）
 
