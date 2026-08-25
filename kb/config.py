@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     log_dir: Path = Path("logs")                # 日志目录（相对仓库根；gitignore 排除）
     log_max_bytes: int = 1048576                # 单文件 1MB，超限轮转
     log_backup_count: int = 5                   # 轮转保留备份数（合计 ≤6MB）
+    # ---- 本地监控 Agent（0015 设计书，N18）----
+    monitor_enabled: bool = True                # 是否启用监控线程
+    monitor_interval: int = 10                  # 轮询间隔（分钟），≥1，非法回退默认
+    monitor_startup_run: bool = True            # 启动时立即跑一轮（便于验证）
+    monitor_max_tokens: int = 300               # 摘要输出上限（护栏：≤300，硬约束）
+    dashboard_autoopen: bool = True             # serve 启动自动打开看板
+    dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 
     @property
     def chroma_dir(self) -> Path:
