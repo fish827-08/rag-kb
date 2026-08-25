@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.requests import Request
 from pydantic import BaseModel, Field, field_validator
 
@@ -81,6 +81,43 @@ def _normalize_level(level: str | None) -> str | None:
             "error": "INVALID_LEVEL",
             "message": f"level 非法：{level}，可选 {', '.join(sorted(_LOG_LEVELS))}"})
     return lvl
+
+
+# ---- 根路径极简导航页（N19）：纯字符串 HTML，无模板依赖，配色与看板一致 ----
+_NAV_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>kb 记忆服务</title>
+<style>
+  body { margin: 0; min-height: 100vh; background: #f4f6f8; color: #24292f;
+         font-family: "Microsoft YaHei", system-ui, sans-serif;
+         display: flex; align-items: center; justify-content: center; }
+  .card { width: 420px; max-width: 90vw; border-radius: 12px; overflow: hidden;
+          background: #fff; border: 1px solid #e3e8ee;
+          box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+  .head { padding: 18px 24px; color: #fff;
+          background: linear-gradient(135deg, #1e293b 0%, #312e81 100%); }
+  .head h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  .body { padding: 12px 8px; }
+  .body a { display: block; padding: 12px 16px; margin: 4px 8px; border-radius: 8px;
+            color: #1e293b; text-decoration: none; font-size: 15px;
+            border: 1px solid #e3e8ee; transition: background .15s; }
+  .body a:hover { background: #f0f2f5; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="head"><h1>kb 记忆服务</h1></div>
+    <div class="body">
+      <a href="/api/v1/healthz">API 状态</a>
+      <a href="/dashboard/">HTML 看板</a>
+      <a href="/docs">MCP 端点文档</a>
+    </div>
+  </div>
+</body>
+</html>
+"""
 
 
 class MemoryCreate(BaseModel):
@@ -415,6 +452,11 @@ def create_app(settings: Settings | None = None,
     @app.get("/api/v1/healthz")
     def healthz() -> dict:
         return {"status": "ok", **kb.stats()}
+
+    @app.get("/")
+    def root() -> HTMLResponse:
+        """根路径极简导航页（N19）：纯字符串 HTML，无模板依赖；样式与看板一致。"""
+        return HTMLResponse(_NAV_HTML)
 
     @app.get("/api/v1/logs")
     def get_logs(limit: int = Query(100, ge=1, le=LOG_LIMIT_MAX),
