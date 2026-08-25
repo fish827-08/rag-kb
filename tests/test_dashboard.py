@@ -86,6 +86,15 @@ out.comm = parseComm([
   {content: 'issue消息', tags: ['comm:issue'], source: 'worker-2', updated_at: '2026-08-25T21:30'}
 ], 10);
 out.row_comm = commListHTML(out.comm);
+// TASK-0024：未注册 assignee 补 inferred 灰行（走 renderWorkers 真实渲染路径）
+// registry 仅注册 worker-4；任务卡含未注册的 worker-9（claimed）与 worker-7（done）
+renderWorkers(
+  [{content: '{"worker":"worker-4","model":"qwen3.8-max","status":"busy","last_seen":"' + new Date().toISOString() + '"}'}],
+  [{content: 'TASK-0024 claimed worker-9 | 看板inferred行', updated_at: '2026-08-26T00:00'},
+   {content: 'TASK-0001 done worker-7 | 历史任务', updated_at: '2026-08-25T21:00'},
+   {content: 'TASK-0002 claimed worker-4 | 已注册成员任务', updated_at: '2026-08-25T22:00'}]
+);
+out.worker_rows = document.getElementById('workers-body').innerHTML;
 console.log(JSON.stringify(out));
 """
 
@@ -161,6 +170,49 @@ def test_字段映射_comm过滤与排序(js_out):
     assert js_out["comm"][0]["source"] == "worker-2"
     assert "ch-issue" in js_out["row_comm"]
     assert "ch-done" in js_out["row_comm"]
+
+
+def test_inferred行静态标记():
+    """TASK-0024：HTML 含"未注册 assignee 补 inferred 行"的逻辑与灰行样式标记。"""
+    html = _html()
+    assert "inferred" in html              # 模型列标识与行类名
+    assert "tr.inferred" in html           # 灰行样式类（与既有状态着色体系一致）
+    assert "未注册" in html                  # 补行逻辑的中文注释标记
+    assert html.count("tr.inferred") >= 1
+
+
+@need_node
+def test_inferred行_未注册assignee补灰行(js_out):
+    """TASK-0024：任务卡 assignee 减去 registry 已有者，补显示 inferred 行。
+
+    场景：registry 仅注册 worker-4；任务卡含未注册 worker-9（claimed）
+    与 worker-7（仅 done 卡）。
+    """
+    rows = js_out["worker_rows"]
+    # 未注册且有 claimed 卡 → 补行：成员上板且不重复
+    assert rows.count("worker-9") == 1
+    # worker-9：claimed → busy
+    assert "worker-9" in rows and "busy" in rows
+    # worker-7：仅 done 卡（无 claimed）→ 状态推断为 idle
+    assert "worker-7" in rows and "idle" in rows
+    # 补行使用灰行类名
+    assert 'class="inferred"' in rows
+    # 已注册成员不受影响、不重复：worker-4 仅 1 行，模型列保持注册值，状态按 claimed 推断 busy
+    assert rows.count("worker-4") == 1
+    assert "qwen3.8-max" in rows
+
+
+@need_node
+def test_inferred行_已注册成员不重复且模型列不被覆盖(js_out):
+    """TASK-0024：已注册成员不因任务卡再次出现 inferred 模型列（防重复/防串扰）。"""
+    rows = js_out["worker_rows"]
+    # 全表恰好两条补行（worker-9 与 worker-7），模型列 'inferred' 恰出现 2 次（行类名另计）
+    assert rows.count('<td>inferred</td>') == 2
+    # worker-4 所在行不含 inferred 模型列
+    seg = rows.split("</tr>")
+    w4 = [s for s in seg if "worker-4" in s]
+    assert len(w4) == 1
+    assert "inferred" not in w4[0]
 
 
 def test_kb挂载dashboard返回200(env_isolated):

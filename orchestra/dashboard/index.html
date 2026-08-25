@@ -59,6 +59,10 @@
   tr.idle td:nth-child(3)::before { content: "○ "; color: #9aa2ac; }
   tr.offline { color: #b0b6bf; font-style: italic; }
   tr.offline td:nth-child(3)::before { content: "✕ "; color: #b0b6bf; }
+  /* 未注册成员推断行（TASK-0024）：干过活但未注册者补灰色行，与 idle/offline 灰系一致 */
+  tr.inferred { color: #8a919b; background: #f0f2f4; }
+  tr.inferred td:nth-child(3)::before { content: "○ "; color: #9aa2ac; }
+  tr.inferred td:nth-child(2) { font-style: italic; }
   /* 任务卡按状态着色：pending 黄 / claimed 蓝 / done 橙 / verified 灰 */
   .st-pending  { background: #fff7d6; }
   .st-claimed  { background: #e3efff; }
@@ -185,6 +189,39 @@ function offlineFlags(items) {
   return flags;
 }
 
+// 与 parseRegistry 同规则跳过坏记录，返回有效记录的名字集合（供未注册判定）
+function registryNames(items) {
+  var names = {};
+  for (var i = 0; i < (items || []).length; i++) {
+    var d = null;
+    try { d = JSON.parse(items[i].content); } catch (e) { continue; }
+    if (!d || typeof d !== 'object') { continue; }
+    names[d.worker || '?'] = true;
+  }
+  return names;
+}
+
+// 未注册成员补行（TASK-0024）：任务卡 assignee 集合减去 registry 已有者，
+// 补显示一行：模型列标 'inferred'，状态按该成员是否有 claimed 卡推断（有→busy 否则 idle）；
+// 按名字去重，出现顺序取任务卡顺序（与 registry 行同构，便于复用渲染）
+function inferredWorkerRows(taskRows, busySet, regNames) {
+  var seen = {};
+  var rows = [];
+  for (var i = 0; i < taskRows.length; i++) {
+    var name = taskRows[i].assignee;
+    if (!name || regNames[name] || seen[name]) { continue; }
+    seen[name] = true;
+    rows.push({
+      name: name,
+      model: 'inferred',                          // 模型列标识：未注册，模型未知
+      status: busySet[name] ? 'busy' : 'idle',    // 状态按 claimed 卡推断
+      lastSeen: taskRows[i].time,
+      inferred: true                              // 渲染时用于套灰行样式
+    });
+  }
+  return rows;
+}
+
 // taskboard 记录 → 卡行字段（首行解析 + updated_at→时间）；坏首行跳过
 function parseTasks(items) {
   var rows = [];
@@ -240,7 +277,9 @@ function registryTableHTML(rows) {
   var html = '';
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
-    var cls = r.status === 'busy' ? 'busy' : (r.status === 'offline' ? 'offline' : 'idle');
+    // 未注册推断行（TASK-0024）优先用灰行类名，与既有状态着色体系并存不冲突
+    var cls = r.inferred ? 'inferred'
+      : (r.status === 'busy' ? 'busy' : (r.status === 'offline' ? 'offline' : 'idle'));
     html += '<tr class="' + cls + '"><td>' + escapeHtml(r.name) + '</td><td>'
       + escapeHtml(r.model) + '</td><td>' + escapeHtml(r.status) + '</td><td>'
       + escapeHtml(r.lastSeen) + '</td></tr>';
@@ -313,6 +352,8 @@ function renderWorkers(items, taskItems) {
     else if (busySet[rows[j].name]) { rows[j].status = 'busy'; }
     else { rows[j].status = 'idle'; }
   }
+  // 未注册 assignee 补 inferred 灰行（TASK-0024）：任务卡 assignee 减去 registry 已有者
+  rows = rows.concat(inferredWorkerRows(taskRows, busySet, registryNames(items)));
   document.getElementById('workers-body').innerHTML = registryTableHTML(rows);
 }
 
