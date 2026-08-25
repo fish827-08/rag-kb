@@ -7,4 +7,5 @@ chroma_db/
 kb_data/
 models/
 .idea/
-.pytest_cache/
+.pytest_cache/logs/
+logs/

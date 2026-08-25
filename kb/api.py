@@ -347,6 +347,13 @@ def create_app(settings: Settings | None = None,
     # MCP streamable http 端点挂载在 /mcp（子路径 "/"，即完整路径 /mcp/）；
     # 外包 SSE charset 中间件，保证 text/event-stream 响应头带 charset=utf-8
     app.mount("/mcp", _wrap_sse_charset(mcp_app))
+    # HTML 看板静态挂载（TASK-0014 集成项）：kb 同源提供 /dashboard，浏览器同源策略免 CORS；
+    # 目录不存在时静默跳过（orchestra/dashboard 仅本仓库存在，不影响 kb 独立部署）
+    dashboard_dir = Path(__file__).resolve().parent.parent / "orchestra" / "dashboard"
+    if dashboard_dir.is_dir():
+        from starlette.staticfiles import StaticFiles
+        app.mount("/dashboard", StaticFiles(directory=str(dashboard_dir), html=True),
+                  name="dashboard")
     # 兜底：整体再包 JSON charset 中间件，保证所有 application/json
     # 响应头带 charset=utf-8（含 422 校验错误与错误 JSON）
     app = _wrap_json_charset(app)

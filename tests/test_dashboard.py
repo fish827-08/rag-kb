@@ -161,3 +161,18 @@ def test_字段映射_comm过滤与排序(js_out):
     assert js_out["comm"][0]["source"] == "worker-2"
     assert "ch-issue" in js_out["row_comm"]
     assert "ch-done" in js_out["row_comm"]
+
+
+def test_kb挂载dashboard返回200(env_isolated):
+    """TASK-0014 集成项（协调者实施）：GET /dashboard/ 返回 200 且 text/html。"""
+    from fastapi.testclient import TestClient
+
+    from kb.api import create_app
+
+    with TestClient(create_app()) as c:
+        resp = c.get("/dashboard/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+        # 页面可渲染的基本标记：标题与轮询脚本
+        assert "<title>" in resp.text
+        assert "setInterval" in resp.text
