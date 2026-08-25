@@ -11,6 +11,8 @@
     board.py claim TASK-XXXX --assignee worker-N
     board.py register NAME --model X --client Y
     board.py workers
+    board.py report --channel done|issue|test|system --from NAME --text "..."
+    board.py list-comm [--channel X] [--limit N]
     board.py show TASK-0003
     board.py verify TASK-0003 --pass | --reject [--note 原因]
     board.py new-worker NAME
@@ -27,6 +29,9 @@ KB_BASE = "http://127.0.0.1:8000/api/v1"
 TAG = "taskboard"
 # worker 注册表记录 tag（orchestra v2 V2-1）
 REGISTRY_TAG = "registry"
+# 交流窗频道枚举与 text 上限（protocol §7 / V2-2 设计书）
+COMM_CHANNELS = ("done", "issue", "test", "system")
+COMM_TEXT_LIMIT = 300
 # 各字段字符上限（设计文档第 4 节）
 LIMITS = {"title": 30, "goal": 300, "input": 300,
           "constraints": 200, "acceptance": 200, "result": 1000}
@@ -292,6 +297,68 @@ def cmd_workers() -> None:
               f"{data.get('status', '?')} {data.get('last_seen', '?')}")
 
 
+def cmd_report(channel: str, from_: str, text: str) -> None:
+    """写一条交流窗记录（tag=comm:<channel>，source=report 者）。
+
+    校验：channel 为枚举、from 非空、text 非空且 ≤300 字符（协议 §7 上限）；
+    不合法抛 ValueError（不发请求）。
+    """
+    if channel not in COMM_CHANNELS:
+        raise ValueError(
+            f"channel 非法：{channel!r}，可选 {', '.join(COMM_CHANNELS)}")
+    if not from_:
+        raise ValueError("report 需要 --from 非空")
+    if not text.strip():
+        raise ValueError("report 需要 --text 非空")
+    if len(text) > COMM_TEXT_LIMIT:
+        raise ValueError(
+            f"text 超长：{len(text)} 字符 > 上限 {COMM_TEXT_LIMIT}")
+    resp = _request("POST", "/memories",
+                    {"content": text, "tags": [f"comm:{channel}"],
+                     "source": from_})
+    print(f"已写 comm:{channel}（记录 {resp['id']}）")
+
+
+def _comm_tag(tags) -> str | None:
+    """取记录中首个 comm:* 标签；无则返回 None。"""
+    for t in tags or []:
+        if t.startswith("comm:"):
+            return t
+    return None
+
+
+def _truncate(text: str, n: int = 60) -> str:
+    """超长截断至 n 字符并追加省略号，避免刷屏。"""
+    return text[:n] + "…" if len(text) > n else text
+
+
+def cmd_list_comm(channel: str | None = None, limit: int = 10) -> None:
+    """按频道列最新 N 条交流窗记录；缺省频道列全部 comm:*，updated_at 降序。
+
+    输出一行一条：HH:MM | comm:<tag> | <source> | <text 截断>；空表明确提示。
+    """
+    if limit < 1:
+        raise ValueError(f"limit 须 ≥1，收到 {limit}")
+    if channel is not None:
+        cards = _request(
+            "GET", f"/memories?tag=comm:{channel}&limit=1000").get("items", [])
+        # 服务端按 tag 过滤后再本地复核，避免脏数据混入
+        cards = [c for c in cards
+                 if _comm_tag(c.get("tags")) == f"comm:{channel}"]
+    else:
+        cards = _request("GET", "/memories?limit=1000").get("items", [])
+        cards = [c for c in cards if _comm_tag(c.get("tags")) is not None]
+    if not cards:
+        print("无交流窗记录")
+        return
+    cards.sort(key=lambda c: c.get("updated_at", ""), reverse=True)
+    for card in cards[:limit]:
+        tag = _comm_tag(card.get("tags")) or "comm:?"
+        print(f"{_fmt_time(card.get('updated_at', ''))} | {tag} "
+              f"| {card.get('source') or '?'} | "
+              f"{_truncate(card.get('content', ''))}")
+
+
 WORKER_INTRO = """你是 {name}，agent-orchestra 的执行者（worker）。
 请在当前任务中执行 skill：orchestra-worker，然后按其协议开始工作：
 查卡 → 认领 → 执行 → 回写 → 停止。若无待办任务，回复待命即可。"""
@@ -345,6 +412,19 @@ def main() -> None:
 
     sub.add_parser("workers", help="一行一 worker 列表")
 
+    p_report = sub.add_parser("report", help="写一条交流窗记录")
+    p_report.add_argument("--channel", required=True, choices=COMM_CHANNELS,
+                          help="交流窗频道")
+    p_report.add_argument("--from", dest="from_", required=True,
+                          help="report 者身份")
+    p_report.add_argument("--text", required=True, help="结论级内容（≤300 字符）")
+
+    p_list_comm = sub.add_parser("list-comm", help="按频道列交流窗记录")
+    p_list_comm.add_argument("--channel", choices=COMM_CHANNELS, default=None,
+                             help="缺省列全部 comm:* 频道")
+    p_list_comm.add_argument("--limit", type=int, default=10,
+                             help="最多列几条（默认 10）")
+
     args = parser.parse_args()
     try:
         if args.command == "add":
@@ -367,6 +447,10 @@ def main() -> None:
             cmd_register(args.name, model=args.model, client=args.client)
         elif args.command == "workers":
             cmd_workers()
+        elif args.command == "report":
+            cmd_report(channel=args.channel, from_=args.from_, text=args.text)
+        elif args.command == "list-comm":
+            cmd_list_comm(channel=args.channel, limit=args.limit)
     except BoardUnavailable as e:
         print(f"错误：{e}\n请先启动 kb 服务：python -m kb serve",
               file=sys.stderr)
