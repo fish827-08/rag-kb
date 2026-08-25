@@ -16,6 +16,12 @@
 1. 建分支 → `board.py add --assignee … --title … …`（约束注明分支）
 2. `board.py new-worker NAME` 生成引导语，用户粘贴到新任务
 
+## 批量模式（B1.4，v1.2）
+
+- worker 默认单卡单轮；用户发"继续"时 worker 可能连续领卡执行（上限 5 轮 / 30 分钟，先到为准）
+- 拆卡粒度不变：不必刻意多攒卡，批量模式下一次唤醒可消化多张同 assignee 卡
+- 核验/打回流程不变：claimed 超 30 分钟无 done 仍按打回处理
+
 ## 核验流程
 
 1. `board.py status` 发现 done/failed 卡
