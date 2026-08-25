@@ -9,6 +9,8 @@
     board.py status
     board.py list-pending
     board.py claim TASK-XXXX --assignee worker-N
+    board.py register NAME --model X --client Y
+    board.py workers
     board.py show TASK-0003
     board.py verify TASK-0003 --pass | --reject [--note 原因]
     board.py new-worker NAME
@@ -23,6 +25,8 @@ from datetime import datetime
 
 KB_BASE = "http://127.0.0.1:8000/api/v1"
 TAG = "taskboard"
+# worker 注册表记录 tag（orchestra v2 V2-1）
+REGISTRY_TAG = "registry"
 # 各字段字符上限（设计文档第 4 节）
 LIMITS = {"title": 30, "goal": 300, "input": 300,
           "constraints": 200, "acceptance": 200, "result": 1000}
@@ -101,6 +105,11 @@ def _fmt_time(updated_at: str) -> str:
         return datetime.fromisoformat(updated_at).strftime("%H:%M")
     except (ValueError, TypeError):
         return "???"
+
+
+def _now_iso() -> str:
+    """当前本地时间 ISO 格式（分钟精度），registry 记录时间戳用。"""
+    return datetime.now().strftime("%Y-%m-%dT%H:%M")
 
 
 def cmd_status() -> None:
@@ -234,6 +243,55 @@ def cmd_verify(task_id: str, action: str, note: str) -> None:
     print(f"{task_id} → {new_status}" + (f"（备注：{note}）" if note else ""))
 
 
+def cmd_register(name: str, model: str, client: str) -> None:
+    """注册/刷新 worker 身份（tag=registry，内容为 JSON）。
+
+    首次注册写新记录（registered_at/last_seen 均为当前时间，status=idle）；
+    同名重复注册只刷新 model/client 与 last_seen，不重复建卡。
+    """
+    if not name or not model or not client:
+        raise ValueError("register 需要 name、--model、--client 均非空")
+    cards = _request("GET", f"/memories?tag={REGISTRY_TAG}&limit=1000") \
+        .get("items", [])
+    for card in cards:
+        try:
+            data = json.loads(card["content"])
+        except (ValueError, TypeError):
+            continue
+        if data.get("worker") == name:
+            data["model"] = model
+            data["client"] = client
+            data["last_seen"] = _now_iso()
+            _request("PATCH", f"/memories/{card['id']}",
+                     {"content": json.dumps(data, ensure_ascii=False)})
+            print(f"已刷新 {name}（model: {model}, client: {client}）")
+            return
+    data = {"worker": name, "model": model, "client": client,
+            "registered_at": _now_iso(), "last_seen": _now_iso(),
+            "status": "idle"}
+    _request("POST", "/memories",
+             {"content": json.dumps(data, ensure_ascii=False),
+              "tags": [REGISTRY_TAG]})
+    print(f"已注册 {name}（model: {model}, client: {client}）")
+
+
+def cmd_workers() -> None:
+    """一行一 worker：名字 模型 状态 最后活跃；空表明确提示。"""
+    cards = _request("GET", f"/memories?tag={REGISTRY_TAG}&limit=1000") \
+        .get("items", [])
+    if not cards:
+        print("无已注册 worker")
+        return
+    for card in cards:
+        try:
+            data = json.loads(card["content"])
+        except (ValueError, TypeError):
+            print("[警告] registry 记录内容非 JSON，已跳过")
+            continue
+        print(f"{data.get('worker', '?')} {data.get('model', '?')} "
+              f"{data.get('status', '?')} {data.get('last_seen', '?')}")
+
+
 WORKER_INTRO = """你是 {name}，agent-orchestra 的执行者（worker）。
 请在当前任务中执行 skill：orchestra-worker，然后按其协议开始工作：
 查卡 → 认领 → 执行 → 回写 → 停止。若无待办任务，回复待命即可。"""
@@ -280,6 +338,13 @@ def main() -> None:
     p_new = sub.add_parser("new-worker", help="打印 worker 引导语")
     p_new.add_argument("name")
 
+    p_register = sub.add_parser("register", help="注册/刷新 worker 身份")
+    p_register.add_argument("name")
+    p_register.add_argument("--model", required=True, help="模型名")
+    p_register.add_argument("--client", required=True, help="客户端名")
+
+    sub.add_parser("workers", help="一行一 worker 列表")
+
     args = parser.parse_args()
     try:
         if args.command == "add":
@@ -298,6 +363,10 @@ def main() -> None:
             cmd_verify(args.task_id, action=args.action, note=args.note)
         elif args.command == "new-worker":
             cmd_new_worker(args.name)
+        elif args.command == "register":
+            cmd_register(args.name, model=args.model, client=args.client)
+        elif args.command == "workers":
+            cmd_workers()
     except BoardUnavailable as e:
         print(f"错误：{e}\n请先启动 kb 服务：python -m kb serve",
               file=sys.stderr)
