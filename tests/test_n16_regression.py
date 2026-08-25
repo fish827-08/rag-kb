@@ -10,9 +10,9 @@ def test_全部模块可导入():
 
 def test_旧代码已归档且根目录无残留():
     from pathlib import Path
-    # 根目录不得残留旧路径（已提前归档，2026-08-23）
-    for p in ("rag_kb", "app", "demo.py", "test_py", "notes", "step_doc",
-              "ROADMAP.md"):
+    # 根目录不得残留旧路径（已提前归档，2026-08-23；
+    # 注意：根目录 ROADMAP.md 是 2026-08-24 新建的 Bus 总线设计书，与归档内旧 ROADMAP.md 无关，不在禁止之列）
+    for p in ("rag_kb", "app", "demo.py", "test_py", "notes", "step_doc"):
         assert not Path(p).exists(), f"根目录残留旧文件: {p}"
     # 归档目录必须完整
     for p in ("_archive/rag_kb", "_archive/app", "_archive/demo.py",
