@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-orchestra 看板</title>
+<style>
+  /* ===== 全局 ===== */
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #f4f6f8; color: #24292f;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  /* ===== 顶栏：标题 / 上次刷新 / 间隔 / 手动刷新 / 暂停继续 ===== */
+  header {
+    background: #1f2937; color: #fff; padding: 12px 24px;
+    display: flex; flex-wrap: wrap; gap: 12px;
+    align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 14px;
+    align-items: center; font-size: 13px;
+  }
+  .toolbar button {
+    border: 1px solid #4b5563; background: #374151; color: #fff;
+    border-radius: 6px; padding: 4px 12px; font-size: 13px; cursor: pointer;
+  }
+  .toolbar button:hover { background: #4b5563; }
+  #svc-status.err { color: #ff6b6b; font-weight: 700; }
+  /* ===== 主体三区块 ===== */
+  main { padding: 16px 24px; display: grid; gap: 16px; }
+  section {
+    background: #fff; border: 1px solid #e3e8ee;
+    border-radius: 8px; padding: 12px 16px;
+  }
+  section h2 { font-size: 15px; margin: 2px 0 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eef1f4; }
+  th { color: #57606a; font-weight: 600; }
+  /* Worker 状态：busy 高亮 / idle 灰 / 超阈值标离线 */
+  tr.busy { background: #e7f6ec; font-weight: 600; }
+  tr.idle { color: #8a919b; }
+  tr.offline { color: #b0b6bf; font-style: italic; }
+  /* 任务卡按状态着色：pending 黄 / claimed 蓝 / done 橙 / verified 灰 */
+  .st-pending  { background: #fff7d6; }
+  .st-claimed  { background: #e3efff; }
+  .st-done     { background: #ffe9d6; }
+  .st-verified { background: #eef0f2; color: #6b7280; }
+  /* 交流窗滚动区：channel 着色 done 绿 / issue 红 / test 蓝 / system 灰 */
+  .comm-scroll {
+    max-height: 320px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .comm-item {
+    border-left: 4px solid #ccc; background: #f8fafc;
+    padding: 6px 10px; font-size: 13px; border-radius: 4px;
+  }
+  .ch-done   { border-left-color: #2e7d32; }
+  .ch-issue  { border-left-color: #c62828; }
+  .ch-test   { border-left-color: #1565c0; }
+  .ch-system { border-left-color: #9e9e9e; }
+  .comm-tag  { font-weight: 700; margin-right: 8px; }
+  .comm-src  { color: #57606a; margin-right: 8px; }
+  .comm-time { color: #98a1ab; margin-right: 8px; }
+  .empty { color: #98a1ab; padding: 8px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>agent-orchestra 看板</h1>
+  <div class="toolbar">
+    <span>上次刷新：<b id="last-updated">--</b></span>
+    <span>轮询间隔：5 秒</span>
+    <button id="refresh-btn" type="button">手动刷新</button>
+    <button id="pause-btn" type="button">暂停</button>
+    <span id="svc-status"></span>
+  </div>
+</header>
+
+<main>
+  <!-- ① Worker 状态表 -->
+  <section>
+    <h2>Worker 状态</h2>
+    <table>
+      <thead><tr><th>名字</th><th>模型</th><th>状态</th><th>最后活跃</th></tr></thead>
+      <tbody id="workers-body"></tbody>
+    </table>
+  </section>
+
+  <!-- ② 任务看板 -->
+  <section>
+    <h2>任务看板</h2>
+    <table>
+      <thead><tr><th>卡号</th><th>状态</th><th>执行者</th><th>更新时间</th><th>标题</th></tr></thead>
+      <tbody id="tasks-body"></tbody>
+    </table>
+  </section>
+
+  <!-- ③ 交流窗滚动区 -->
+  <section>
+    <h2>交流窗</h2>
+    <div id="comm-list" class="comm-scroll"></div>
+  </section>
+</main>
+
+<script>
+// ============ 常量 ============
+var INTERVAL_MS = 5000;           // 默认轮询间隔 5 秒（设计书 §3.2）
+var OFFLINE_MS = 10 * 60 * 1000;  // worker 离线判定阈值（设计书 §3.2）
+var COMM_LIMIT = 50;              // 交流窗最多显示条数
+
+// ============ 纯函数（无副作用，便于测试） ============
+
+// 解析任务卡首行；正则与 board.py 的 parse_header 保持一致
+function parseHeader(content) {
+  var line = String(content == null ? '' : content).split('\n')[0].trim();
+  var m = line.match(/^(TASK-\d{4}) (\w+) (\S+) \| (.+)$/);
+  if (!m) { return null; }
+  return { taskId: m[1], status: m[2], assignee: m[3], title: m[4] };
+}
+
+// ISO 时间 → HH:MM；解析失败返回 '???'（同 board.py _fmt_time）
+function fmtTime(iso) {
+  var m = String(iso == null ? '' : iso).match(/T(\d{2}:\d{2})/);
+  return m ? m[1] : '???';
+}
+
+// registry 记录（content 为 JSON）→ worker 行字段；非 JSON 跳过
+// 字段映射（设计书 §0）：worker→名字、model→模型、status→状态、last_seen→最后活跃
+function parseRegistry(items) {
+  var rows = [];
+  for (var i = 0; i < (items || []).length; i++) {
+    var d = null;
+    try { d = JSON.parse(items[i].content); } catch (e) { continue; }
+    if (!d || typeof d !== 'object') { continue; }
+    rows.push({
+      name: d.worker || '?',
+      model: d.model || '?',
+      status: d.status || '?',
+      lastSeen: fmtTime(d.last_seen)
+    });
+  }
+  return rows;
+}
+
+// last_seen 距今超阈值判为离线；无法解析同样视为离线
+function isOffline(lastSeenIso) {
+  var t = Date.parse(lastSeenIso);
+  if (isNaN(t)) { return true; }
+  return (Date.now() - t) > OFFLINE_MS;
+}
+
+// 与 parseRegistry 同规则跳过坏记录，返回每条有效记录的离线标志（顺序对齐）
+function offlineFlags(items) {
+  var flags = [];
+  for (var i = 0; i < (items || []).length; i++) {
+    var d = null;
+    try { d = JSON.parse(items[i].content); } catch (e) { continue; }
+    if (!d || typeof d !== 'object') { continue; }
+    flags.push(isOffline(d.last_seen));
+  }
+  return flags;
+}
+
+// taskboard 记录 → 卡行字段（首行解析 + updated_at→时间）；坏首行跳过
+function parseTasks(items) {
+  var rows = [];
+  for (var i = 0; i < (items || []).length; i++) {
+    var h = parseHeader(items[i].content);
+    if (!h) { continue; }
+    h.time = fmtTime(items[i].updated_at);
+    rows.push(h);
+  }
+  return rows;
+}
+
+// 取记录中首个 comm:* 标签；无则返回 null（同 board.py _comm_tag）
+function commTag(tags) {
+  for (var i = 0; i < (tags || []).length; i++) {
+    if (String(tags[i]).indexOf('comm:') === 0) { return String(tags[i]); }
+  }
+  return null;
+}
+
+// 交流窗：只留 tag 前缀 comm:* 者，提取频道，按 updated_at 降序取前 limit 条
+function parseComm(items, limit) {
+  var rows = [];
+  for (var i = 0; i < (items || []).length; i++) {
+    var tag = commTag(items[i].tags);
+    if (!tag) { continue; }
+    rows.push({
+      channel: tag.slice(5),
+      source: items[i].source || '?',
+      time: fmtTime(items[i].updated_at),
+      content: items[i].content || '',
+      _u: items[i].updated_at || ''
+    });
+  }
+  rows.sort(function (a, b) {
+    return a._u < b._u ? 1 : (a._u > b._u ? -1 : 0);
+  });
+  return rows.slice(0, limit || COMM_LIMIT).map(function (r) {
+    return { channel: r.channel, source: r.source, time: r.time, content: r.content };
+  });
+}
+
+// HTML 转义，避免记录内容破坏页面结构
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ============ 渲染（行 → HTML 片段） ============
+
+function registryTableHTML(rows) {
+  if (!rows.length) { return '<tr><td colspan="4" class="empty">无已注册 worker</td></tr>'; }
+  var html = '';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var cls = r.status === 'busy' ? 'busy' : (r.status === 'offline' ? 'offline' : 'idle');
+    html += '<tr class="' + cls + '"><td>' + escapeHtml(r.name) + '</td><td>'
+      + escapeHtml(r.model) + '</td><td>' + escapeHtml(r.status) + '</td><td>'
+      + escapeHtml(r.lastSeen) + '</td></tr>';
+  }
+  return html;
+}
+
+function taskTableHTML(rows) {
+  if (!rows.length) { return '<tr><td colspan="5" class="empty">无任务卡</td></tr>'; }
+  var html = '';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    html += '<tr class="st-' + escapeHtml(r.status) + '"><td>' + escapeHtml(r.taskId)
+      + '</td><td>' + escapeHtml(r.status) + '</td><td>' + escapeHtml(r.assignee)
+      + '</td><td>' + escapeHtml(r.time) + '</td><td>' + escapeHtml(r.title) + '</td></tr>';
+  }
+  return html;
+}
+
+function commListHTML(rows) {
+  if (!rows.length) { return '<div class="empty">无交流窗记录</div>'; }
+  var html = '';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    html += '<div class="comm-item ch-' + escapeHtml(r.channel) + '">'
+      + '<span class="comm-tag">' + escapeHtml(r.channel) + '</span>'
+      + '<span class="comm-src">' + escapeHtml(r.source) + '</span>'
+      + '<span class="comm-time">' + escapeHtml(r.time) + '</span>'
+      + '<span class="comm-text">' + escapeHtml(r.content) + '</span></div>';
+  }
+  return html;
+}
+
+// ============ 数据加载与轮询 ============
+
+// 相对路径 API 基址：页面由协调者挂载到 /dashboard 时需回退一级到接口根
+function apiBase() {
+  if (typeof location !== 'undefined' && location.pathname
+      && location.pathname.indexOf('/dashboard') === 0) {
+    return '../api/v1';
+  }
+  return 'api/v1';
+}
+
+function setStatus(ok) {
+  var el = document.getElementById('svc-status');
+  if (ok) { el.textContent = ''; el.classList.remove('err'); }
+  else { el.textContent = '服务不可用'; el.classList.add('err'); }
+}
+
+function nowText() {
+  var d = new Date();
+  function p(n) { return (n < 10 ? '0' : '') + n; }
+  return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function renderWorkers(items) {
+  var rows = parseRegistry(items);
+  var flags = offlineFlags(items);
+  // 离线判定优先于 busy/idle 展示（心跳超时即不可信）
+  for (var i = 0; i < rows.length; i++) {
+    if (flags[i]) { rows[i].status = 'offline'; }
+  }
+  document.getElementById('workers-body').innerHTML = registryTableHTML(rows);
+}
+
+// 一轮加载：并行 fetch 三数据源 → 渲染；任一失败显示"服务不可用"不崩溃
+function load() {
+  var base = apiBase();
+  var reqs = [
+    fetch(base + '/memories?tag=registry&limit=1000'),
+    fetch(base + '/memories?tag=taskboard&limit=1000'),
+    fetch(base + '/memories?limit=1000')
+  ];
+  Promise.all(reqs.map(function (p) {
+    return p.then(function (r) { return r.json(); });
+  })).then(function (arr) {
+    var reg = (arr[0] && arr[0].items) || [];
+    var tasks = (arr[1] && arr[1].items) || [];
+    var all = (arr[2] && arr[2].items) || [];
+    renderWorkers(reg);
+    document.getElementById('tasks-body').innerHTML = taskTableHTML(parseTasks(tasks));
+    document.getElementById('comm-list').innerHTML = commListHTML(parseComm(all, COMM_LIMIT));
+    document.getElementById('last-updated').textContent = nowText();
+    setStatus(true);
+  }).catch(function () { setStatus(false); });
+}
+
+// 暂停 / 继续
+var paused = false;
+var timerId = null;
+
+function startTimer() { timerId = setInterval(load, INTERVAL_MS); }
+function stopTimer() { if (timerId !== null) { clearInterval(timerId); } timerId = null; }
+
+function togglePause() {
+  var btn = document.getElementById('pause-btn');
+  if (paused) { startTimer(); btn.textContent = '暂停'; }
+  else { stopTimer(); btn.textContent = '继续'; }
+  paused = !paused;
+}
+
+// ============ 启动 ============
+document.getElementById('refresh-btn').addEventListener('click', function () { load(); });
+document.getElementById('pause-btn').addEventListener('click', togglePause);
+
+load();       // 首屏立即渲染一轮
+startTimer(); // 默认 5 秒轮询
+</script>
+</body>
+</html>
