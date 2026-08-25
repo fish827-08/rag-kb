@@ -2,11 +2,12 @@
 import logging
 import tempfile
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
 from pydantic import BaseModel, Field, field_validator
@@ -18,6 +19,67 @@ from kb.mcp import create_mcp_server
 from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
                         WebFetchError)
 from kb.watcher import KBWatcher
+
+
+# ---- 日志查看端点常量（N18）----
+SCAN_MAX = 20000          # /logs 尾部向后扫描行数上限
+LOG_LIMIT_MAX = 1000      # /logs limit 上限
+EVENT_WINDOW_MAX = 10000  # /logs/events window 上限
+_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+# logging 缩写别名（大小写不敏感归一）：warn/err/fatal → 标准级别名
+_LOG_LEVEL_ALIASES = {"WARN": "WARNING", "ERR": "ERROR", "FATAL": "CRITICAL"}
+
+
+def _parse_log_line(line: str) -> dict | None:
+    """解析一行日志（asctime | level | name | message）为 dict。
+
+    message 可能含 "|" 需保留余下全部（只切前 3 个 |）；字段不足或内容
+    非法返回 None，调用方跳过不中断读取。返回 dict 不含 line 字段，
+    行号由调用方按文件位置补充。
+    """
+    if not line or not line.strip():
+        return None
+    parts = line.split("|", 3)
+    if len(parts) < 4:
+        return None
+    time_s, level_s, name_s, message = (p.strip() for p in parts)
+    if not time_s or not level_s or not name_s or not message:
+        return None
+    return {"time": time_s, "level": level_s, "logger": name_s,
+            "message": message}
+
+
+def _read_log_tail(path: Path, scan_max: int = SCAN_MAX) -> tuple[list[str], bool, int]:
+    """读日志文件尾部至多 scan_max 行，返回 (lines, truncated, start_line)。
+
+    lines 按文件顺序（时间升序）；truncated 表示文件行数超过 scan_max 提前
+    截断（可能漏掉更早行）；start_line 为 lines[0] 的 1 基文件行号（定位用）。
+    文件不存在/为空 → ([], False, 1)，不视为错误；文件可存在但不可读时抛
+    OSError（由端点转 500 LOG_READ_ERROR）。
+    """
+    if not path.exists():
+        return [], False, 1
+    total = 0
+    tail = deque(maxlen=scan_max)
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            total += 1
+            tail.append(line.rstrip("\n"))
+    truncated = total > scan_max
+    start_line = max(total - len(tail) + 1, 1)
+    return list(tail), truncated, start_line
+
+
+def _normalize_level(level: str | None) -> str | None:
+    """level 参数：大小写不敏感 + 缩写别名归一（warn→WARNING 等）；非法抛 422。"""
+    if level is None:
+        return None
+    lvl = _LOG_LEVEL_ALIASES.get(level.strip().upper(), level.strip().upper())
+    if lvl not in _LOG_LEVELS:
+        raise HTTPException(status_code=422, detail={
+            "error": "INVALID_LEVEL",
+            "message": f"level 非法：{level}，可选 {', '.join(sorted(_LOG_LEVELS))}"})
+    return lvl
 
 
 class MemoryCreate(BaseModel):
@@ -343,6 +405,64 @@ def create_app(settings: Settings | None = None,
     @app.get("/api/v1/healthz")
     def healthz() -> dict:
         return {"status": "ok", **kb.stats()}
+
+    @app.get("/api/v1/logs")
+    def get_logs(limit: int = Query(100, ge=1, le=LOG_LIMIT_MAX),
+                 level: str | None = Query(None),
+                 event: str | None = Query(None)) -> dict:
+        """日志查看（N18）：尾部向前扫描，按 level/event 过滤凑满 limit 条，按文件序返回。
+
+        limit 越界 / level 非法 → 422；文件不可读 → 500 LOG_READ_ERROR；
+        文件不存在或为空 → items=[]（不视为错误）。
+        """
+        lvl = _normalize_level(level)
+        try:
+            lines, truncated, start_line = _read_log_tail(kb.settings.log_file)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail={
+                "error": "LOG_READ_ERROR", "message": str(exc)})
+        items = []
+        for back_idx, line in enumerate(reversed(lines)):
+            parsed = _parse_log_line(line)
+            if parsed is None:
+                continue
+            if lvl and parsed["level"].upper() != lvl:
+                continue
+            if event and event.lower() not in parsed["message"].lower():
+                continue
+            parsed["line"] = start_line + (len(lines) - 1 - back_idx)
+            items.append(parsed)
+            if len(items) >= limit:
+                break
+        items.reverse()
+        return {"items": items, "total": len(items), "truncated": truncated}
+
+    @app.get("/api/v1/logs/events")
+    def get_log_events(window: int = Query(1000, ge=1, le=EVENT_WINDOW_MAX),
+                       level: str | None = Query(None)) -> dict:
+        """日志事件统计（N18）：按 level 与 logger 两维度统计最近 window 行的行数。
+
+        当前文本行格式无结构化 event 字段，以 logger/level 代理统计（见设计书）。
+        """
+        lvl = _normalize_level(level)
+        try:
+            recent, _, _ = _read_log_tail(kb.settings.log_file, scan_max=window)
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail={
+                "error": "LOG_READ_ERROR", "message": str(exc)})
+        by_level: dict[str, int] = {}
+        by_logger: dict[str, int] = {}
+        for line in recent:
+            parsed = _parse_log_line(line)
+            if parsed is None:
+                continue
+            lv = parsed["level"].upper()
+            if lvl and lv != lvl:
+                continue
+            by_level[lv] = by_level.get(lv, 0) + 1
+            by_logger[parsed["logger"]] = by_logger.get(parsed["logger"], 0) + 1
+        return {"window": window, "total_lines": len(recent),
+                "by_level": by_level, "by_logger": by_logger}
 
     # MCP streamable http 端点挂载在 /mcp（子路径 "/"，即完整路径 /mcp/）；
     # 外包 SSE charset 中间件，保证 text/event-stream 响应头带 charset=utf-8
