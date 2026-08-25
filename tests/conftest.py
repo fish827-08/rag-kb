@@ -12,6 +12,7 @@ def env_isolated(monkeypatch, tmp_path):
     Ollama 基址指向不可达端口：LLM 探测确定性失败，测试不依赖本机 Ollama 运行状态。"""
     from kb import config
     monkeypatch.setenv("KB_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("KB_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("KB_OLLAMA_BASE_URL", "http://127.0.0.1:1")
     config.get_settings.cache_clear()
     yield tmp_path

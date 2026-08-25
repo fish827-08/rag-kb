@@ -1,4 +1,5 @@
 """REST API：FastAPI 应用工厂 + memories CRUD + healthz + ask + 统一错误格式。"""
+import logging
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,7 +10,9 @@ from fastapi.responses import JSONResponse
 from fastapi.requests import Request
 from pydantic import BaseModel, Field, field_validator
 
+from kb import __version__
 from kb.config import Settings, get_settings
+from kb.logging_setup import setup_logging
 from kb.mcp import create_mcp_server
 from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
                         WebFetchError)
@@ -142,6 +145,8 @@ def create_app(settings: Settings | None = None,
     TestClient 测试默认 False 不触发。watch_dir 为空（""/"."）时不启动。
     """
     kb = KBService(settings)
+    # 日志装配（N17）：serve 与 TestClient 均经此处，双 handler + 轮转
+    setup_logging(kb.settings)
     # MCP 服务器与 REST 共享同一 KBService 单例；先建 streamable http 应用
     # （内部懒创建会话管理器，随后由主应用 lifespan 托管启停）
     mcp_server = create_mcp_server(kb)
@@ -150,18 +155,23 @@ def create_app(settings: Settings | None = None,
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        """托管 MCP 会话管理器与目录监听线程的生命周期。"""
+        """托管 MCP 会话管理器与目录监听线程的生命周期（含启停日志）。"""
         nonlocal watcher
+        serve_log = logging.getLogger("kb.serve")
+        serve_log.info("服务启动 version=%s host=%s port=%s", __version__,
+                       kb.settings.api_host, kb.settings.api_port)
         wd = kb.settings.watch_dir
         if enable_watcher and str(wd) not in ("", "."):
             watcher = KBWatcher(kb, wd)
             watcher.start()
         try:
             async with mcp_server.session_manager.run():
+                serve_log.info("服务就绪 records=%s", kb.stats().get("records"))
                 yield
         finally:
             if watcher is not None:
                 watcher.stop()
+            serve_log.info("服务停止")
 
     app = FastAPI(title="kb memory service", lifespan=lifespan)
     app.state.kb = kb

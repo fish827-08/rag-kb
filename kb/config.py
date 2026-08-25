@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     cache_size: int = 100                       # /ask 答案缓存条数（LRU）
     cache_sim_threshold: float = 0.95           # 缓存命中相似度阈值
     sensitive_namespaces: str = ""              # 逗号分隔，敏感 namespace 强制本地
+    # ---- 日志（日志设计文档第 3 节，N17）----
+    log_level: str = "INFO"                     # 全局级别（DEBUG 开发期排查用）
+    log_dir: Path = Path("logs")                # 日志目录（相对仓库根；gitignore 排除）
+    log_max_bytes: int = 1048576                # 单文件 1MB，超限轮转
+    log_backup_count: int = 5                   # 轮转保留备份数（合计 ≤6MB）
 
     @property
     def chroma_dir(self) -> Path:
@@ -47,6 +52,11 @@ class Settings(BaseSettings):
     def sensitive_ns_list(self) -> list[str]:
         """把敏感 namespace 拆分为列表，空串→[]。"""
         return [s.strip() for s in self.sensitive_namespaces.split(",") if s.strip()]
+
+    @property
+    def log_file(self) -> Path:
+        """日志文件路径（log_dir/kb.log）。"""
+        return self.log_dir / "kb.log"
 
 
 @lru_cache
