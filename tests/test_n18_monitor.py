@@ -14,12 +14,16 @@ from kb.monitor import (MonitorAgent, build_messages, build_snapshot,
 
 # ---- 测试替身 ----
 class FakeLLM:
-    """记录 chat 调用；result 可设返回或抛错。"""
+    """记录 chat 调用；result 可设返回或抛错；status 模拟 LLMClient（stats() 读取 .value）。"""
+
+    class _Status:
+        value = "local"
 
     def __init__(self, result="已完成任务：xxx"):
         self.result = result
         self.error = None
         self.calls = []
+        self.status = self._Status()
 
     def chat(self, messages, max_tokens=None, prefer="auto"):
         self.calls.append({"max_tokens": max_tokens, "prefer": prefer})
@@ -140,3 +144,67 @@ def test_看板自启动开关():
     S.dashboard_autoopen = True
     maybe_open_dashboard(S(), opener=lambda u: calls.append(u))
     assert calls == ["http://x"]
+
+
+# ---- TASK-0021：去常驻改按需——端点测试（mock llm，不依赖真实 LLM/Ollama）----
+def _make_client(env_isolated, monkeypatch,
+                 llm_result="当前协作正常：TASK-0016 完成，TASK-0021 进行中。",
+                 llm_error=None):
+    """装配 app（monitor_enabled 默认 False 不启线程）并注入 FakeLLM 为 KBService.llm。
+
+    create_app() 末尾被 charset/请求日志中间件包装为 ASGI 函数（无 .state），
+    故不直接改 app.state；改经 KBService.__init__ 的 llm 注入点
+    （monkeypatch kb.service.LLMClient 为返回 FakeLLM 的工厂）。
+    """
+    from kb import config
+    config.get_settings.cache_clear()
+    fllm = FakeLLM(result=llm_result)
+    if llm_error is not None:
+        fllm.error = llm_error
+    monkeypatch.setattr("kb.service.LLMClient", lambda settings: fllm)
+    from kb.api import create_app
+    from fastapi.testclient import TestClient
+    return TestClient(create_app()), fllm
+
+
+def test_按需端点返回摘要与id(env_isolated, monkeypatch):
+    """POST /api/v1/monitor/summary：单轮跑通，返回 {summary, id}，且写 comm:monitor。"""
+    c, fllm = _make_client(env_isolated, monkeypatch)
+    with c:
+        r = c.post("/api/v1/monitor/summary")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["summary"]
+        assert data["id"]
+        assert fllm.calls[0]["prefer"] == "local"
+        # 摘要确实写入 comm:monitor（经 REST 校验，避免依赖 app.state）
+        lst = c.get("/api/v1/memories?tag=comm:monitor&limit=10")
+        assert lst.status_code == 200
+        items = lst.json()["items"]
+        assert any(it["id"] == data["id"] for it in items)
+
+
+def test_按需端点LLM不可用返回502(env_isolated, monkeypatch):
+    """LLM 不可用时端点 502 MONITOR_UNAVAILABLE，不写 comm:monitor。"""
+    from kb.llm import LLMError
+    c, _ = _make_client(env_isolated, monkeypatch, llm_error=LLMError("本地不可用"))
+    with c:
+        r = c.post("/api/v1/monitor/summary")
+    assert r.status_code == 502
+    assert r.json()["error"] == "MONITOR_UNAVAILABLE"
+
+
+def test_配置去常驻默认(env_isolated, monkeypatch):
+    """去常驻：monitor_enabled 默认 False（不启线程）；KB_MONITOR_AUTOTIMER 默认 0。
+
+    GET /api/v1/config 暴露 monitor_autotimer 供看板前端读取（>0 时前端定时调）。
+    """
+    from kb.config import Settings
+    s = Settings()
+    assert s.monitor_enabled is False
+    assert s.monitor_autotimer == 0
+    c, _ = _make_client(env_isolated, monkeypatch)
+    with c:
+        r = c.get("/api/v1/config")
+    assert r.status_code == 200
+    assert r.json() == {"monitor_autotimer": 0}

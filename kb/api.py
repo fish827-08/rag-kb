@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 from kb import __version__
 from kb.config import Settings, get_settings
 from kb.logging_setup import setup_logging
-from kb.monitor import MonitorAgent
+from kb.monitor import MonitorAgent, run_once_summary
 from kb.mcp import create_mcp_server
 from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
                         WebFetchError)
@@ -415,6 +415,25 @@ def create_app(settings: Settings | None = None,
     @app.get("/api/v1/healthz")
     def healthz() -> dict:
         return {"status": "ok", **kb.stats()}
+
+    @app.post("/api/v1/monitor/summary")
+    def post_monitor_summary() -> dict:
+        """按需生成监控摘要（TASK-0021 去常驻）：单轮（快照→本地LLM→写comm:monitor）。
+
+        成功返回 {"summary": 摘要, "id": 记录id}；本地 LLM 不可用/摘要为空 → 502
+        MONITOR_UNAVAILABLE。不依赖常驻线程，前端按钮/定时器按需调用。
+        """
+        record = run_once_summary(kb, max_tokens=kb.settings.monitor_max_tokens)
+        if record is None:
+            raise HTTPException(status_code=502, detail={
+                "error": "MONITOR_UNAVAILABLE",
+                "message": "摘要生成失败：本地 LLM 不可用或摘要为空"})
+        return {"summary": record.content, "id": record.id}
+
+    @app.get("/api/v1/config")
+    def get_config() -> dict:
+        """前端只读配置（TASK-0021）：仅暴露看板需要的最小字段（monitor_autotimer）。"""
+        return {"monitor_autotimer": kb.settings.monitor_autotimer}
 
     @app.get("/api/v1/logs")
     def get_logs(limit: int = Query(100, ge=1, le=LOG_LIMIT_MAX),

@@ -12,6 +12,8 @@ import threading
 import webbrowser
 from datetime import datetime
 
+from kb.models import Record
+
 logger = logging.getLogger("kb.monitor")
 
 # 快照行数上限（YAGNI 不配置化，设计书第 5 节）
@@ -138,19 +140,32 @@ class MonitorAgent:
             self._run_once()
 
     def _run_once(self) -> None:
-        """单轮：收集快照 → 本地 LLM 摘要 → 写 comm:monitor；异常 WARNING 兜底不刷屏。"""
-        try:
-            snapshot = build_snapshot(self.service)
-            time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-            messages = build_messages(snapshot, time_str)
-            summary = self.service.llm.chat(
-                messages, max_tokens=self.max_tokens, prefer="local")
-            summary = (summary or "").strip()
-            if not summary:
-                logger.warning("monitor 摘要为空，跳过本轮")
-                return
-            self.service.add_memory(summary, tags=["comm:monitor"],
+        """单轮：复用 run_once_summary 共享逻辑（TASK-0021 去常驻，不重写）。"""
+        run_once_summary(self.service, max_tokens=self.max_tokens)
+
+
+def run_once_summary(service, max_tokens: int = 300) -> Record | None:
+    """单轮按需摘要（TASK-0021）：快照→本地 LLM→写 comm:monitor。
+
+    返回写入的 Record（content=摘要，id 供端点回显）；LLM 不可用/摘要为空/
+    任何异常记 WARNING 兜底并返回 None（不崩溃、不写空摘要）。MonitorAgent
+    主循环与 POST /api/v1/monitor/summary 均复用本函数，保证单轮逻辑唯一。
+    """
+    try:
+        snapshot = build_snapshot(service)
+        time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        messages = build_messages(snapshot, time_str)
+        summary = service.llm.chat(
+            messages, max_tokens=max_tokens, prefer="local")
+        summary = (summary or "").strip()
+        if not summary:
+            logger.warning("monitor 摘要为空，跳过本轮")
+            return None
+        record = service.add_memory(summary, tags=["comm:monitor"],
                                     source="kb-monitor")
-            logger.info("monitor 已写入 comm:monitor 摘要")
-        except Exception as exc:
-            logger.warning("monitor 本轮失败（跳过不刷屏）: %s", exc)
+        logger.info("monitor 已写入 comm:monitor 摘要%s",
+                    f" id={record.id}" if record is not None else "")
+        return record
+    except Exception as exc:
+        logger.warning("monitor 本轮失败（跳过不刷屏）: %s", exc)
+        return None
