@@ -1,6 +1,6 @@
 # agent-orchestra 协议总纲
 
-版本：v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
+版本：v1.4（2026-08-26，反馈节点）｜ v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
 
 ## 1. 角色
 
@@ -70,6 +70,7 @@ worker 有权把**重要过程信息**写入 kb 供其他 agent 检索（用现�
 | `comm:issue` | 遇到的问题与风险（阻塞点/影响面） |
 | `comm:test` | 待测试项 / 测试结果 |
 | `comm:system` | 系统级事件（重启/环境变更，协调者专用） |
+| `comm:feedback` | 反馈节点结论（异议/风险/澄清的裁决结果，B2） |
 
 纪律：交流窗只写**结论级**信息（≤300 字符），不写过程流水账；与任务卡重复的信息只进卡不进窗。
 
@@ -106,3 +107,18 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 - 依赖方向：`board.py → 各模块 → client.py`；底层只有 client.py 依赖 urllib
 - 对外命令接口零变化：`python orchestra\board.py <子命令>` 照旧（board.py 内 import 各模块）
 - 新增模块的职责与搬移范围以 `orchestra/docs/superpowers/specs/2026-08-26-orchestra-packaging-design.md` 为准
+
+## 11. 反馈节点（v1.4 新增，B2）
+
+三节点：执行前预审 precheck / 执行中里程碑 milestone / 完成后复盘 review。
+反馈写为 kb 记录（tag=feedback，关联目标卡），结论级同步 `comm:feedback`。
+
+| 类型 | 必附字段 | 判定 |
+|---|---|---|
+| objection 方案异议 | 摘要 + 替代方案 | 无替代方案直接驳回 |
+| risk 风险阻塞 | 摘要 + 阻塞点 + 影响面 | 阻塞当前节点，等裁决 |
+| clarify 需求澄清 | 摘要 + 澄清问题 | 回答后继续 |
+
+- 配额：precheck ≤2 轮、milestone ≤2 轮、单任务总上限 5 轮；超限转协调者仲裁
+- 铁律：无替代方案的异议直接驳回，杜绝只否定不建设
+- 阻塞规则：目标卡存在 open 状态反馈时，协调者不得将其 verified
