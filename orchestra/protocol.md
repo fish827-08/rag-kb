@@ -87,3 +87,15 @@ worker 有权把**重要过程信息**写入 kb 供其他 agent 检索（用现�
 - 停止：无 pending 卡立即停止，不空转、不轮询
 - 交流窗：每卡完成即写 comm:done（结论级 ≤300 字符）
 - 默认仍是单卡单轮；批量是"继续"下的增量行为，不改变单卡原子语义
+
+## 10. 代码结构（v1.3 增补，包化拆分）
+
+orchestra/ 目录按职责拆分（持续演进中）：
+
+| 文件 | 职责 |
+|---|---|
+| `board.py` | CLI 入口：argparse 子命令分发、kb REST 请求封装（`_request`）、各 `cmd_*` 子命令实现；通过 import 复用 `cards.py` 纯函数 |
+| `cards.py` | 卡片纯函数（无 HTTP 依赖）：`LIMITS`/`STATUSES` 常量、`render_card`/`parse_header`/`check_limits`/`_fmt_time`/`_next_task_id` |
+| `tests/` | 单测：`test_board.py`（cmd_* 子命令 + _request）、`test_cards.py`（卡片纯函数）、`test_worktree.py`（worktree 子命令） |
+
+拆分原则：不依赖 HTTP 的格式化 / 解析 / 校验 / 渲染纯函数入 `cards.py`；依赖 kb 服务的请求与子命令留 `board.py`。新增纯函数优先放 `cards.py`，便于独立测试与复用。
