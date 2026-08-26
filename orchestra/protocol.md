@@ -87,3 +87,17 @@ worker 有权把**重要过程信息**写入 kb 供其他 agent 检索（用现�
 - 停止：无 pending 卡立即停止，不空转、不轮询
 - 交流窗：每卡完成即写 comm:done（结论级 ≤300 字符）
 - 默认仍是单卡单轮；批量是"继续"下的增量行为，不改变单卡原子语义
+
+## 10. 代码结构（包化分层，2026-08-26 起）
+
+orchestra 包化分层（方案一），board.py 按职责拆分为多模块，依赖方向单向：
+
+| 模块 | 职责 |
+|---|---|
+| `board.py` | 仅 CLI 入口：argparse 子命令调度（status/add/claim/show/verify/new-worker/register/workers/report/list-comm/watch/worktree），内部 `from client import ...` 等 |
+| `client.py` | kb REST HTTP 客户端：`KB_BASE` / `_request` / `BoardUnavailable`；仅标准库 urllib，依赖最底层 |
+| `cards.py` 等 | 后续拆分模块（registry/comm/worktree/watch 拆分进行中，各自模块文件到位后补本表） |
+
+- 依赖方向：`board.py → 各模块 → client.py`；底层只有 client.py 依赖 urllib
+- 对外命令接口零变化：`python orchestra\board.py <子命令>` 照旧（board.py 内 import 各模块）
+- 新增模块的职责与搬移范围以 `orchestra/docs/superpowers/specs/2026-08-26-orchestra-packaging-design.md` 为准
