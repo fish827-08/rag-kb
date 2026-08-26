@@ -535,10 +535,11 @@ def create_app(settings: Settings | None = None,
 
     @app.post("/api/v1/monitor/summary")
     def post_monitor_summary() -> dict:
-        """按需生成监控摘要（TASK-0021 去常驻）：单轮（快照→本地LLM→写comm:monitor）。
+        """按需生成监控摘要（TASK-0021 去常驻 / TASK-0059 降级）：单轮（快照→LLM→写comm:monitor）。
 
-        成功返回 {"summary": 摘要, "id": 记录id}；本地 LLM 不可用/摘要为空 → 502
-        MONITOR_UNAVAILABLE。不依赖常驻线程，前端按钮/定时器按需调用。
+        成功返回 {"summary": 摘要, "id": 记录id}；LLM 不可用时降级为纯文本摘要仍返回 200；
+        仅 build_snapshot/add_memory 失败返回 None → 502 MONITOR_UNAVAILABLE。
+        不依赖常驻线程，前端按钮/定时器按需调用。
         """
         record = run_once_summary(kb, max_tokens=kb.settings.monitor_max_tokens,
                                    dispatch_enabled=kb.settings.dispatch_enabled)

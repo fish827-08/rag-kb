@@ -10,6 +10,7 @@ import pytest
 
 from kb.llm import LLMError
 from kb.monitor import (MonitorAgent, _b3_parse_rounds, _detect_anomalies,
+                        _fallback_dispatch_text, _fallback_summary_text,
                         build_anomaly_snapshot, build_messages, build_snapshot,
                         maybe_open_dashboard, run_once_dispatch, run_once_summary)
 
@@ -121,11 +122,15 @@ def test_摘要写入comm_monitor():
 
 
 def test_LLM不可用兜底(caplog):
+    """TASK-0059：LLM 失败时主摘要降级纯文本，仍写 comm:monitor（不再整轮跳过）。"""
     svc = FakeService([])
     svc.llm.error = LLMError("本地不可用")
     agent = MonitorAgent(svc, max_tokens=300)
     agent._run_once()  # 不崩溃
-    assert svc.added == []  # 不写 comm:monitor
+    # LLM 失败降级纯文本，仍写 comm:monitor
+    monitor_recs = [a for a in svc.added if "comm:monitor" in (a["tags"] or [])]
+    assert len(monitor_recs) == 1
+    assert "纯文本降级" in monitor_recs[0]["content"]
     assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
@@ -186,14 +191,14 @@ def test_按需端点返回摘要与id(env_isolated, monkeypatch):
         assert any(it["id"] == data["id"] for it in items)
 
 
-def test_按需端点LLM不可用返回502(env_isolated, monkeypatch):
-    """LLM 不可用时端点 502 MONITOR_UNAVAILABLE，不写 comm:monitor。"""
+def test_按需端点LLM不可用降级返回200(env_isolated, monkeypatch):
+    """TASK-0059：LLM 不可用时端点降级纯文本，返回 200（不再 502）。"""
     from kb.llm import LLMError
     c, _ = _make_client(env_isolated, monkeypatch, llm_error=LLMError("本地不可用"))
     with c:
         r = c.post("/api/v1/monitor/summary")
-    assert r.status_code == 502
-    assert r.json()["error"] == "MONITOR_UNAVAILABLE"
+    assert r.status_code == 200
+    assert "纯文本降级" in r.json()["summary"]
 
 
 def test_配置去常驻默认(env_isolated, monkeypatch):
@@ -449,11 +454,14 @@ class TestDispatch:
         assert not svc.llm.calls  # 无异常不调 LLM（避免刷屏）
 
     def test_LLM失败兜底不崩溃(self):
+        """TASK-0059：LLM 失败时 dispatch 降级纯文本，仍写 comm:dispatch（不再跳过）。"""
         svc = FakeService([])  # pending_low 触发
         svc.llm.error = LLMError("本地不可用")
-        # 不抛异常，不写 comm:dispatch
         run_once_dispatch(svc, max_tokens=300)
-        assert not any("comm:dispatch" in (a["tags"] or []) for a in svc.added)
+        # LLM 失败降级纯文本，仍写 comm:dispatch
+        dispatch_recs = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
+        assert len(dispatch_recs) == 1
+        assert "纯文本降级" in dispatch_recs[0]["content"]
 
     def test_run_once_summary接入_dispatch_enabled默认开(self):
         svc = FakeService([])  # pending_low
@@ -541,3 +549,47 @@ class TestDispatch:
         # comm:dispatch 记录已写入
         dispatch = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
         assert len(dispatch) == 1
+
+    def test_dispatch独立执行_主摘要失败时仍播报(self):
+        """TASK-0059：主摘要 LLM 失败时，dispatch 仍独立执行（不再整轮短路）。"""
+        svc = FakeService([])  # pending_low 触发
+        svc.llm.error = LLMError("本地不可用")
+        run_once_summary(svc, max_tokens=300, dispatch_enabled=True)
+        # 主摘要降级 + dispatch 降级，两条都写
+        tags_list = [tuple(a["tags"] or []) for a in svc.added]
+        assert ("comm:monitor",) in tags_list
+        assert ("comm:dispatch",) in tags_list
+        # 都是降级纯文本
+        for a in svc.added:
+            assert "纯文本降级" in a["content"]
+
+
+# ---- TASK-0059：降级纯文本纯函数 ----
+def test_fallback_summary_text纯函数():
+    """TASK-0059：_fallback_summary_text 从快照解析任务板各状态卡数。"""
+    snapshot = ("【任务板】\nTASK-0001 pending worker-1 | 标题A\n"
+                "TASK-0002 claimed worker-2 | 标题B\n"
+                "TASK-0003 done worker-1 | 标题C\n"
+                "TASK-0004 verified worker-2 | 标题D\n"
+                "【反馈】\n无")
+    text = _fallback_summary_text(snapshot, "2026-08-26 12:00")
+    assert "待办1" in text
+    assert "进行中1" in text
+    assert "已完成1" in text
+    assert "已核验1" in text
+    assert "纯文本降级" in text
+
+
+def test_fallback_dispatch_text纯函数():
+    """TASK-0059：_fallback_dispatch_text 异常列表模板渲染。"""
+    anomalies = [
+        {"type": "pending_low", "task_id": None, "detail": "卡池 pending 数=0 < 2"},
+        {"type": "rounds_exceeded", "task_id": "TASK-0052",
+         "detail": "TASK-0052 medium第5轮/共5，轮次超限"},
+    ]
+    text = _fallback_dispatch_text(anomalies, "2026-08-26 12:00")
+    assert "共2条" in text
+    assert "[pending_low]" in text
+    assert "[rounds_exceeded]" in text
+    assert "TASK-0052" in text
+    assert "纯文本降级" in text
