@@ -1,6 +1,6 @@
 # agent-orchestra 协议总纲
 
-版本：v1.5（2026-08-26，skill 化双 skill 节 + 调度监测/designer 拆卡）｜ v1.4（2026-08-26，反馈节点）｜ v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
+版本：v1.6（2026-08-26，B3 成本管控）｜ v1.5（2026-08-26，skill 化双 skill 节 + 调度监测/designer 拆卡）｜ v1.4（2026-08-26，反馈节点）｜ v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
 
 ## 1. 角色
 
@@ -170,3 +170,39 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 - 拆卡粒度：一卡一任务、五字段齐、并行卡零文件交集（同 coordinator-prompt 拆卡原则）
 - 安全兜底：拆出的卡靠 precheck 预审（§11）+ 协调者循环自动测试双保险；有问题走反馈卡 objection/risk
 - designer 仍不写业务实现代码；拆卡是设计职责的延伸
+
+## 14. 成本管控纪律（v1.6 新增，B3 第一批）
+
+无状态 Agent + 有状态知识库：上下文不堆在 agent 里，靠 kb 检索召回；四机制落地自 `docs/superpowers/specs/2026-08-26-b3-cost-control-design.md` §4.1/4.2/4.3/4.5。
+
+### 14.1 分阶段上下文切片（spec §4.1）
+
+- 三节点（precheck/milestone/review，即 §11 反馈节点）各自独立上下文窗口，是切片的天然边界
+- 切换节点即清空 agent 上下文，仅从 kb 检索本节点所需：任务卡 + 本节点反馈卡 + 相关 summary
+- 协议层纪律（worker/designer prompt 按节点加载），不引入代码组件
+
+### 14.2 滚动窗口（spec §4.2）
+
+- agent 上下文仅保留近 3 轮原文（当前轮 + 前 2 轮）
+- 更早轮次原文不保留，只留 summary 摘要；需要时 `search_memory` 检索召回
+- prompt 纪律 + summary 记录，不做自动截断代码（agent 自律，协调者核验）
+
+### 14.3 动态轮次配额（spec §4.3，细化 §11）
+
+| 复杂度 | precheck | milestone | 总上限 | 适用场景 |
+|---|---|---|---|---|
+| simple | 1 | 1 | **3** | 单文件小改、文档更新、冒烟 |
+| medium | 2 | 2 | **5** | 常规功能卡（默认，与 B2 一致） |
+| complex | 2 | 3 | **8** | 多模块/设计评审/跨子系统 |
+
+- 复杂度由拆卡者按"改动文件数/子系统数/是否含设计决策"标注，在卡内"约束"注明（如 `配额 complex`）；未注明默认 medium
+- 超限处理：强制截断转协调者仲裁（复用 §11 B2 仲裁机制，不另建）
+- review 复盘不计配额（沉淀性，同 B2）；目标卡存在 open 反馈时不得 verified 的阻塞规则照旧（§11）
+- §11 固定配额（2/2/5）= 本表 medium 档，向下兼容：未标注复杂度的卡按 medium 执行
+
+### 14.4 自动增量沉淀（spec §4.5）
+
+- 每 2 轮（或节点结束/任务中断时）把关键结论写 summary（tag=summary，含保留标签与来源轮次），写完即清空 agent 上下文 → 中断可从 summary 恢复
+- **保留标签强制不压缩**：决策、参数、验收标准、阻塞点四类必须原样保留（阻塞点/决策的重要来源是 §11 反馈卡）
+- 摘要后校验：回读 summary 检查四类标签是否齐全，缺失则重生成（最多 1 次）
+- 中断恢复：agent 唤醒时先查 claimed 卡的 summary，从摘要续做（不依赖对话历史）
