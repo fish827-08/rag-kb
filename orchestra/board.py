@@ -21,15 +21,18 @@
 """
 import argparse
 import json
-import re
 import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
+# kb REST 客户端（TASK-0028 包化①：从本文件拆出至 client.py）
 from client import KB_BASE, BoardUnavailable, _request
 
+# 卡片纯函数（TASK-0029 包化②：从本文件拆出至 cards.py）
+from cards import (LIMITS, STATUSES, render_card, parse_header,
+                   check_limits, _fmt_time, _next_task_id)
 TAG = "taskboard"
 # 仓库根（board.py 位于 orchestra/ 下，仓库根为其上一级）；worktree 隔离目录（TASK-0025）
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -39,57 +42,6 @@ REGISTRY_TAG = "registry"
 # 交流窗频道枚举与 text 上限（protocol §7 / V2-2 设计书）
 COMM_CHANNELS = ("done", "issue", "test", "system")
 COMM_TEXT_LIMIT = 300
-# 各字段字符上限（设计文档第 4 节）
-LIMITS = {"title": 30, "goal": 300, "input": 300,
-          "constraints": 200, "acceptance": 200, "result": 1000}
-# 状态机合法值
-STATUSES = ("pending", "claimed", "done", "failed", "verified")
-
-
-def render_card(task_id: str, status: str, assignee: str, title: str,
-                goal: str, input_: str, constraints: str,
-                acceptance: str, result: str = "", note: str = "") -> str:
-    """渲染完整卡片文本；首行为可检索状态行。"""
-    lines = [
-        f"{task_id} {status} {assignee} | {title}",
-        f"目标：{goal}",
-        f"输入：{input_}",
-        f"约束：{constraints}",
-        f"验收：{acceptance}",
-        f"结果：{result}",
-    ]
-    if note:
-        lines.append(f"备注：{note}")
-    return "\n".join(lines)
-
-
-_HEADER_RE = re.compile(r"^(TASK-\d{4}) (\w+) (\S+) \| (.+)$")
-
-
-def parse_header(content: str) -> dict:
-    """解析卡片首行 → {task_id, status, assignee, title}；非法格式抛 ValueError。"""
-    header = content.split("\n", 1)[0].strip()
-    m = _HEADER_RE.match(header)
-    if not m:
-        raise ValueError(f"卡片首行格式非法：{header!r}")
-    return {"task_id": m.group(1), "status": m.group(2),
-            "assignee": m.group(3), "title": m.group(4)}
-
-
-def check_limits(**fields: str) -> None:
-    """字段长度校验；超限抛 ValueError（中文提示字段名与上限）。"""
-    for name, value in fields.items():
-        if value and len(value) > LIMITS[name]:
-            raise ValueError(
-                f"字段 {name} 超长：{len(value)} 字符 > 上限 {LIMITS[name]}")
-
-
-def _fmt_time(updated_at: str) -> str:
-    """ISO 时间 → HH:MM；解析失败返回 '???'。"""
-    try:
-        return datetime.fromisoformat(updated_at).strftime("%H:%M")
-    except (ValueError, TypeError):
-        return "???"
 
 
 def _now_iso() -> str:
@@ -133,19 +85,6 @@ def cmd_list_pending() -> None:
         print("\n".join(lines))
     else:
         print("无待办任务卡")
-
-
-def _next_task_id(cards: list[dict]) -> str:
-    """现有卡最大编号 +1，四位数零填充。"""
-    max_num = 0
-    for card in cards:
-        try:
-            h = parse_header(card["content"])
-            num = int(h["task_id"].split("-")[1])
-            max_num = max(max_num, num)
-        except (ValueError, IndexError):
-            continue  # 非法卡不参与编号
-    return f"TASK-{max_num + 1:04d}"
 
 
 def cmd_add(assignee: str, title: str, goal: str, input_: str,

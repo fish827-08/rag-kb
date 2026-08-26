@@ -1,45 +1,9 @@
-"""board.py 单测：卡片纯函数、五个子命令。"""
+"""board.py 单测：各子命令（cmd_*）行为；纯函数与 HTTP 客户端已拆至
+test_cards.py / test_client.py（TASK-0028/0029 包化）。"""
 import json
 import sys
 
 import pytest
-
-
-class TestCardFunctions:
-    """卡片渲染与解析纯函数。"""
-
-    def test_render_标准卡片(self):
-        import board
-        content = board.render_card(
-            "TASK-0001", "pending", "worker-1", "重构异常处理",
-            goal="统一异常为 StorageError", input_="kb/storage.py",
-            constraints="不改接口签名", acceptance="测试全绿")
-        lines = content.split("\n")
-        assert lines[0] == "TASK-0001 pending worker-1 | 重构异常处理"
-        assert lines[1] == "目标：统一异常为 StorageError"
-        assert lines[2] == "输入：kb/storage.py"
-        assert lines[3] == "约束：不改接口签名"
-        assert lines[4] == "验收：测试全绿"
-        assert lines[5] == "结果："
-
-    def test_parse_header_往返(self):
-        import board
-        header = board.parse_header("TASK-0003 claimed worker-1 | 修复空指针")
-        assert header == {"task_id": "TASK-0003", "status": "claimed",
-                          "assignee": "worker-1", "title": "修复空指针"}
-
-    def test_parse_header_非法格式报错(self):
-        import board
-        with pytest.raises(ValueError):
-            board.parse_header("这不是一张任务卡")
-
-    def test_check_limits_超限报错(self):
-        import board
-        with pytest.raises(ValueError) as ei:
-            board.check_limits(title="x" * 31)
-        assert "title" in str(ei.value)
-        # 恰好 30 字符不报错
-        board.check_limits(title="x" * 30)
 
 
 def _card(content, updated_at="2026-08-24T12:30:00"):
