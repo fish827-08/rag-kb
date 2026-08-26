@@ -2,7 +2,7 @@
 
 > **给任何接手的 AI 助手**：先读 [AGENTS.md](AGENTS.md)（工作规则与红线），再读本文档（项目状态），然后按第 5 节"接手指南"行动。两份文档读完即可接力，无需追问用户历史。
 >
-> 最后更新：2026-08-26 ｜ 维护者：文档/测试 AI（按 AGENTS.md 角色分工）｜ 本文件随每个里程碑/节点更新
+> 最后更新：2026-08-27 ｜ 维护者：文档/测试 AI（按 AGENTS.md 角色分工）｜ 本文件随每个里程碑/节点更新
 
 ## 1. 项目是什么（双子系统）
 
@@ -35,23 +35,28 @@
 | M4（N13-N16） | 文档摄取（pdf/docx/md/txt）、网页抓取、目录监听、README | ✅ 2026-08-24 |
 | v1.0.1 hotfix | top_k/mode/空内容校验 → 422、MCP 入口校验、SSE charset | ✅ 2026-08-24 |
 
-- 测试：**65 项全绿**（`tests/`）
+- 测试：**159 项全绿**（`tests/`，含鉴权 9 项 + monitor 47 项）
 - 基准：混合检索 26ms、/ask 端到端 ~2s（本地 qwen3:4b）
 - tag：`node-01`~`node-16`、`v1.0.0`、`v1.0.1`（均已推 Gitee）
-- 已知问题：JSON REST 响应缺 `charset=utf-8`（SSE 已修，JSON 漏了；PowerShell 客户端乱码，Python 不受影响）→ **v1.0.2 候选**
+- v1.0.2：JSON charset 已修复（TASK-0003/0038/0045 交付，含测试断言）
+- **A2 鉴权已交付**（N19 ApiKeyMiddleware + N20 客户端自动带 key，TASK-0062/0064，空 key 不鉴权零摩擦）
+- **monitor 纯文本模式默认 off**（TASK-0065）：本地无 LLM 完整可用（KB_MONITOR_LLM=off/auto）
 
-### ② agent-orchestra — B1 收口 + B2 进行中（2026-08-26）
+### ② agent-orchestra — B1/B2 收口 + B3 进行中（2026-08-27）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | MVP（T1-T10） | board.py CLI 6 命令、协议三件套、orchestra-worker skill、20 项单测 | ✅ 2026-08-24 |
 | 真机实验 | worker-1（另一 TraeWork 任务）TDD 实现 list-pending 子命令，全链路 pending→verified | ✅ 2026-08-24 |
 | B1 三角色闭环 | 交流窗/批量模式（v1.2）/看板（watch+HTML+导航页）/监控Agent（按需）/worktree 隔离（v1.3）/registry 6 成员 | ✅ 2026-08-26 |
-| 包化分层 | board.py 拆为 client/cards/registry/comm/worktree/watch/feedback 七模块（TASK-0028~0031） | ✅ 2026-08-26 |
-| B2 反馈闭环 | feedback.py（FBK 卡+三类型铁律）+ 协议 v1.4（反馈节点节）已合入；配额门禁 TASK-0033 进行中 | 🚧 2026-08-26 |
+| 包化分层 | board.py 拆为 client/cards/registry/comm/worktree/watch/feedback 等模块（TASK-0028~0031） | ✅ 2026-08-26 |
+| B2 反馈闭环 | FBK 卡三类型铁律 + 动态配额 + 超限仲裁 + comm:feedback 归档（协议 v1.4；FBK-0001~0006 六次实战） | ✅ 2026-08-26 |
+| 调度监测架构 | DispatchAgent 四规则检测 + comm:dispatch 播报 + LLM 解耦降级 + 协调者循环常驻自动核验（协议 v1.5） | ✅ 2026-08-26 |
+| B3 成本管控 | 协议 v1.6 §14 + b3.py（动态配额/rounds/summary 四标签）+ relation 关联窗口 + 中断恢复 + watch 轮次列 + 轮次告警（5/6，模型分级待拆） | 🚧 2026-08-27 |
 
-- 测试：**106 项全绿**（`orchestra/tests/`）
-- 任务板：TASK-0001~0034 共 34 卡（33 verified + 1 进行中 + 1 failed 重派记录）
+- 测试：**207 项全绿**（`orchestra/tests/`，含 relation 15 + b3 22 + client auth 7 等）
+- 任务板：TASK-0001~0065 共 65 卡（63 verified；0056/0063 重复卡作废记录）
+- 协调者循环：**常驻自动核验运转中**（60 秒/轮：done 卡 merge→test→verify→push；open FBK 阻塞 + 新 FBK 自动广播）
 - 协调者接力：**coordinator-prompt.md 已立唤醒提示词 + 接力状态节**（每次收口后必须更新），交接唯一入口
 - skill 已装本机 `~\.trae-cn\skills\orchestra-worker\`（**硬链接**，git checkout 后可能断链需重装）
 
@@ -61,12 +66,13 @@
 
 | 主线 | 当前阶段 | 下一步 |
 |---|---|---|
-| **A：kb 记忆服务**（常驻地基） | A1 稳定性已收口（含 N17-N18 日志） | A2 鉴权 N19-N20（P2-2） |
-| **B：orchestra 协作**（→生产级） | B2 反馈闭环进行中（TASK-0033 配额门禁收尾） | B2 收口自查 → 实战演练 → B1.7 skill 化 / B3 成本管控 |
-| 支线 | — | L2 终端 REPL（备选）、本地统计 worker（依赖 B1.2） |
+| **A：kb 记忆服务**（常驻地基） | A1 稳定性 + A2 鉴权均已交付（2026-08-27） | A3 记忆治理（遗忘/衰减/去重）N21-N23 |
+| **B：orchestra 协作**（→生产级） | B1/B2 已收口；B3 成本管控 5/6 落地；调度监测架构交付 | B3 模型分级卡 → B3 实战验证期 → B4 |
+| 支线 | — | L2 终端 REPL（备选）、本地统计 worker |
 
 - 演进节奏：B1（★）→ B2 反馈闭环（★★）→ B3 成本管控（★★★）→ B4 自适应（★★★★），每阶段闭环稳定一周再进下一阶段
-- 协议已升 **v1.4**：任务分支模式、服务重启管控、交流窗（comm: 频道）、worktree 隔离、反馈节点（三类型/2-2-5 配额/铁律）
+- 协议已升 **v1.6**：任务分支/worktree 隔离、交流窗、反馈节点（三类型/动态配额 1-1-3/2-2-5/2-3-8）、B3 成本管控纪律（§14）、调度监测（DispatchAgent 只监测不决策 + 协调者循环常驻自动核验）
+- 运行形态：**协调者循环常驻**（60 秒/轮，done 卡自动 merge→test→verify→push）；**monitor 纯文本模式默认 off**（KB_MONITOR_LLM=off/auto）——本地无 LLM 完整可用
 
 ## 3. 目录导览
 
