@@ -252,7 +252,32 @@ worker 全部完成后，回协调者任务说"**核验**"。协调者会独立�
 4. 唯一白名单：`GET /api/v1/healthz`（存活探针，协调者/监控无 key 可探活）
 5. 缺失或错误 key 均返回 `401 {"error":"UNAUTHORIZED","message":"missing or invalid api key"}`（不区分，防探测）
 
-空 key 时所有既有行为完全不变（v1.x 兼容）；key 比较用 `hmac.compare_digest` 防时序攻击。MCP 客户端（Claude Code/Cursor）在 `.mcp.json` 的 `headers` 里加 `Authorization: Bearer <key>`；真实 key 不入库，走环境变量或本地覆盖。
+空 key 时所有既有行为完全不变（v1.x 兼容）；key 比较用 `hmac.compare_digest` 防时序攻击。
+
+### 5.2 客户端适配（N20：启用鉴权后各客户端如何带 key）
+
+| 客户端 | 配法 |
+|---|---|
+| **orchestra 命令行**（`orchestra/board.py` 等） | 零改动自动适配：客户端从环境变量 `KB_API_KEY` 读取（其次仓库根 `.env`），非空自动加 `X-API-Key` 头，空则不鉴权；收到 401 会提示“检查 KB_API_KEY” |
+| **MCP 客户端**（Claude Code / Cursor / TraeWork） | 连接配置加 `headers`（真实 key 不写进提交入库的 `.mcp.json`，本机另存或用环境变量/本地覆盖）： |
+| **REST 脚本 / curl** | 加头 `X-API-Key: <key>` 或 `Authorization: Bearer <key>`（二选一，Bearer 优先） |
+| **看板 `/dashboard`** | 启用 key 后看板前端需配置 key 才能加载数据（手动填入） |
+
+MCP 配置带 key 示例（本机自用，**勿提交入库**）：
+
+```json
+{
+  "mcpServers": {
+    "kb": {
+      "type": "http",
+      "url": "http://127.0.0.1:8000/mcp/",
+      "headers": { "Authorization": "Bearer <你的key>" }
+    }
+  }
+}
+```
+
+仓库内 `.mcp.json` 模板保持无 key（JSON 不支持注释，说明落本手册）；健康探针 `GET /api/v1/healthz` 永远无需 key。
 
 ## 6. 常见问题与故障排查
 
