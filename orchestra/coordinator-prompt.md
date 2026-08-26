@@ -30,36 +30,37 @@
 
 > **更新纪律**：每完成一轮"核验→合并→推送"收口后，协调者必须把本节更新为最新状态再提交（提交信息 `文档: 协调者接力状态更新至TASK-NNNN`）。本节是下一个协调者的唯一交接面，宁详勿略。
 
-**最后更新：2026-08-26 22:22 ｜ 更新人：协调者（GLM-5.3）｜ 快照：TASK-0023 核验型交付关闭（功能早已在主线），仅剩 TASK-0049 停等唤醒**
+**最后更新：2026-08-26 22:50 ｜ 更新人：协调者（Qoder）｜ 快照：TASK-0049 收口完毕待用户重启 kb 服务生效；B3 第一批 4 卡（0051~0054）入池待领**
 
-### 进行中的卡
+### 进行中的卡（全部 pending，待领）
 
 | 卡 | 负责人 | 状态 | 说明 |
 |---|---|---|---|
-| TASK-0049 DispatchAgent接入comm:dispatch | worker-2 | claimed | FBK-0003 已 accepted（0048 已合入），等 worker-2 被唤醒后继续 |
+| TASK-0051 协议升 v1.6 | worker-4 | pending | B3 第一批，纯文档，无依赖 |
+| TASK-0052 角色提示词三件套+skill | worker-4 | pending | B3 第一批，依赖 0051 |
+| TASK-0053 rounds/summary 记录机制 | worker-3 | pending | B3 第一批，代码，与 0051/0052 零文件交集可并行 |
+| TASK-0054 建卡联动与中断恢复 | worker-3 | pending | B3 第一批，依赖 0053 |
 
-### 最近完成（22:18，TASK-0023 重派收口）
+B3 第一批 spec 依据：docs/superpowers/specs/2026-08-26-b3-cost-control-design.md；第二批（relation 子命令、模型分级）待第一批稳定后再拆。
 
-- TASK-0023 重派 worker-4 后**核验型交付**：worker-4 开工核查发现 inferred 功能已由 TASK-0024 实现并合入 main（`0d5ec92`），零重复施工，确认功能在位 + 144 项测试全绿后关闭——处理正确
-- **协调者教训**：重派旧卡前必须先查功能是否已在主线（git log 搜关键词 / 跑相关测试），避免重复派单；旧卡失败原因若已过时（如分支不存在），刷新卡内容适配现行协议（worktree）
+### 最近完成（22:34，TASK-0049 完整收口）
 
-### 最近完成（第十批，2026-08-26 22:00~22:10，全员并行 + 调度监测架构）
+- TASK-0049 DispatchAgent 接入 comm:dispatch（worker-2）：合并提交 `2f1366e` 在 main 顶端并已推送 origin/main；task/TASK-0049 分支与 worktree 已清理；主线接入物齐备（kb/config.py `dispatch_enabled` 默认 true、kb/monitor.py 的 `_detect_anomalies` / `build_anomaly_snapshot` / `run_once_dispatch` / comm:dispatch 写入）
+- **生效条件提醒**：现 kb 服务 19:36 启动早于合并，需用户重启 `python -m kb serve` 后 DispatchAgent 才生效；DispatchAgent 至此具备"检测+播报"完整闭环
+- **验收方式**（生效后）：人为制造异常（如让 claimed 卡挂 30min）看 comm:dispatch 是否播报
 
-- **协调者循环首次实战**（coordinator_loop.py，8ed3b64）：TASK-0038~0047 共 13 张卡自动核验合并推送（merge→pytest→verify→push→clean），期间发现并修复无分支卡漏 commit 缺口（eaa0264：共享区改动现在会补提交再 verify）
-- **调度监测架构定稿**（用户确认，对照业界 supervisor-dispatcher 模式修正）：designer 拆卡直接进池 → worker 领卡 → 协调者循环自动核验 → DispatchAgent（qwen3:4b 每 5 分钟唤醒）**只监测播报不派发决策**（四规则：卡池<2 告急/claimed 超时 30min/done 积压 5min/open FBK 10min 无裁决）→ 写 comm:dispatch
-- TASK-0048：_detect_anomalies 四规则纯函数 + 15 用例（DispatchAgent 检测层，worker-3）
-- TASK-0050：协议 v1.5 §12 调度监测节 + designer 拆卡职责（designer-1）
-- TASK-0038/0045：kb JSON charset 修复 + 测试断言（v1.0.2 候选合入，worker-1/worker-4）
-- TASK-0039/0040/0041/0042/0043：看板反馈摘要/feedback --task 过滤/dashboard 反馈区/worktree --all/pending-count（worker-2/3/4）
-- TASK-0046/0047：**B3 成本管控 spec + P2-2 鉴权 spec 两份设计书产出**（designer-1，下一阶段输入）
-- **FBK-0003 为 B2 闭环第三次实战**：worker-2 发现依赖未合入 → clarify 停等 → 协调者合并 0048 → accepted 放行
+### 上一批次精简记录（2026-08-26 22:10~22:18）
+
+- TASK-0023 重派核验型交付关闭：inferred 功能早已由 TASK-0024 合入主线（`0d5ec92`），零重复施工——教训：重派旧卡前先查功能是否已在主线（已随该卡关闭移除后续规划项）
+- 第十批（0038~0050 共 13 卡）已收口：协调者循环首次实战（8ed3b64）、调度监测架构定稿（DispatchAgent 只监测播报不派发）、0048 检测四规则、0050 协议 v1.5、B3/P2-2 两份 spec 产出（0046/0047）
 
 ### 后续规划（下一步做什么）
 
 **近期（当前）**：
-1. TASK-0049 完成后 DispatchAgent 即具备完整闭环（检测+播报），提醒用户重启 kb 服务生效（KB_DISPATCH_ENABLED 默认 true）
-2. DispatchAgent 验收：人为制造异常（如 claimed 卡挂 30min）看 comm:dispatch 是否播报
-3. TASK-0023（重派卡，dashboard inferred 行）可塞给空闲 worker
+1. **提醒用户重启 kb serve 使 DispatchAgent 生效**（TASK-0049 已合并推送，现服务进程早于合并；KB_DISPATCH_ENABLED 默认 true）
+2. DispatchAgent 生效后验收：人为制造异常（如让 claimed 卡挂 30min）看 comm:dispatch 是否播报（检测+播报完整闭环）
+3. worker-4 / worker-3 领卡推进 B3 第一批（0051→0052、0053→0054 各自串行，两组并行）；空闲成员（尤其负载最轻的 worker-1）可接突发任务，后续并行批次建议向 worker-1 倾斜
+4. 人力现状参考（54 卡累计）：worker-2 13 卡、designer-1 12、worker-3 11、worker-4 10、worker-1 7；当前无增减员必要
 
 **中期（两份 spec 已就绪，按用户意向选）**：
 - **B3 成本管控**（★★★，spec：docs/superpowers/specs/2026-08-26-b3-cost-control-design.md）：滚动窗口/动态配额/增量沉淀/模型分级
@@ -73,7 +74,8 @@
 - **两个协调者循环勿并行**：git 操作会竞争，启动前确认旧实例已停（StopCommand 失败时换 terminal 或重启机器）
 - **worker-4 Qoder 的申报习惯**：分支未预建会自建解锁（已授权模式），结果栏含详细申报，核验时读结果栏再决定
 - **test_worktree.py GBK 预存问题**：Windows 下跑全量测试加 PYTHONUTF8=1
-- **验证优先级**：跑 orchestra/tests/ + 改动相关 kb tests（当前合计 168 项，全量 kb tests 245 项约 65s）
+- **验证优先级**：跑 orchestra/tests/ + 改动相关 kb tests（数量以实际收集为准）
+- **coordinator_loop 无单实例锁**：曾出现 4 实例并发（已清理，2026-08-26 22:40，现单实例后台运行，日志 logs/coordinator_loop.log）；启动前必须 `Get-CimInstance Win32_Process -Filter "name='python.exe'"` 核查命令行确认无旧实例
 
 ### 协调者注意事项（踩坑沉淀）
 
@@ -93,7 +95,7 @@ venv\Scripts\python.exe orchestra\board.py status          # 一行一卡看板
 venv\Scripts\python.exe orchestra\board.py show TASK-NNNN  # 单卡详情
 venv\Scripts\python.exe orchestra\board.py feedback list  # 反馈卡列表
 venv\Scripts\python.exe orchestra\board.py verify TASK-NNNN --pass [--docs-done] [--note ...]
-venv\Scripts\python.exe -m pytest orchestra/tests/ -q      # 全量测试（当前 106 项）
+venv\Scripts\python.exe -m pytest orchestra/tests/ -q      # 全量测试（数量以实际收集为准）
 git merge --no-ff task/TASK-NNNN -m "合并: TASK-NNNN ..."  # 核验后合并
 venv\Scripts\python.exe orchestra\board.py worktree clean TASK-NNNN  # 清理后才能删分支
 ```
