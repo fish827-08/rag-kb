@@ -14,7 +14,7 @@ from client import BoardUnavailable
 from cards import (cmd_add, cmd_claim, cmd_list_pending, cmd_new_worker,
                    cmd_show, cmd_status, cmd_verify)
 from comm import COMM_CHANNELS, cmd_list_comm, cmd_report
-from feedback import TYPES, cmd_fbk_add, cmd_fbk_list, cmd_fbk_show
+from feedback import TYPES, cmd_fbk_add, cmd_fbk_list, cmd_fbk_show, cmd_fbk_decide
 from registry import cmd_register, cmd_workers
 from watch import cmd_watch
 from worktree import (cmd_worktree_clean, cmd_worktree_enter,
@@ -117,6 +117,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_fb_list = fb_sub.add_parser("list", help="一行一反馈卡")
     p_fb_show = fb_sub.add_parser("show", help="打印整张反馈卡")
     p_fb_show.add_argument("fbk_id", help="如 FBK-0001")
+    p_fb_decide = fb_sub.add_parser("decide", help="裁决反馈卡（open→accepted/rejected）+ comm:feedback 归档")
+    p_fb_decide.add_argument("fbk_id", help="如 FBK-0001")
+    dec_group = p_fb_decide.add_mutually_exclusive_group(required=True)
+    dec_group.add_argument("--accepted", dest="action", action="store_const",
+                           const="accepted", help="采纳（进入方案修订）")
+    dec_group.add_argument("--rejected", dest="action", action="store_const",
+                           const="rejected", help="打回")
+    p_fb_decide.add_argument("--note", default="", help="裁决理由（结论级，入 comm:feedback）")
+    p_fb_decide.add_argument("--decider", default="coordinator",
+                              help="裁决者身份（默认 coordinator）")
     return parser
 
 
@@ -151,6 +161,8 @@ _DISPATCH = {
                                      impact=a.impact, question=a.question),
         "list": lambda a: cmd_fbk_list(),
         "show": lambda a: cmd_fbk_show(a.fbk_id),
+        "decide": lambda a: cmd_fbk_decide(a.fbk_id, action=a.action,
+                                            note=a.note, decider=a.decider),
     },
 }
 

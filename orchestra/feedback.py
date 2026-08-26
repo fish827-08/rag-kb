@@ -132,6 +132,46 @@ def _next_fbk_id(cards: list[dict]) -> str:
     return f"FBK-{max_num + 1:04d}"
 
 
+def count_task_feedback(task_id: str, cards: list[dict]) -> dict:
+    """统计某任务卡各节点反馈卡数量 → {precheck, milestone, review, total}。
+
+    仅统计首行合法且 task_id 匹配的反馈卡；非法首行跳过。
+    """
+    counts = {"precheck": 0, "milestone": 0, "review": 0, "total": 0}
+    for card in cards:
+        try:
+            h = parse_fbk_header(card["content"])
+        except ValueError:
+            continue
+        if h["task_id"] != task_id:
+            continue
+        stage = h["stage"]
+        if stage in counts:
+            counts[stage] += 1
+        counts["total"] += 1
+    return counts
+
+
+def check_quota(task_id: str, stage: str, cards: list[dict]) -> None:
+    """分节点配额硬门禁（B2 §3）：precheck≤2 / milestone≤2 / 总≤5 / review不计。
+
+    超限抛 ValueError（提示转协调者仲裁）；仅在创建新反馈卡前调用。
+    review 节点为沉淀性反馈，不占配额。
+    """
+    if stage == "review":
+        return  # 复盘节点不计配额
+    c = count_task_feedback(task_id, cards)
+    if c["total"] >= 5:
+        raise ValueError(
+            f"任务 {task_id} 反馈已达总上限 5 轮，超限拒绝新卡，请转协调者仲裁")
+    if stage == "precheck" and c["precheck"] >= 2:
+        raise ValueError(
+            f"任务 {task_id} precheck 反馈已达 2 轮上限，超限拒绝新卡，请转协调者仲裁")
+    if stage == "milestone" and c["milestone"] >= 2:
+        raise ValueError(
+            f"任务 {task_id} milestone 反馈已达 2 轮上限，超限拒绝新卡，请转协调者仲裁")
+
+
 def _find_fbk(fbk_id: str) -> tuple[dict, dict]:
     """按 FBK 编号找反馈卡；返回 (记录, 首行解析)，找不到 SystemExit(1)。"""
     cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
@@ -156,6 +196,7 @@ def cmd_fbk_add(proposer: str, task_id: str, fb_type: str, stage: str,
                      question=question)
     check_fbk_required(fb_type, alt=alt, impact=impact, question=question)
     cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    check_quota(task_id, stage, cards)  # TASK-0033 分节点配额硬门禁
     fbk_id = _next_fbk_id(cards)
     content = render_fbk(fbk_id, proposer=proposer, task_id=task_id,
                          fb_type=fb_type, stage=stage, summary=summary,
@@ -190,3 +231,30 @@ def cmd_fbk_show(fbk_id: str) -> None:
     """打印整张反馈卡（核验/回溯用）。"""
     card, _ = _find_fbk(fbk_id)
     print(card["content"])
+
+
+def cmd_fbk_decide(fbk_id: str, action: str, note: str = "",
+                    decider: str = "coordinator") -> None:
+    """裁决反馈卡（open → accepted/rejected），结论级写 comm:feedback（≤300 字符）。
+
+    仅 open 状态可流转（check_result_transition 校验）；非 open 抛 ValueError。
+    裁决后 PATCH 更新反馈卡结果字段 + POST 写 comm:feedback 归档留痕。
+    """
+    card, h = _find_fbk(fbk_id)
+    current = parse_fbk_result(card["content"])
+    check_result_transition(current, action)
+    # 替换"结果："行为新状态
+    lines = card["content"].split("\n")
+    new_lines = [f"结果：{action}" if l.startswith("结果：") else l for l in lines]
+    new_content = "\n".join(new_lines)
+    _request("PATCH", f"/memories/{card['id']}", {"content": new_content})
+    # comm:feedback 结论级归档（≤300 字符，不贴过程流水）
+    comm = (f"[comm:feedback] {decider} 裁决 {fbk_id}"
+            f"（{h['fb_type']} → {h['task_id']}，{h['stage']}）：{action}")
+    if note:
+        comm += f"。{note[:200]}"
+    if len(comm) > 300:
+        comm = comm[:297] + "..."
+    _request("POST", "/memories",
+             {"content": comm, "tags": ["comm:feedback"], "source": decider})
+    print(f"已裁决 {fbk_id} → {action}（comm:feedback 已归档）")
