@@ -4,7 +4,7 @@
 协调者专用；worker 走 MCP（orchestra-worker skill）。
 各子命令实现按模块分层（protocol.md §10）：
 client（HTTP）/ cards（任务卡 CRUD+纯函数）/ registry（注册）/
-comm（交流窗）/ worktree（隔离）/ watch（看板）。
+comm（交流窗）/ worktree（隔离）/ watch（看板）/ feedback（B2 反馈卡）。
 用法：python orchestra\\board.py <子命令>（--help 看各子命令参数）。
 """
 import argparse
@@ -14,6 +14,7 @@ from client import BoardUnavailable
 from cards import (cmd_add, cmd_claim, cmd_list_pending, cmd_new_worker,
                    cmd_show, cmd_status, cmd_verify)
 from comm import COMM_CHANNELS, cmd_list_comm, cmd_report
+from feedback import TYPES, cmd_fbk_add, cmd_fbk_list, cmd_fbk_show
 from registry import cmd_register, cmd_workers
 from watch import cmd_watch
 from worktree import (cmd_worktree_clean, cmd_worktree_enter,
@@ -93,6 +94,29 @@ def build_parser() -> argparse.ArgumentParser:
     p_wt.add_argument("task_id", help="任务卡号，如 TASK-0025")
     p_wt.add_argument("--repo", default=None,
                       help="仓库根（默认自动探测；测试注入用）")
+
+    p_fb = sub.add_parser("feedback", help="B2 反馈卡（add/list/show）")
+    fb_sub = p_fb.add_subparsers(dest="fb_action", required=True)
+    p_fb_add = fb_sub.add_parser("add", help="创建反馈卡（open）")
+    p_fb_add.add_argument("--proposer", required=True,
+                          help="提出者（coordinator/designer/worker）")
+    p_fb_add.add_argument("--task", dest="task_id", required=True,
+                          help="关联目标卡，如 TASK-0026")
+    p_fb_add.add_argument("--type", dest="fb_type", required=True,
+                          choices=TYPES, help="objection|risk|clarify")
+    p_fb_add.add_argument("--stage", required=True,
+                          choices=["precheck", "milestone", "review"],
+                          help="节点：precheck|milestone|review")
+    p_fb_add.add_argument("--summary", required=True, help="摘要（≤100 字符）")
+    p_fb_add.add_argument("--alt", default="",
+                          help="替代方案（objection 必附）")
+    p_fb_add.add_argument("--impact", default="",
+                          help="阻塞点/影响面（risk 必附）")
+    p_fb_add.add_argument("--question", default="",
+                          help="澄清问题（clarify 必附）")
+    p_fb_list = fb_sub.add_parser("list", help="一行一反馈卡")
+    p_fb_show = fb_sub.add_parser("show", help="打印整张反馈卡")
+    p_fb_show.add_argument("fbk_id", help="如 FBK-0001")
     return parser
 
 
@@ -120,6 +144,14 @@ _DISPATCH = {
         "enter": lambda a: cmd_worktree_enter(a.task_id, repo=a.repo),
         "clean": lambda a: cmd_worktree_clean(a.task_id, repo=a.repo),
     },
+    "feedback": {
+        "add": lambda a: cmd_fbk_add(proposer=a.proposer, task_id=a.task_id,
+                                     fb_type=a.fb_type, stage=a.stage,
+                                     summary=a.summary, alt=a.alt,
+                                     impact=a.impact, question=a.question),
+        "list": lambda a: cmd_fbk_list(),
+        "show": lambda a: cmd_fbk_show(a.fbk_id),
+    },
 }
 
 
@@ -128,8 +160,10 @@ def main() -> None:
     args = build_parser().parse_args()
     try:
         handler = _DISPATCH[args.command]
-        if isinstance(handler, dict):  # worktree 按 action 二级分发
-            handler = handler[args.action]
+        if isinstance(handler, dict):  # 二级分发（worktree→action / feedback→fb_action）
+            sub = getattr(args, "fb_action" if args.command == "feedback"
+                          else "action")
+            handler = handler[sub]
         handler(args)
     except BoardUnavailable as e:
         print(f"错误：{e}\n请先启动 kb 服务：python -m kb serve",
