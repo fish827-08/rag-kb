@@ -1,4 +1,6 @@
 """REST API：FastAPI 应用工厂 + memories CRUD + healthz + ask + 统一错误格式。"""
+import hmac
+import json
 import logging
 import tempfile
 import time
@@ -273,6 +275,78 @@ def _wrap_request_log(app):
     return middleware
 
 
+def _wrap_api_key(app, settings):
+    """API Key 鉴权中间件（N19/TASK-0062）：纯 ASGI，空 key 直通，非空校验 Bearer/X-API-Key。
+
+    与 _wrap_sse_charset / _wrap_request_log 同模式（纯函数式包装，不依赖 FastAPI
+    依赖注入，确保覆盖 mount 的 /mcp 子应用与 /dashboard 静态挂载）。
+
+    流程：
+      1) settings.api_key 为空 → 直通（降级模式，等同 v1.x 行为）
+      2) 白名单 GET /api/v1/healthz → 放行（存活探针）
+      3) 取 key：Authorization: Bearer <key> 优先，其次 X-API-Key: <key>
+      4) 缺失/不匹配 → 401 JSON {"error":"UNAUTHORIZED","message":"missing or invalid api key"}
+         （Content-Type: application/json; charset=utf-8；不区分缺失与错误，防探测）
+      5) hmac.compare_digest 匹配 → 放行
+
+    注册顺序（create_app 内，从内到外）：业务 → 本中间件 → JSON charset → 访问日志；
+    即请求进入：访问日志 → JSON charset → 鉴权 → 业务；401 响应向外经 JSON charset
+    补 charset（本中间件自身也显式声明 charset=utf-8，双保险）。
+    """
+    api_key = (settings.api_key or "").strip()
+
+    async def middleware(scope, receive, send):
+        # 非 HTTP 作用域（lifespan 等）原样透传
+        if scope["type"] != "http":
+            await app(scope, receive, send)
+            return
+        # 空 key 直通（降级模式）
+        if not api_key:
+            await app(scope, receive, send)
+            return
+        method = scope.get("method", "")
+        path = scope.get("path", "")
+        # 白名单：GET /api/v1/healthz（存活探针，无敏感数据）
+        if method == "GET" and path == "/api/v1/healthz":
+            await app(scope, receive, send)
+            return
+        # 取 key：Authorization: Bearer <key> 优先
+        headers = scope.get("headers", [])
+        provided_key = ""
+        for k, v in headers:
+            if k.lower() == b"authorization":
+                val = v.decode("latin-1", errors="replace")
+                if val.lower().startswith("bearer "):
+                    provided_key = val[7:].strip()
+                    break
+        # 其次 X-API-Key: <key>
+        if not provided_key:
+            for k, v in headers:
+                if k.lower() == b"x-api-key":
+                    provided_key = v.decode("latin-1", errors="replace").strip()
+                    break
+        # compare_digest 比较（防时序攻击）；缺失或不匹配均 401（不区分，防探测）
+        if not provided_key or not hmac.compare_digest(provided_key, api_key):
+            body = json.dumps(
+                {"error": "UNAUTHORIZED",
+                 "message": "missing or invalid api key"}
+            ).encode("utf-8")
+            await send({
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"content-type", b"application/json; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
+            return
+        # 匹配放行
+        await app(scope, receive, send)
+
+    return middleware
+
+
 def create_app(settings: Settings | None = None,
                enable_watcher: bool = False) -> FastAPI:
     """应用工厂；全局单例 KBService 挂 app.state.kb（REST 与 MCP 共享该实例）。
@@ -298,6 +372,11 @@ def create_app(settings: Settings | None = None,
         serve_log = logging.getLogger("kb.serve")
         serve_log.info("服务启动 version=%s host=%s port=%s", __version__,
                        kb.settings.api_host, kb.settings.api_port)
+        # 鉴权状态（N19/TASK-0062）：只记启用/未启用，不回显 key
+        if (kb.settings.api_key or "").strip():
+            serve_log.info("鉴权已启用（KB_API_KEY 已配置，要求 Bearer/X-API-Key）")
+        else:
+            serve_log.info("鉴权未启用（本地模式，KB_API_KEY 为空）")
         wd = kb.settings.watch_dir
         if enable_watcher and str(wd) not in ("", "."):
             watcher = KBWatcher(kb, wd)
@@ -547,6 +626,9 @@ def create_app(settings: Settings | None = None,
         from starlette.staticfiles import StaticFiles
         app.mount("/dashboard", StaticFiles(directory=str(dashboard_dir), html=True),
                   name="dashboard")
+    # 鉴权中间件（N19/TASK-0062）：纯 ASGI，空 key 直通，非空校验 Bearer/X-API-Key；
+    # 注册在 JSON charset 内层（401 响应向外经 JSON charset 补 charset）、访问日志内层
+    app = _wrap_api_key(app, kb.settings)
     # 兜底：整体再包 JSON charset 中间件，保证所有 application/json
     # 响应头带 charset=utf-8（含 422 校验错误与错误 JSON）
     app = _wrap_json_charset(app)
