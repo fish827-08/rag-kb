@@ -262,13 +262,55 @@ def build_anomaly_snapshot(service) -> dict:
     return {"tasks": tasks, "feedbacks": feedbacks, "rounds": rounds_map}
 
 
+def _fallback_summary_text(snapshot: str, time_str: str) -> str:
+    """LLM 不可用时主摘要降级纯文本（TASK-0059）：从快照字符串拼关键数字，无需 LLM。
+
+    解析 build_snapshot 返回的【任务板】段，统计 pending/claimed/done/verified 各状态卡数，
+    输出确定性纯文本摘要，保证 Ollama 挂掉时 comm:monitor 仍有记录。
+    """
+    pending = claimed = done = verified = 0
+    in_task = False
+    for line in snapshot.split("\n"):
+        if line.startswith("【任务板】"):
+            in_task = True
+            continue
+        if line.startswith("【") and in_task:
+            in_task = False
+        if in_task and line.startswith("TASK-"):
+            parts = line.split(" ", 2)
+            if len(parts) >= 2:
+                status = parts[1]
+                if status == "pending":
+                    pending += 1
+                elif status == "claimed":
+                    claimed += 1
+                elif status == "done":
+                    done += 1
+                elif status == "verified":
+                    verified += 1
+    return (f"[{time_str}] 协作快照（纯文本降级，LLM 不可用）："
+            f"待办{pending} 进行中{claimed} 已完成{done} 已核验{verified}。详见任务板。")
+
+
+def _fallback_dispatch_text(anomalies: list[dict], time_str: str) -> str:
+    """LLM 不可用时 dispatch 降级纯文本（TASK-0059）：异常列表模板渲染，无需 LLM。
+
+    异常列表本身是结构化的，直接模板渲染即可，保证 Ollama 挂掉时 comm:dispatch 仍有记录。
+    """
+    lines = [f"[{time_str}] 协作异常告警（纯文本降级，LLM 不可用，共{len(anomalies)}条）："]
+    for a in anomalies:
+        lines.append(f"- [{a.get('type', '?')}] {a.get('task_id') or '-'}: {a.get('detail', '')}")
+    return "\n".join(lines)
+
+
 def run_once_dispatch(service, max_tokens: int = 300):
     """单轮异常调度（TASK-0049）：异常检测→本地LLM摘要→写comm:dispatch。
 
     异常列表非空时，qwen3:4b（prefer=local）将异常组织为 ≤100 字中文摘要，
     写 comm:dispatch 新频道（source=kb-dispatch）；无异常不写（避免刷屏）。
-    异常检测失败/LLM 不可用/摘要为空记 WARNING 兜底返回 None，不崩溃、不影响
-    监控主流程（run_once_summary 的返回值不受本函数影响）。
+    TASK-0059：LLM 不可用/摘要为空时降级为纯文本模板渲染（_fallback_dispatch_text），
+    仍然写 comm:dispatch，保证 Ollama 挂掉时监控链路完整可用。
+    异常检测失败/写记录失败记 WARNING 兜底返回 None，不崩溃。
     返回写入的 Record 或 None。
     """
     try:
@@ -280,18 +322,22 @@ def run_once_dispatch(service, max_tokens: int = 300):
         anomaly_text = "\n".join(
             f"- [{a['type']}] {a.get('task_id') or '-'}: {a['detail']}"
             for a in anomalies)
-        messages = [
-            {"role": "system", "content": _DISPATCH_SYSTEM_PROMPT},
-            {"role": "user",
-             "content": (f"检测到 {len(anomalies)} 条协作异常（{time_str}）：\n"
-                         f"{anomaly_text}\n请输出 ≤100 字中文调度摘要。")},
-        ]
-        summary = service.llm.chat(
-            messages, max_tokens=max_tokens, prefer="local")
-        summary = (summary or "").strip()
-        if not summary:
-            logger.warning("dispatch 摘要为空，跳过本轮")
-            return None
+        # LLM 优先，失败降级纯文本（TASK-0059）
+        try:
+            messages = [
+                {"role": "system", "content": _DISPATCH_SYSTEM_PROMPT},
+                {"role": "user",
+                 "content": (f"检测到 {len(anomalies)} 条协作异常（{time_str}）：\n"
+                             f"{anomaly_text}\n请输出 ≤100 字中文调度摘要。")},
+            ]
+            summary = service.llm.chat(
+                messages, max_tokens=max_tokens, prefer="local")
+            summary = (summary or "").strip()
+            if not summary:
+                raise ValueError("LLM 返回空摘要")
+        except Exception as exc:
+            logger.warning("dispatch LLM 摘要失败，降级纯文本: %s", exc)
+            summary = _fallback_dispatch_text(anomalies, time_str)
         record = service.add_memory(summary, tags=["comm:dispatch"],
                                     source="kb-dispatch")
         logger.info("dispatch 已写入 comm:dispatch 异常摘要%s",
@@ -367,33 +413,40 @@ class MonitorAgent:
 
 def run_once_summary(service, max_tokens: int = 300,
                      dispatch_enabled: bool = True) -> Record | None:
-    """单轮按需摘要（TASK-0021）：快照→本地 LLM→写 comm:monitor。
+    """单轮按需摘要（TASK-0021 / TASK-0059）：快照→LLM→写 comm:monitor。
 
-    返回写入的 Record（content=摘要，id 供端点回显）；LLM 不可用/摘要为空/
-    任何异常记 WARNING 兜底并返回 None（不崩溃、不写空摘要）。MonitorAgent
-    主循环与 POST /api/v1/monitor/summary 均复用本函数，保证单轮逻辑唯一。
+    TASK-0059：主摘要 LLM 失败时降级为确定性纯文本拼接（_fallback_summary_text），
+    仍然写 comm:monitor；dispatch 独立执行（不管主摘要是否成功），LLM 不可用时
+    dispatch 也降级纯文本。保证 Ollama 挂掉时监控链路完整可用（本地优先原则）。
 
-    TASK-0049：dispatch_enabled=True 时，写完 comm:monitor 后额外执行
-    run_once_dispatch（异常检测→comm:dispatch）；其失败不影响本函数返回值。
+    build_snapshot/add_memory 失败记 WARNING 返回 None；dispatch 失败不影响返回值。
+    MonitorAgent 主循环与 POST /api/v1/monitor/summary 均复用本函数。
     """
+    record = None
     try:
         snapshot = build_snapshot(service)
         time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        messages = build_messages(snapshot, time_str)
-        summary = service.llm.chat(
-            messages, max_tokens=max_tokens, prefer="local")
-        summary = (summary or "").strip()
-        if not summary:
-            logger.warning("monitor 摘要为空，跳过本轮")
-            return None
+        # 主摘要：LLM 优先，失败降级纯文本（TASK-0059）
+        try:
+            messages = build_messages(snapshot, time_str)
+            summary = service.llm.chat(
+                messages, max_tokens=max_tokens, prefer="local")
+            summary = (summary or "").strip()
+            if not summary:
+                raise ValueError("LLM 返回空摘要")
+        except Exception as exc:
+            logger.warning("monitor LLM 摘要失败，降级纯文本: %s", exc)
+            summary = _fallback_summary_text(snapshot, time_str)
         record = service.add_memory(summary, tags=["comm:monitor"],
                                     source="kb-monitor")
         logger.info("monitor 已写入 comm:monitor 摘要%s",
                     f" id={record.id}" if record is not None else "")
-        # TASK-0049：异常调度（独立于监控摘要，失败不影响主流程返回值）
-        if dispatch_enabled:
-            run_once_dispatch(service, max_tokens=max_tokens)
-        return record
     except Exception as exc:
         logger.warning("monitor 本轮失败（跳过不刷屏）: %s", exc)
-        return None
+    # dispatch 独立执行（TASK-0059：不管主摘要是否成功都执行）
+    if dispatch_enabled:
+        try:
+            run_once_dispatch(service, max_tokens=max_tokens)
+        except Exception as exc:
+            logger.warning("dispatch 独立执行失败: %s", exc)
+    return record

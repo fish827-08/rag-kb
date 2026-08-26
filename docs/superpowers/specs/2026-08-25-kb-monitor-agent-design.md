@@ -41,6 +41,21 @@
 - 异常检测失败 / LLM 不可用 / 摘要为空 → 记 WARNING 兜底返回 None，
   不崩溃、不影响监控主流程（`run_once_summary` 返回值不受本函数影响）。
 
+### 2.6 降级策略（TASK-0059）
+
+- 主摘要 LLM 失败（不可用/返回空/抛异常）→ 降级为确定性纯文本拼接
+  （`_fallback_summary_text`），从快照解析任务板各状态卡数，仍写
+  comm:monitor，记 WARNING；
+- dispatch LLM 失败 → 降级为异常列表模板渲染（`_fallback_dispatch_text`），
+  仍写 comm:dispatch，记 WARNING；
+- 两路分离：主摘要失败不再整轮短路，dispatch 独立执行（不管主摘要是否成功）；
+- 仅 `build_snapshot`/`add_memory` 失败返回 None → 端点 502
+  MONITOR_UNAVAILABLE；LLM 失败降级后端点返回 200；
+- 效果：Ollama 挂掉时监控链路完整可用（comm:monitor + comm:dispatch 均有
+  记录），符合本地优先原则；
+- 降级路径不新增配置项，纯函数 `_fallback_summary_text`/
+  `_fallback_dispatch_text` 可单测。
+
 ### 2.4 接入点
 
 - `run_once_summary` 新增 `dispatch_enabled` 参数（默认 True），写完 comm:monitor 后调 `run_once_dispatch`；
