@@ -136,6 +136,15 @@
       <div id="logs-list" class="comm-scroll"></div>
     </details>
   </section>
+
+  <!-- ⑤ 反馈卡区（TASK-0041）：open 待决反馈表格 -->
+  <section>
+    <h2>待决反馈（open）</h2>
+    <table>
+      <thead><tr><th>FBK-ID</th><th>状态</th><th>目标卡</th><th>类型</th><th>摘要</th></tr></thead>
+      <tbody id="feedbacks-body"></tbody>
+    </table>
+  </section>
 </main>
 
 <script>
@@ -306,6 +315,57 @@ function logsListHTML(rows) {
   return html;
 }
 
+// 反馈卡首行：FBK-0001 feedback TASK-0026 | objection precheck（同 feedback.py _FBK_HEADER_RE）
+function parseFeedbackHeader(content) {
+  var line = String(content == null ? '' : content).split('\n')[0].trim();
+  var m = line.match(/^(FBK-\d{4}) feedback (TASK-\d{4}) \| (\w+) (\w+)$/);
+  if (!m) { return null; }
+  return { fbkId: m[1], taskId: m[2], type: m[3], stage: m[4] };
+}
+
+// "结果："行 → open/accepted/rejected；缺省视为 open（同 feedback.py parse_fbk_result）
+function feedbackResult(content) {
+  var lines = String(content == null ? '' : content).split('\n');
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].indexOf('结果：') === 0) { return lines[i].slice(3).trim(); }
+  }
+  return 'open';
+}
+
+// 反馈卡记录 → 行字段（首行 + 结果 + 摘要）；坏首行跳过
+function parseFeedbacks(items) {
+  var rows = [];
+  for (var i = 0; i < (items || []).length; i++) {
+    var h = parseFeedbackHeader(items[i].content);
+    if (!h) { continue; }
+    h.status = feedbackResult(items[i].content);
+    h.summary = '';
+    var lines = String(items[i].content).split('\n');
+    for (var j = 0; j < lines.length; j++) {
+      if (lines[j].indexOf('摘要：') === 0) { h.summary = lines[j].slice(3).trim(); break; }
+    }
+    rows.push(h);
+  }
+  return rows;
+}
+
+// 反馈卡表（TASK-0041）：只渲染 open 待决反馈；无 open 时提示"无待决反馈"
+function feedbackTableHTML(rows) {
+  var openRows = [];
+  for (var i = 0; i < (rows || []).length; i++) {
+    if (rows[i].status === 'open') { openRows.push(rows[i]); }
+  }
+  if (!openRows.length) { return '<tr><td colspan="5" class="empty">无待决反馈</td></tr>'; }
+  var html = '';
+  for (var k = 0; k < openRows.length; k++) {
+    var r = openRows[k];
+    html += '<tr class="st-claimed"><td>' + escapeHtml(r.fbkId) + '</td><td>'
+      + escapeHtml(r.status) + '</td><td>' + escapeHtml(r.taskId) + '</td><td>'
+      + escapeHtml(r.type) + '</td><td>' + escapeHtml(r.summary) + '</td></tr>';
+  }
+  return html;
+}
+
 // ============ 渲染（行 → HTML 片段） ============
 
 function registryTableHTML(rows) {
@@ -400,7 +460,8 @@ function load() {
     fetch(base + '/memories?tag=registry&limit=1000'),
     fetch(base + '/memories?tag=taskboard&limit=1000'),
     fetch(base + '/memories?limit=1000'),
-    fetch(base + '/logs?limit=20&event=request')
+    fetch(base + '/logs?limit=20&event=request'),
+    fetch(base + '/memories?tag=feedback&limit=1000')
   ];
   Promise.all(reqs.map(function (p) {
     return p.then(function (r) { return r.json(); });
@@ -409,10 +470,12 @@ function load() {
     var tasks = (arr[1] && arr[1].items) || [];
     var all = (arr[2] && arr[2].items) || [];
     var logs = (arr[3] && arr[3].items) || [];
+    var fbks = (arr[4] && arr[4].items) || [];
     renderWorkers(reg, tasks);
     document.getElementById('tasks-body').innerHTML = taskTableHTML(parseTasks(tasks));
     document.getElementById('comm-list').innerHTML = commListHTML(parseComm(all, COMM_LIMIT));
     document.getElementById('logs-list').innerHTML = logsListHTML(parseLogs(logs));
+    document.getElementById('feedbacks-body').innerHTML = feedbackTableHTML(parseFeedbacks(fbks));
     document.getElementById('last-updated').textContent = nowText();
     setStatus(true);
   }).catch(function () { setStatus(false); });

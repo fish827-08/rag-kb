@@ -95,6 +95,14 @@ renderWorkers(
    {content: 'TASK-0002 claimed worker-4 | 已注册成员任务', updated_at: '2026-08-25T22:00'}]
 );
 out.worker_rows = document.getElementById('workers-body').innerHTML;
+// TASK-0041：反馈卡解析与渲染（只渲染 open 待决；accepted 不显示；无 open 提示）
+out.fb_open = parseFeedbacks([
+  {content: 'FBK-0001 feedback TASK-0026 | objection precheck\n提出者：designer-1\n目标卡：TASK-0026\n类型：objection\n节点：precheck\n摘要：缺验收\n替代方案：补用例\n结果：open'},
+  {content: 'FBK-0002 feedback TASK-0027 | clarify review\n提出者：worker-2\n目标卡：TASK-0027\n类型：clarify\n节点：review\n摘要：已决\n澄清问题：q\n结果：accepted'},
+  {content: '坏首行'}
+]);
+out.fb_table_open = feedbackTableHTML(out.fb_open);
+out.fb_table_empty = feedbackTableHTML([]);
 console.log(JSON.stringify(out));
 """
 
@@ -228,3 +236,29 @@ def test_kb挂载dashboard返回200(env_isolated):
         # 页面可渲染的基本标记：标题与轮询脚本
         assert "<title>" in resp.text
         assert "setInterval" in resp.text
+
+
+def test_反馈区静态标记():
+    """TASK-0041：页面含 feedbacks-body 反馈区、tag=feedback 拉取与"无待决反馈"提示。"""
+    html = _html()
+    assert "feedbacks-body" in html            # 反馈区表体
+    assert "tag=feedback" in html              # 数据源拉取（与 registry/taskboard 同式）
+    assert "无待决反馈" in html                 # 无 open 提示文案
+    assert "待决反馈" in html
+
+
+@need_node
+def test_反馈卡解析与渲染(js_out):
+    """TASK-0041：parseFeedbacks 解析首行/结果/摘要；feedbackTableHTML 只渲染 open 待决。"""
+    fb = js_out["fb_open"][0]
+    assert fb["fbkId"] == "FBK-0001"
+    assert fb["taskId"] == "TASK-0026"
+    assert fb["type"] == "objection"
+    assert fb["stage"] == "precheck"
+    assert fb["status"] == "open"
+    assert fb["summary"] == "缺验收"
+    # 只渲染 open；accepted 不出现；坏首行被跳过
+    assert "FBK-0001" in js_out["fb_table_open"]
+    assert "FBK-0002" not in js_out["fb_table_open"]
+    # 无 open → 提示"无待决反馈"
+    assert "无待决反馈" in js_out["fb_table_empty"]
