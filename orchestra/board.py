@@ -24,7 +24,6 @@ import json
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
 # kb REST 客户端（TASK-0028 包化①：从本文件拆出至 client.py）
@@ -33,20 +32,17 @@ from client import KB_BASE, BoardUnavailable, _request
 # 卡片纯函数（TASK-0029 包化②：从本文件拆出至 cards.py）
 from cards import (LIMITS, STATUSES, render_card, parse_header,
                    check_limits, _fmt_time, _next_task_id)
+
+# worker 注册表（TASK-0030 包化③：从本文件搬移至 registry.py）
+from registry import REGISTRY_TAG, cmd_register, cmd_workers
+
+# 交流窗（TASK-0030 包化④：从本文件搬移至 comm.py）
+from comm import COMM_CHANNELS, cmd_report, cmd_list_comm, _comm_tag, _truncate
+
 TAG = "taskboard"
 # 仓库根（board.py 位于 orchestra/ 下，仓库根为其上一级）；worktree 隔离目录（TASK-0025）
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKTREES_DIR = REPO_ROOT / ".worktrees"
-# worker 注册表记录 tag（orchestra v2 V2-1）
-REGISTRY_TAG = "registry"
-# 交流窗频道枚举与 text 上限（protocol §7 / V2-2 设计书）
-COMM_CHANNELS = ("done", "issue", "test", "system")
-COMM_TEXT_LIMIT = 300
-
-
-def _now_iso() -> str:
-    """当前本地时间 ISO 格式（分钟精度），registry 记录时间戳用。"""
-    return datetime.now().strftime("%Y-%m-%dT%H:%M")
 
 
 def cmd_status() -> None:
@@ -165,117 +161,6 @@ def cmd_verify(task_id: str, action: str, note: str) -> None:
                    + ("\n" + rest if rest else ""))
     _request("PATCH", f"/memories/{card['id']}", {"content": new_content})
     print(f"{task_id} → {new_status}" + (f"（备注：{note}）" if note else ""))
-
-
-def cmd_register(name: str, model: str, client: str) -> None:
-    """注册/刷新 worker 身份（tag=registry，内容为 JSON）。
-
-    首次注册写新记录（registered_at/last_seen 均为当前时间，status=idle）；
-    同名重复注册只刷新 model/client 与 last_seen，不重复建卡。
-    """
-    if not name or not model or not client:
-        raise ValueError("register 需要 name、--model、--client 均非空")
-    cards = _request("GET", f"/memories?tag={REGISTRY_TAG}&limit=1000") \
-        .get("items", [])
-    for card in cards:
-        try:
-            data = json.loads(card["content"])
-        except (ValueError, TypeError):
-            continue
-        if data.get("worker") == name:
-            data["model"] = model
-            data["client"] = client
-            data["last_seen"] = _now_iso()
-            _request("PATCH", f"/memories/{card['id']}",
-                     {"content": json.dumps(data, ensure_ascii=False)})
-            print(f"已刷新 {name}（model: {model}, client: {client}）")
-            return
-    data = {"worker": name, "model": model, "client": client,
-            "registered_at": _now_iso(), "last_seen": _now_iso(),
-            "status": "idle"}
-    _request("POST", "/memories",
-             {"content": json.dumps(data, ensure_ascii=False),
-              "tags": [REGISTRY_TAG]})
-    print(f"已注册 {name}（model: {model}, client: {client}）")
-
-
-def cmd_workers() -> None:
-    """一行一 worker：名字 模型 状态 最后活跃；空表明确提示。"""
-    cards = _request("GET", f"/memories?tag={REGISTRY_TAG}&limit=1000") \
-        .get("items", [])
-    if not cards:
-        print("无已注册 worker")
-        return
-    for card in cards:
-        try:
-            data = json.loads(card["content"])
-        except (ValueError, TypeError):
-            print("[警告] registry 记录内容非 JSON，已跳过")
-            continue
-        print(f"{data.get('worker', '?')} {data.get('model', '?')} "
-              f"{data.get('status', '?')} {data.get('last_seen', '?')}")
-
-
-def cmd_report(channel: str, from_: str, text: str) -> None:
-    """写一条交流窗记录（tag=comm:<channel>，source=report 者）。
-
-    校验：channel 为枚举、from 非空、text 非空且 ≤300 字符（协议 §7 上限）；
-    不合法抛 ValueError（不发请求）。
-    """
-    if channel not in COMM_CHANNELS:
-        raise ValueError(
-            f"channel 非法：{channel!r}，可选 {', '.join(COMM_CHANNELS)}")
-    if not from_:
-        raise ValueError("report 需要 --from 非空")
-    if not text.strip():
-        raise ValueError("report 需要 --text 非空")
-    if len(text) > COMM_TEXT_LIMIT:
-        raise ValueError(
-            f"text 超长：{len(text)} 字符 > 上限 {COMM_TEXT_LIMIT}")
-    resp = _request("POST", "/memories",
-                    {"content": text, "tags": [f"comm:{channel}"],
-                     "source": from_})
-    print(f"已写 comm:{channel}（记录 {resp['id']}）")
-
-
-def _comm_tag(tags) -> str | None:
-    """取记录中首个 comm:* 标签；无则返回 None。"""
-    for t in tags or []:
-        if t.startswith("comm:"):
-            return t
-    return None
-
-
-def _truncate(text: str, n: int = 60) -> str:
-    """超长截断至 n 字符并追加省略号，避免刷屏。"""
-    return text[:n] + "…" if len(text) > n else text
-
-
-def cmd_list_comm(channel: str | None = None, limit: int = 10) -> None:
-    """按频道列最新 N 条交流窗记录；缺省频道列全部 comm:*，updated_at 降序。
-
-    输出一行一条：HH:MM | comm:<tag> | <source> | <text 截断>；空表明确提示。
-    """
-    if limit < 1:
-        raise ValueError(f"limit 须 ≥1，收到 {limit}")
-    if channel is not None:
-        cards = _request(
-            "GET", f"/memories?tag=comm:{channel}&limit=1000").get("items", [])
-        # 服务端按 tag 过滤后再本地复核，避免脏数据混入
-        cards = [c for c in cards
-                 if _comm_tag(c.get("tags")) == f"comm:{channel}"]
-    else:
-        cards = _request("GET", "/memories?limit=1000").get("items", [])
-        cards = [c for c in cards if _comm_tag(c.get("tags")) is not None]
-    if not cards:
-        print("无交流窗记录")
-        return
-    cards.sort(key=lambda c: c.get("updated_at", ""), reverse=True)
-    for card in cards[:limit]:
-        tag = _comm_tag(card.get("tags")) or "comm:?"
-        print(f"{_fmt_time(card.get('updated_at', ''))} | {tag} "
-              f"| {card.get('source') or '?'} | "
-              f"{_truncate(card.get('content', ''))}")
 
 
 def _watch_frame(include_comm: bool = False) -> str:
