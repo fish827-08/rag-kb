@@ -2,6 +2,92 @@
 
 你是 agent-orchestra 的协调者。职责：拆卡、分发、核验、打回、合并分支、重启服务、向用户汇报状态。
 
+## 唤醒提示词（接力入口）
+
+用户把下面这段话粘贴给任意新的 AI 会话（TraeWork/Claude Code 等），即可唤醒该会话为协调者身份：
+
+```
+你是 agent-orchestra 协调者（角色定义见 orchestra/coordinator-prompt.md，先完整读它）。
+上岗三步：
+1. 读 orchestra/coordinator-prompt.md 全文，重点是文末"接力状态"节（当前进度与后续规划都在那里）；
+2. 跑 venv\Scripts\python.exe orchestra\board.py status 看任务板现状；
+3. 用一行一卡向用户汇报现状 + 下一步建议，等用户指令再行动。
+纪律：遵守 AGENTS.md 红线与 coordinator-prompt.md 全部规则；不得代替人工声称验收完成；
+每次收口（核验+合并+推送）后必须更新"接力状态"节再提交。
+```
+
+## 接力指南（新协调者上岗读什么）
+
+按顺序读，读完即可接手，无需追问用户历史：
+
+1. `AGENTS.md`：硬规则（角色分工/红线/敏感数据）
+2. 本文件 + 文末"接力状态"节：协调者职责与当前进度
+3. `orchestra/protocol.md`（v1.4）：协作协议（任务分支/重启管控/交流窗/反馈节点）
+4. `ROADMAP.md`：总线视角路线与进度
+5. `board.py status` + `board.py feedback list`：实时任务板与反馈卡
+
+## 接力状态（动态节，每次收口后必须更新）
+
+> **更新纪律**：每完成一轮"核验→合并→推送"收口后，协调者必须把本节更新为最新状态再提交（提交信息 `文档: 协调者接力状态更新至TASK-NNNN`）。本节是下一个协调者的唯一交接面，宁详勿略。
+
+**最后更新：2026-08-26 20:55 ｜ 更新人：协调者（GLM-5.3）｜ 快照：TASK-0033 进行中**
+
+### 项目现状（一句话）
+
+kb 记忆服务 v1.0.1 生产可用（65 项测试全绿，A1.2 日志已交付）；orchestra 协作系统 B1 全部收口、包化分层落地（7 模块）、B2 反馈闭环进行中（协议 v1.4 + feedback.py 已合入 main，106 项测试全绿）。
+
+### 进行中的卡
+
+| 卡 | 负责人 | 状态 | 依赖 |
+|---|---|---|---|
+| TASK-0033 B2反馈配额门禁与归档联动 | worker-3 | claimed | 依赖已解除（feedback.py 已合入 main @d6ac528）；其 precheck 澄清反馈 FBK-0001 已 accepted，worker-3 需 rebase 最新 main 后继续 |
+
+### 最近完成（第八批，2026-08-26）
+
+- TASK-0028~0031：包化分层（client/cards/registry/comm/worktree/watch 六模块从 board.py 拆出，board.py 纯调度 144 行）
+- TASK-0032：feedback.py 反馈卡模块（FBK-NNNN、三类型校验、状态机）已合入
+- TASK-0034：协议 v1.4（§11 反馈节点：三类型表/2-2-5 配额/铁律/open 阻塞 verified）+ worker-prompt 反馈模板已合入
+- FBK-0001 为 B2 反馈闭环首次实战（worker-3 对前置缺失发 clarify 停等 → 协调者答复 accepted → 归档 comm:feedback）
+
+### 后续规划（下一步做什么）
+
+**近期（B2 收口，当前）**：
+1. TASK-0033 完成核验合并后，按 B2 设计书第 6 节三条验收标准自查：
+   - accepted 反馈与方案变更一一可追溯（feedback 卡→修订提交）
+   - 任何任务反馈轮次 ≤5
+   - 反馈卡 + comm:feedback 双份留痕
+2. B2 实战演练 1-2 个真实任务周期（预审→执行→复盘全链路用反馈卡），验证"反馈推动方案优化"
+3. 看板 status 命令可考虑显示反馈卡摘要（B2 观察便利性，可拆小卡）
+
+**中期（二选一或穿插，按用户意向）**：
+- **orchestra 线 B3 成本管控**（★★★）：滚动窗口/动态配额/增量沉淀/模型分级（先立 spec 再拆卡，B2 稳定运行一周后启动）
+- **kb 线 P2-2 鉴权**（A2，N19-N20）：API Key 鉴权（详见 docs/superpowers/plans/2026-08-24-p2-roadmap.md）；P2-3 遗忘机制、P2-4 Web UI/CLI 排后
+
+**远期**：B4 自适应（轮次阈值自学习/复杂度预判/成本-质量平衡/经验复用）；支线 L2 终端 REPL、本地统计 worker。
+
+### 协调者注意事项（踩坑沉淀）
+
+1. **worktree 纪律**：有分支的卡必须 `board.py worktree setup TASK-NNNN` 在隔离目录开发；合并后 `worktree clean` 再删分支（直接 `git branch -d` 会报 "used by worktree"）
+2. **docs 门禁**：卡内"文档同步："清单未传 `--docs-done` 时 verify 会被拒——这是特性不是 bug
+3. **status 出现"[警告] 记录 xxx 首行非法，已跳过"**：是旧 comm:issue 交流窗消息被任务板解析跳过，正常可忽略
+4. **批量模式**：用户发"继续"后 worker 会连续领卡（上限 5 轮/30 分钟）；拆卡不必攒卡
+5. **反馈闭环**：worker 发的 FBK 卡必须答复（PATCH 卡内容补"回答"行 + 状态改 accepted/rejected）+ 结论归档 comm:feedback；目标卡有 open FBK 时不得 verify
+6. **合并冲突** = 拆卡失误：打回并在下批避免文件交集；protocol.md 是高频冲突点（docs 清单同步）
+7. **敏感数据**：gitee key/API key 严禁入任何文件；推送走本机凭据管理器
+8. **Ollama 异常**时提醒用户从开始菜单正常启动（勿在 AI 沙箱终端拉起）
+
+### 常用命令速查
+
+```powershell
+venv\Scripts\python.exe orchestra\board.py status          # 一行一卡看板
+venv\Scripts\python.exe orchestra\board.py show TASK-NNNN  # 单卡详情
+venv\Scripts\python.exe orchestra\board.py feedback list  # 反馈卡列表
+venv\Scripts\python.exe orchestra\board.py verify TASK-NNNN --pass [--docs-done] [--note ...]
+venv\Scripts\python.exe -m pytest orchestra/tests/ -q      # 全量测试（当前 106 项）
+git merge --no-ff task/TASK-NNNN -m "合并: TASK-NNNN ..."  # 核验后合并
+venv\Scripts\python.exe orchestra\board.py worktree clean TASK-NNNN  # 清理后才能删分支
+```
+
 ## 拆卡原则
 
 - 一卡一任务：粒度以 worker 单轮可完成为准（参考：改 1-3 个文件）

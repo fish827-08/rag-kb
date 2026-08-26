@@ -2,7 +2,7 @@
 
 > **给任何接手的 AI 助手**：先读 [AGENTS.md](AGENTS.md)（工作规则与红线），再读本文档（项目状态），然后按第 5 节"接手指南"行动。两份文档读完即可接力，无需追问用户历史。
 >
-> 最后更新：2026-08-24 ｜ 维护者：文档/测试 AI（按 AGENTS.md 角色分工）｜ 本文件随每个里程碑/节点更新
+> 最后更新：2026-08-26 ｜ 维护者：文档/测试 AI（按 AGENTS.md 角色分工）｜ 本文件随每个里程碑/节点更新
 
 ## 1. 项目是什么（双子系统）
 
@@ -40,16 +40,20 @@
 - tag：`node-01`~`node-16`、`v1.0.0`、`v1.0.1`（均已推 Gitee）
 - 已知问题：JSON REST 响应缺 `charset=utf-8`（SSE 已修，JSON 漏了；PowerShell 客户端乱码，Python 不受影响）→ **v1.0.2 候选**
 
-### ② agent-orchestra — MVP（真机实验通过，已合入 main）
+### ② agent-orchestra — B1 收口 + B2 进行中（2026-08-26）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
 | MVP（T1-T10） | board.py CLI 6 命令、协议三件套、orchestra-worker skill、20 项单测 | ✅ 2026-08-24 |
 | 真机实验 | worker-1（另一 TraeWork 任务）TDD 实现 list-pending 子命令，全链路 pending→verified | ✅ 2026-08-24 |
+| B1 三角色闭环 | 交流窗/批量模式（v1.2）/看板（watch+HTML+导航页）/监控Agent（按需）/worktree 隔离（v1.3）/registry 6 成员 | ✅ 2026-08-26 |
+| 包化分层 | board.py 拆为 client/cards/registry/comm/worktree/watch/feedback 七模块（TASK-0028~0031） | ✅ 2026-08-26 |
+| B2 反馈闭环 | feedback.py（FBK 卡+三类型铁律）+ 协议 v1.4（反馈节点节）已合入；配额门禁 TASK-0033 进行中 | 🚧 2026-08-26 |
 
-- 测试：**24 项全绿**（`orchestra/tests/`）
-- 合并提交：`c494e7f`；skill 已装本机 `~\.trae-cn\skills\orchestra-worker\`（**硬链接**，git checkout 后可能断链需重装）
-- 并行协作：已支持多 worker（各自 assignee 领卡）；限制 = 手动唤醒、无依赖图、并行卡不共改同一文件
+- 测试：**106 项全绿**（`orchestra/tests/`）
+- 任务板：TASK-0001~0034 共 34 卡（33 verified + 1 进行中 + 1 failed 重派记录）
+- 协调者接力：**coordinator-prompt.md 已立唤醒提示词 + 接力状态节**（每次收口后必须更新），交接唯一入口
+- skill 已装本机 `~\.trae-cn\skills\orchestra-worker\`（**硬链接**，git checkout 后可能断链需重装）
 
 ### ③ 发展总线 — v2（2026-08-24 人工定稿，生产级多Agent路线）
 
@@ -57,12 +61,12 @@
 
 | 主线 | 当前阶段 | 下一步 |
 |---|---|---|
-| **A：kb 记忆服务**（常驻地基） | A1 稳定性（v1.0.2 + watcher 容错已交付） | A1.2 日志 N17-N18（设计已定稿） |
-| **B：orchestra 协作**（→生产级） | B1 三角色闭环：首批三卡合入（设计者首任/registry/watcher） | B1.3 交流窗命令化（TASK-0009）→ B1.8 看板（TASK-0008）→ B1.4 批量 → B1.7 skill |
+| **A：kb 记忆服务**（常驻地基） | A1 稳定性已收口（含 N17-N18 日志） | A2 鉴权 N19-N20（P2-2） |
+| **B：orchestra 协作**（→生产级） | B2 反馈闭环进行中（TASK-0033 配额门禁收尾） | B2 收口自查 → 实战演练 → B1.7 skill 化 / B3 成本管控 |
 | 支线 | — | L2 终端 REPL（备选）、本地统计 worker（依赖 B1.2） |
 
 - 演进节奏：B1（★）→ B2 反馈闭环（★★）→ B3 成本管控（★★★）→ B4 自适应（★★★★），每阶段闭环稳定一周再进下一阶段
-- 协议已升 **v1.1**：任务分支模式（task/分支→协调者合并）、服务重启管控（worker 只申请，协调者执行）、交流窗（comm: 频道）
+- 协议已升 **v1.4**：任务分支模式、服务重启管控、交流窗（comm: 频道）、worktree 隔离、反馈节点（三类型/2-2-5 配额/铁律）
 
 ## 3. 目录导览
 
