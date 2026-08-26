@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from kb.llm import LLMError
+from kb.config import Settings
 from kb.monitor import (MonitorAgent, _b3_parse_rounds, _detect_anomalies,
                         _fallback_dispatch_text, _fallback_summary_text,
                         build_anomaly_snapshot, build_messages, build_snapshot,
@@ -103,7 +104,7 @@ def test_提示词模板token预算():
 
 def test_LLM调用_prefer_local_max_tokens():
     svc = FakeService([])
-    agent = MonitorAgent(svc, max_tokens=300)
+    agent = MonitorAgent(svc, max_tokens=300, monitor_llm="auto")
     agent._run_once()
     assert svc.llm.calls
     assert svc.llm.calls[0]["prefer"] == "local"
@@ -113,7 +114,7 @@ def test_LLM调用_prefer_local_max_tokens():
 def test_摘要写入comm_monitor():
     svc = FakeService([])
     svc.llm.result = "当前进行中任务：TASK-0002"
-    agent = MonitorAgent(svc, max_tokens=300)
+    agent = MonitorAgent(svc, max_tokens=300, monitor_llm="auto")
     agent._run_once()
     assert svc.added, "应当写入 comm:monitor"
     assert svc.added[0]["tags"] == ["comm:monitor"]
@@ -125,7 +126,7 @@ def test_LLM不可用兜底(caplog):
     """TASK-0059：LLM 失败时主摘要降级纯文本，仍写 comm:monitor（不再整轮跳过）。"""
     svc = FakeService([])
     svc.llm.error = LLMError("本地不可用")
-    agent = MonitorAgent(svc, max_tokens=300)
+    agent = MonitorAgent(svc, max_tokens=300, monitor_llm="auto")
     agent._run_once()  # 不崩溃
     # LLM 失败降级纯文本，仍写 comm:monitor
     monitor_recs = [a for a in svc.added if "comm:monitor" in (a["tags"] or [])]
@@ -156,15 +157,17 @@ def test_看板自启动开关():
 # ---- TASK-0021：去常驻改按需——端点测试（mock llm，不依赖真实 LLM/Ollama）----
 def _make_client(env_isolated, monkeypatch,
                  llm_result="当前协作正常：TASK-0016 完成，TASK-0021 进行中。",
-                 llm_error=None):
+                 llm_error=None, monitor_llm="auto"):
     """装配 app（monitor_enabled 默认 False 不启线程）并注入 FakeLLM 为 KBService.llm。
 
     create_app() 末尾被 charset/请求日志中间件包装为 ASGI 函数（无 .state），
     故不直接改 app.state；改经 KBService.__init__ 的 llm 注入点
     （monkeypatch kb.service.LLMClient 为返回 FakeLLM 的工厂）。
+    monitor_llm（TASK-0065）：端点测试默认 auto（调 LLM），off 时全程纯文本不调 LLM。
     """
     from kb import config
     config.get_settings.cache_clear()
+    monkeypatch.setenv("KB_MONITOR_LLM", monitor_llm)
     fllm = FakeLLM(result=llm_result)
     if llm_error is not None:
         fllm.error = llm_error
@@ -432,7 +435,7 @@ class TestDispatch:
         # 空 taskboard → pending=0 < 2 → pending_low 触发
         svc = FakeService([])
         svc.llm.result = "待办告急：卡池 pending 数为 0"
-        run_once_dispatch(svc, max_tokens=300)
+        run_once_dispatch(svc, max_tokens=300, monitor_llm="auto")
         dispatch = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
         assert len(dispatch) == 1
         assert dispatch[0]["source"] == "kb-dispatch"
@@ -457,7 +460,7 @@ class TestDispatch:
         """TASK-0059：LLM 失败时 dispatch 降级纯文本，仍写 comm:dispatch（不再跳过）。"""
         svc = FakeService([])  # pending_low 触发
         svc.llm.error = LLMError("本地不可用")
-        run_once_dispatch(svc, max_tokens=300)
+        run_once_dispatch(svc, max_tokens=300, monitor_llm="auto")
         # LLM 失败降级纯文本，仍写 comm:dispatch
         dispatch_recs = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
         assert len(dispatch_recs) == 1
@@ -466,7 +469,7 @@ class TestDispatch:
     def test_run_once_summary接入_dispatch_enabled默认开(self):
         svc = FakeService([])  # pending_low
         svc.llm.result = "监控摘要"
-        run_once_summary(svc, max_tokens=300)  # dispatch_enabled 默认 True
+        run_once_summary(svc, max_tokens=300, monitor_llm="auto")  # dispatch_enabled 默认 True
         tags_list = [tuple(a["tags"] or []) for a in svc.added]
         assert ("comm:monitor",) in tags_list
         assert ("comm:dispatch",) in tags_list
@@ -474,7 +477,7 @@ class TestDispatch:
     def test_dispatch_enabled_false不写(self):
         svc = FakeService([])  # pending_low
         svc.llm.result = "监控摘要"
-        run_once_summary(svc, max_tokens=300, dispatch_enabled=False)
+        run_once_summary(svc, max_tokens=300, dispatch_enabled=False, monitor_llm="auto")
         tags_list = [tuple(a["tags"] or []) for a in svc.added]
         assert ("comm:monitor",) in tags_list
         assert ("comm:dispatch",) not in tags_list
@@ -539,7 +542,7 @@ class TestDispatch:
             captured["messages"] = messages
             return "轮次超限告警：TASK-0052 medium第5轮/共5"
         monkeypatch.setattr(svc.llm, "chat", fake_chat)
-        run_once_dispatch(svc, max_tokens=300)
+        run_once_dispatch(svc, max_tokens=300, monitor_llm="auto")
         # LLM 被调用，且 user content 含轮次字段（comm:dispatch 播报格式）
         assert "messages" in captured
         user_msg = captured["messages"][1]["content"]
@@ -554,7 +557,7 @@ class TestDispatch:
         """TASK-0059：主摘要 LLM 失败时，dispatch 仍独立执行（不再整轮短路）。"""
         svc = FakeService([])  # pending_low 触发
         svc.llm.error = LLMError("本地不可用")
-        run_once_summary(svc, max_tokens=300, dispatch_enabled=True)
+        run_once_summary(svc, max_tokens=300, dispatch_enabled=True, monitor_llm="auto")
         # 主摘要降级 + dispatch 降级，两条都写
         tags_list = [tuple(a["tags"] or []) for a in svc.added]
         assert ("comm:monitor",) in tags_list
@@ -593,3 +596,45 @@ def test_fallback_dispatch_text纯函数():
     assert "[rounds_exceeded]" in text
     assert "TASK-0052" in text
     assert "纯文本降级" in text
+
+
+# ---- TASK-0065：monitor_llm 纯文本模式配置化 ----
+def test_config_monitor_llm默认值off():
+    """TASK-0065：monitor_llm 默认 off（全程纯文本不调 LLM，零成本/不抢 GPU）。"""
+    assert Settings().monitor_llm == "off"
+
+
+def test_off模式主摘要不调LLM():
+    """TASK-0065：monitor_llm=off 时 run_once_summary 全程纯文本，不发任何 LLM 请求。"""
+    svc = FakeService([])  # 空 taskboard → pending_low 异常，dispatch 也会执行
+    svc.llm.result = "不应被调用"
+    run_once_summary(svc, max_tokens=300, dispatch_enabled=True, monitor_llm="off")
+    # off 模式：主摘要 + dispatch 都不调 LLM
+    assert svc.llm.calls == []
+    # 但仍写 comm:monitor（纯文本降级）和 comm:dispatch（纯文本降级）
+    tags_list = [tuple(a["tags"] or []) for a in svc.added]
+    assert ("comm:monitor",) in tags_list
+    assert ("comm:dispatch",) in tags_list
+    for a in svc.added:
+        assert "纯文本降级" in a["content"]
+
+
+def test_auto模式主摘要调LLM():
+    """TASK-0065：monitor_llm=auto 时 run_once_summary 调 LLM（现有行为不变）。"""
+    svc = FakeService([])
+    svc.llm.result = "监控摘要"
+    run_once_summary(svc, max_tokens=300, dispatch_enabled=False, monitor_llm="auto")
+    assert len(svc.llm.calls) >= 1
+    assert svc.llm.calls[-1]["prefer"] == "local"
+
+
+def test_off模式dispatch不调LLM():
+    """TASK-0065：monitor_llm=off 时 run_once_dispatch 全程纯文本，不发 LLM 请求。"""
+    svc = FakeService([])  # pending_low 触发
+    svc.llm.result = "不应被调用"
+    run_once_dispatch(svc, max_tokens=300, monitor_llm="off")
+    assert svc.llm.calls == []
+    # 仍写 comm:dispatch（纯文本降级）
+    dispatch = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
+    assert len(dispatch) == 1
+    assert "纯文本降级" in dispatch[0]["content"]
