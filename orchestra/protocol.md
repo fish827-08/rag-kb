@@ -122,3 +122,17 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 - 配额：precheck ≤2 轮、milestone ≤2 轮、单任务总上限 5 轮；超限转协调者仲裁
 - 铁律：无替代方案的异议直接驳回，杜绝只否定不建设
 - 阻塞规则：目标卡存在 open 状态反馈时，协调者不得将其 verified
+
+## 12. Skill 化（B1.7，2026-08-26 新增）
+
+两类角色均已包装为 Trae skill（仓库源在 `orchestra/skills/`，安装副本落本机 `C:\Users\<用户>\.trae-cn\skills\`，普通复制）：
+
+| skill | 角色 | 仓库源 | 完整规约 |
+|---|---|---|---|
+| `orchestra-worker` | worker（执行者） | `orchestra/skills/orchestra-worker/SKILL.md` | `orchestra/worker-prompt.md` |
+| `orchestra-coordinator` | 协调者 | `orchestra/skills/orchestra-coordinator/SKILL.md` | `orchestra/coordinator-prompt.md` |
+
+- SKILL.md 只含 frontmatter（name/description）+ 精简上岗流程与硬纪律；详细规则一律以对应规约文件为准（正文指向它，不复制大段）
+- 触发方式：用户说"你是 worker-N / 你是协调者"、粘贴唤醒提示词，或直接调 skill
+- 规约更新后需同步修订对应 SKILL.md 并重装副本（仓库版与安装副本保持逐字一致）
+- 对外协作接口零变化：skill 仅是唤醒入口，任务卡/分支/交流窗/反馈机制照旧
