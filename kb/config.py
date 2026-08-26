@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     watch_dir: Path = Path("data")            # 目录监听（serve 挂载）；空串/"."=不启动
     api_host: str = "127.0.0.1"
     api_port: int = 8000
+    api_key: str = ""                            # KB_API_KEY：空=不鉴权（本地回环零摩擦）；非空=启用 Bearer/X-API-Key 鉴权（N19/TASK-0062）
     context_token_limit: int = 2000             # /ask 检索上下文 token 硬上限
     llm_max_tokens: int = 800
     llm_temperature: float = 0.2

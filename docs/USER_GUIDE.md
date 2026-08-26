@@ -236,8 +236,23 @@ worker 全部完成后，回协调者任务说"**核验**"。协调者会独立�
 | 云端问答降级 | `.env` 填 `KB_DEEPSEEK_API_KEY`；`KB_LLM_MODE=auto`（默认，本地优先） |
 | 隐私隔离 | `KB_SENSITIVE_NAMESPACES=私人笔记` 等逗号分隔，命中强制本地回答不出网 |
 | 性能调优 | `KB_DEVICE=cuda/cpu`；`KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` 切分参数 |
+| 局域网/多 Agent 访问鉴权 | `KB_API_KEY=<≥32随机字符>` 启用 Bearer/X-API-Key 鉴权（见 5.1） |
 
 完整键名见 [`.env.example`](../.env.example)。
+
+### 5.1 API Key 鉴权（N19）
+
+本地回环默认零摩擦（`KB_API_KEY` 为空 = 不鉴权）。当需要把 kb 暴露到局域网、手机挂 MCP、或多 Agent 并行访问时，建议启用鉴权：
+
+1. `.env` 填 `KB_API_KEY=<随机字符串>`（建议 ≥32 字符，如 `openssl rand -hex 16`）
+2. 重启 `python -m kb serve`；启动日志会记"鉴权已启用"（不回显 key）
+3. 所有客户端请求需携带 key（二选一）：
+   - `Authorization: Bearer <key>`（推荐，MCP 客户端 headers 配置）
+   - `X-API-Key: <key>`（脚本/ curl 便捷）
+4. 唯一白名单：`GET /api/v1/healthz`（存活探针，协调者/监控无 key 可探活）
+5. 缺失或错误 key 均返回 `401 {"error":"UNAUTHORIZED","message":"missing or invalid api key"}`（不区分，防探测）
+
+空 key 时所有既有行为完全不变（v1.x 兼容）；key 比较用 `hmac.compare_digest` 防时序攻击。MCP 客户端（Claude Code/Cursor）在 `.mcp.json` 的 `headers` 里加 `Authorization: Bearer <key>`；真实 key 不入库，走环境变量或本地覆盖。
 
 ## 6. 常见问题与故障排查
 
