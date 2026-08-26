@@ -21,6 +21,8 @@ from worktree import (cmd_worktree_clean, cmd_worktree_enter,
                       cmd_worktree_setup)
 from b3 import (check_summary_tags, cmd_add_with_rounds, cmd_resume,
                  get_quota, increment_rounds, render_rounds)
+from relation import (cmd_relation_add, cmd_relation_list,
+                      cmd_relation_remove)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -157,6 +159,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_b3_resume = b3_sub.add_parser("resume",
                                      help="claimed 卡唤醒续做：先读该卡 summary（不依赖对话历史）")
     p_b3_resume.add_argument("task_id", help="如 TASK-0046")
+
+    # B3 关联窗口（TASK-0055，spec §4.4）：关联/查关联/解除关联，超限自动归档
+    p_rel = sub.add_parser("relation", help="B3 关联窗口（add/list/remove，超限自动归档）")
+    rel_sub = p_rel.add_subparsers(dest="rel_action", required=True)
+    p_rel_add = rel_sub.add_parser("add", help="关联一张卡（超限自动归档最早关联）")
+    p_rel_add.add_argument("task_id", help="主任务卡，如 TASK-0046")
+    p_rel_add.add_argument("related", help="被关联卡，如 TASK-0035")
+    p_rel_list = rel_sub.add_parser("list", help="查某任务的关联")
+    p_rel_list.add_argument("task_id", help="如 TASK-0046")
+    p_rel_remove = rel_sub.add_parser("remove", help="解除关联")
+    p_rel_remove.add_argument("task_id", help="主任务卡，如 TASK-0046")
+    p_rel_remove.add_argument("related", help="被关联卡，如 TASK-0035")
     return parser
 
 
@@ -203,6 +217,11 @@ _DISPATCH = {
         "summary-check": lambda a: print(check_summary_tags(a.content)),
         "resume": lambda a: cmd_resume(a.task_id),
     },
+    "relation": {
+        "add": lambda a: cmd_relation_add(a.task_id, a.related),
+        "list": lambda a: cmd_relation_list(a.task_id),
+        "remove": lambda a: cmd_relation_remove(a.task_id, a.related),
+    },
 }
 
 
@@ -216,6 +235,8 @@ def main() -> None:
                 sub = getattr(args, "fb_action")
             elif args.command == "b3":
                 sub = getattr(args, "b3_action")
+            elif args.command == "relation":
+                sub = getattr(args, "rel_action")
             else:
                 sub = getattr(args, "action")
             handler = handler[sub]
