@@ -30,40 +30,45 @@
 
 > **更新纪律**：每完成一轮"核验→合并→推送"收口后，协调者必须把本节更新为最新状态再提交（提交信息 `文档: 协调者接力状态更新至TASK-NNNN`）。本节是下一个协调者的唯一交接面，宁详勿略。
 
-**最后更新：2026-08-26 22:50 ｜ 更新人：协调者（Qoder）｜ 快照：TASK-0049 收口完毕待用户重启 kb 服务生效；B3 第一批 4 卡（0051~0054）入池待领**
+**最后更新：2026-08-26 23:27 ｜ 更新人：协调者（Qoder）｜ 快照：B3 第一批三卡收口（自动循环核验）；第二批 0055/0057 在途、0056 作废；DispatchAgent 复验待 Ollama 启动**
 
-### 进行中的卡（全部 pending，待领）
+### 进行中的卡
 
 | 卡 | 负责人 | 状态 | 说明 |
 |---|---|---|---|
-| TASK-0051 协议升 v1.6 | worker-4 | pending | B3 第一批，纯文档，无依赖 |
-| TASK-0052 角色提示词三件套+skill | worker-4 | pending | B3 第一批，依赖 0051 |
-| TASK-0053 rounds/summary 记录机制 | worker-3 | pending | B3 第一批，代码，与 0051/0052 零文件交集可并行 |
-| TASK-0054 建卡联动与中断恢复 | worker-3 | pending | B3 第一批，依赖 0053 |
+| TASK-0052 角色提示词三件套+skill | worker-4 | claimed | 看板无改派/编辑命令，维持原挂 worker-4；合入后拆模型分级卡 |
+| TASK-0055 relation 子命令与关联窗口归档 | worker-2 | claimed | B3 第二批 |
+| TASK-0057 list-comm 支持 dispatch 频道 | worker-2 | pending | 依赖 0055，串行待领 |
 
-B3 第一批 spec 依据：docs/superpowers/specs/2026-08-26-b3-cost-control-design.md；第二批（relation 子命令、模型分级）待第一批稳定后再拆。
+TASK-0056（0055 的重复卡，建卡超时误重试产生）已按状态机改 failed 作废，卡文注明"以 0055 为准"；模型分级卡（spec §4.6）依赖 0052，暂未拆。
 
-### 最近完成（22:34，TASK-0049 完整收口）
+### 最近完成（2026-08-26 23:00 前后，B3 第一批自动收口）
 
-- TASK-0049 DispatchAgent 接入 comm:dispatch（worker-2）：合并提交 `2f1366e` 在 main 顶端并已推送 origin/main；task/TASK-0049 分支与 worktree 已清理；主线接入物齐备（kb/config.py `dispatch_enabled` 默认 true、kb/monitor.py 的 `_detect_anomalies` / `build_anomaly_snapshot` / `run_once_dispatch` / comm:dispatch 写入）
-- **生效条件提醒**：现 kb 服务 19:36 启动早于合并，需用户重启 `python -m kb serve` 后 DispatchAgent 才生效；DispatchAgent 至此具备"检测+播报"完整闭环
-- **验收方式**（生效后）：人为制造异常（如让 claimed 卡挂 30min）看 comm:dispatch 是否播报
+- **B3 第一批三卡由自动化循环核验合并推送（零人工干预）**，分支与 worktree 均已清理，主线产物在位：
+  - TASK-0051 协议升 v1.6：合并提交 `9cdaf8b`（protocol v1.6）
+  - TASK-0053 b3.py rounds/summary 机制：合并提交 `8024ea3`（orchestra/b3.py）
+  - TASK-0054 建卡联动与中断恢复：合并提交 `deaeada`
+- **测试基线**：orchestra 170 项 / kb 全量 144 项全绿（后续验证以实际收集为准）
+- **TASK-0056 重复卡处置**：看板无删除命令，合规处置 = 状态改 failed 作废 + 卡文注明"以 0055 为准"（操作前已备份 `kb_data/chroma.bak-20260826-task9/`）
+- **DispatchAgent（TASK-0049 交付）验收进展**：用户已重启 kb 服务（新代码已加载）；触发监控轮返回 502——根因**本地 Ollama 未启动**，run_once_summary 主摘要 LLM 失败后整轮短路，未执行到 dispatch；**待用户从开始菜单启动 Ollama 后复验**（触发 `POST /api/v1/monitor/summary`，查 `/api/v1/memories?tag=comm:dispatch`；当前 pending 低位场景天然命中告急规则）
+- **工程发现**：主摘要失败会连带跳过 dispatch（二者耦合），是否拆解耦小卡待用户决策
 
-### 上一批次精简记录（2026-08-26 22:10~22:18）
+### 早期记录精简（2026-08-26 22:10~22:50）
 
-- TASK-0023 重派核验型交付关闭：inferred 功能早已由 TASK-0024 合入主线（`0d5ec92`），零重复施工——教训：重派旧卡前先查功能是否已在主线（已随该卡关闭移除后续规划项）
+- TASK-0049 DispatchAgent 接入 comm:dispatch（worker-2）：合并提交 `2f1366e`，主线接入物齐备（kb/config.py `dispatch_enabled` 默认 true、kb/monitor.py 检测/播报链路）；kb 服务已重启加载新代码（见"最近完成"）
+- TASK-0023 重派核验型交付关闭：inferred 功能早已由 TASK-0024 合入主线（`0d5ec92`）——教训：重派旧卡前先查功能是否已在主线
 - 第十批（0038~0050 共 13 卡）已收口：协调者循环首次实战（8ed3b64）、调度监测架构定稿（DispatchAgent 只监测播报不派发）、0048 检测四规则、0050 协议 v1.5、B3/P2-2 两份 spec 产出（0046/0047）
 
 ### 后续规划（下一步做什么）
 
 **近期（当前）**：
-1. **提醒用户重启 kb serve 使 DispatchAgent 生效**（TASK-0049 已合并推送，现服务进程早于合并；KB_DISPATCH_ENABLED 默认 true）
-2. DispatchAgent 生效后验收：人为制造异常（如让 claimed 卡挂 30min）看 comm:dispatch 是否播报（检测+播报完整闭环）
-3. worker-4 / worker-3 领卡推进 B3 第一批（0051→0052、0053→0054 各自串行，两组并行）；空闲成员（尤其负载最轻的 worker-1）可接突发任务，后续并行批次建议向 worker-1 倾斜
-4. 人力现状参考（54 卡累计）：worker-2 13 卡、designer-1 12、worker-3 11、worker-4 10、worker-1 7；当前无增减员必要
+1. **用户启动 Ollama 后复验 DispatchAgent 播报**：触发 `POST /api/v1/monitor/summary`，查 `/api/v1/memories?tag=comm:dispatch` 是否有播报；"主摘要失败连带跳过 dispatch"的耦合问题是否拆解耦小卡待用户决策（kb 服务已重启，无需再提醒重启）
+2. 0055 / 0052 / 0057 完工后由自动化循环自动收口（核验→合并→推送→清理）
+3. **0052 合入后拆模型分级卡**（spec §4.6），完成 B3 第二批收尾；空闲成员后续并行批次向 worker-1 倾斜
+4. 人力现状：自动化循环单实例运行正常（本轮三次自动核验合并零人工干预）；worker-2 领 0055/0057，worker-4 领 0052；无增减员必要
 
 **中期（两份 spec 已就绪，按用户意向选）**：
-- **B3 成本管控**（★★★，spec：docs/superpowers/specs/2026-08-26-b3-cost-control-design.md）：滚动窗口/动态配额/增量沉淀/模型分级
+- **B3 成本管控**（★★★，spec：docs/superpowers/specs/2026-08-26-b3-cost-control-design.md）：第一批（协议 v1.6 / rounds·summary / 建卡联动）已收口，第二批 relation 在途、模型分级待拆
 - **kb P2-2 鉴权**（spec：docs/superpowers/specs/2026-08-26-p2-auth-design.md）：API Key 鉴权 N19-N20
 
 **远期**：B4 自适应；支线 L2 终端 REPL、本地统计 worker。
@@ -75,7 +80,10 @@ B3 第一批 spec 依据：docs/superpowers/specs/2026-08-26-b3-cost-control-des
 - **worker-4 Qoder 的申报习惯**：分支未预建会自建解锁（已授权模式），结果栏含详细申报，核验时读结果栏再决定
 - **test_worktree.py GBK 预存问题**：Windows 下跑全量测试加 PYTHONUTF8=1
 - **验证优先级**：跑 orchestra/tests/ + 改动相关 kb tests（数量以实际收集为准）
-- **coordinator_loop 无单实例锁**：曾出现 4 实例并发（已清理，2026-08-26 22:40，现单实例后台运行，日志 logs/coordinator_loop.log）；启动前必须 `Get-CimInstance Win32_Process -Filter "name='python.exe'"` 核查命令行确认无旧实例
+- **coordinator_loop 无单实例锁**：曾出现 4 实例并发（已清理，现单实例后台运行，日志 logs/coordinator_loop.log）；启动前必须 `Get-CimInstance Win32_Process -Filter "name='python.exe'"` 核查命令行确认无旧实例
+- **建卡时客户端超时≠服务端失败**：重试前先 `board.py status` 查重，否则产生重复卡（本次因此产生 0056）
+- **看板无删除命令，废卡合规处置** = 状态改 failed + 卡文注明作废依据（本次操作前已备份 `kb_data/chroma.bak-20260826-task9/`）
+- **任务卡存于 kb 记忆库**（ChromaDB，tag=taskboard），不在 git 跟踪范围，卡数据变更无需提交
 
 ### 协调者注意事项（踩坑沉淀）
 
