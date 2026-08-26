@@ -2,6 +2,13 @@
 自 test_board.py 迁移；import 改新模块）。"""
 import pytest
 
+from comm import COMM_CHANNELS
+
+
+def test_COMM_CHANNELS含dispatch():
+    """TASK-0057：频道枚举含 dispatch（comm:dispatch 异常调度播报）。"""
+    assert "dispatch" in COMM_CHANNELS
+
 
 class TestReport:
     """report：写交流窗记录（tag=comm:<channel>，source=report者，text≤300）。"""
@@ -35,6 +42,18 @@ class TestReport:
         with pytest.raises(ValueError):
             comm.cmd_report(channel="done", from_="", text="hi")
         assert not mock_request.calls
+
+    def test_report_dispatch频道写入(self, mock_request):
+        """TASK-0057：dispatch 频道可写入，tag=comm:dispatch。"""
+        import comm
+        mock_request.responses["POST /memories"] = {"id": "c1"}
+        comm.cmd_report(channel="dispatch", from_="kb-dispatch",
+                        text="待办告急：卡池 pending 数为 0")
+        post = [c for c in mock_request.calls if c[0] == "POST"][0]
+        body = post[2]
+        assert body["tags"] == ["comm:dispatch"]
+        assert body["source"] == "kb-dispatch"
+        assert "待办告急" in body["content"]
 
 
 class TestListComm:
@@ -96,4 +115,27 @@ class TestListComm:
         mock_request.responses["GET /memories?limit=1000"] = {
             "items": [], "total": 0}
         comm.cmd_list_comm(channel=None, limit=10)
+        assert "无交流窗记录" in capsys.readouterr().out
+
+    def test_list_comm_dispatch频道过滤(self, mock_request, capsys):
+        """TASK-0057：--channel dispatch 按 comm:dispatch 过滤，其他频道不混入。"""
+        import comm
+        mock_request.responses["GET /memories?tag=comm:dispatch&limit=1000"] = {
+            "items": [
+                self._comm("c1", "comm:dispatch", "kb-dispatch", "待办告急",
+                           "2026-08-25T10:00:00"),
+                self._comm("c2", "comm:done", "worker-1", "A 完成",
+                           "2026-08-25T10:05:00"),
+            ], "total": 2}
+        comm.cmd_list_comm(channel="dispatch", limit=10)
+        out = capsys.readouterr().out
+        assert "comm:dispatch" in out and "待办告急" in out
+        assert "comm:done" not in out  # 其他频道被过滤
+
+    def test_list_comm_dispatch空频道正常返回(self, mock_request, capsys):
+        """TASK-0057：--channel dispatch 空频道正常返回'无交流窗记录'，不报错。"""
+        import comm
+        mock_request.responses["GET /memories?tag=comm:dispatch&limit=1000"] = {
+            "items": [], "total": 0}
+        comm.cmd_list_comm(channel="dispatch", limit=10)
         assert "无交流窗记录" in capsys.readouterr().out
