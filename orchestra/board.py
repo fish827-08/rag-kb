@@ -19,6 +19,7 @@ from registry import cmd_register, cmd_workers
 from watch import cmd_watch
 from worktree import (cmd_worktree_clean, cmd_worktree_enter,
                       cmd_worktree_setup)
+from b3 import (check_summary_tags, get_quota, increment_rounds, render_rounds)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -133,6 +134,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_fb_decide.add_argument("--note", default="", help="裁决理由（结论级，入 comm:feedback）")
     p_fb_decide.add_argument("--decider", default="coordinator",
                               help="裁决者身份（默认 coordinator）")
+
+    # B3 成本管控（TASK-0053）：配额/rounds/summary 校验，纯函数接线
+    p_b3 = sub.add_parser("b3", help="B3 成本管控（配额/rounds/summary 校验）")
+    b3_sub = p_b3.add_subparsers(dest="b3_action", required=True)
+    p_b3_quota = b3_sub.add_parser("quota", help="按复杂度打印配额")
+    p_b3_quota.add_argument("complexity", nargs="?", default="",
+                             help="simple/medium/complex（默认 medium）")
+    p_b3_render = b3_sub.add_parser("rounds-render", help="渲染新 ROUNDS 记录（全零）")
+    p_b3_render.add_argument("task_id", help="如 TASK-0046")
+    p_b3_render.add_argument("complexity", nargs="?", default="",
+                              help="simple/medium/complex（默认 medium）")
+    p_b3_incr = b3_sub.add_parser("rounds-increment",
+                                   help="递增 ROUNDS 记录节点计数（输入 ROUNDS 文本）")
+    p_b3_incr.add_argument("content", help="ROUNDS 记录文本")
+    p_b3_incr.add_argument("node", choices=["precheck", "milestone", "review"],
+                            help="递增节点")
+    p_b3_check = b3_sub.add_parser("summary-check",
+                                    help="校验 SUMMARY 保留标签四类齐全")
+    p_b3_check.add_argument("content", help="SUMMARY 记录文本")
     return parser
 
 
@@ -171,6 +191,12 @@ _DISPATCH = {
         "decide": lambda a: cmd_fbk_decide(a.fbk_id, action=a.action,
                                             note=a.note, decider=a.decider),
     },
+    "b3": {
+        "quota": lambda a: print(get_quota(a.complexity)),
+        "rounds-render": lambda a: print(render_rounds(a.task_id, a.complexity)),
+        "rounds-increment": lambda a: print(increment_rounds(a.content, a.node)),
+        "summary-check": lambda a: print(check_summary_tags(a.content)),
+    },
 }
 
 
@@ -179,9 +205,13 @@ def main() -> None:
     args = build_parser().parse_args()
     try:
         handler = _DISPATCH[args.command]
-        if isinstance(handler, dict):  # 二级分发（worktree→action / feedback→fb_action）
-            sub = getattr(args, "fb_action" if args.command == "feedback"
-                          else "action")
+        if isinstance(handler, dict):  # 二级分发（worktree→action / feedback→fb_action / b3→b3_action）
+            if args.command == "feedback":
+                sub = getattr(args, "fb_action")
+            elif args.command == "b3":
+                sub = getattr(args, "b3_action")
+            else:
+                sub = getattr(args, "action")
             handler = handler[sub]
         handler(args)
     except BoardUnavailable as e:
