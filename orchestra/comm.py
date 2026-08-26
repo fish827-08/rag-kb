@@ -13,7 +13,8 @@ from cards import _fmt_time
 from client import _request
 
 # 交流窗频道枚举与 text 上限（protocol §7 / V2-2 设计书）
-COMM_CHANNELS = ("done", "issue", "test", "system")
+# TASK-0057：补 dispatch 频道（comm:dispatch 异常调度播报，TASK-0049 写入）
+COMM_CHANNELS = ("done", "issue", "test", "system", "dispatch")
 COMM_TEXT_LIMIT = 300
 
 
