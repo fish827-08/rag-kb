@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     monitor_startup_run: bool = True            # 启动时立即跑一轮（便于验证；常驻模式用）
     monitor_max_tokens: int = 300               # 摘要输出上限（护栏：≤300，硬约束）
     monitor_autotimer: int = 0                  # KB_MONITOR_AUTOTIMER：看板前端自动轮询间隔（分钟），0=关
+    dispatch_enabled: bool = True                # KB_DISPATCH_ENABLED：监控单轮后异常调度（comm:dispatch），默认开（TASK-0049）
     dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
     dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 
