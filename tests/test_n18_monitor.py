@@ -4,12 +4,13 @@ TDD 红灯基准来自 0015 设计书第 6 节；仅 mock service/llm，不依�
 KBService（线程启停用 FakeService 直测，不做慢速集成）。
 """
 import logging
+from datetime import datetime, timedelta
 
 import pytest
 
 from kb.llm import LLMError
-from kb.monitor import (MonitorAgent, build_messages, build_snapshot,
-                        maybe_open_dashboard)
+from kb.monitor import (MonitorAgent, _detect_anomalies, build_messages,
+                        build_snapshot, maybe_open_dashboard)
 
 
 # ---- 测试替身 ----
@@ -208,3 +209,128 @@ def test_配置去常驻默认(env_isolated, monkeypatch):
         r = c.get("/api/v1/config")
     assert r.status_code == 200
     assert r.json() == {"monitor_autotimer": 0}
+
+
+# ---- TASK-0048：_detect_anomalies 异常检测纯函数 ----
+_NOW = datetime(2026, 8, 26, 12, 0, 0)
+
+
+def _task(task_id, status, minutes_ago=0):
+    """构造 snapshot tasks 条目（updated_at = NOW - minutes_ago）。"""
+    return {"task_id": task_id, "status": status,
+            "updated_at": (_NOW - timedelta(minutes=minutes_ago)).isoformat()}
+
+
+def _fbk(fbk_id, status, minutes_ago=0):
+    """构造 snapshot feedbacks 条目。"""
+    return {"fbk_id": fbk_id, "status": status,
+            "updated_at": (_NOW - timedelta(minutes=minutes_ago)).isoformat()}
+
+
+class TestDetectAnomalies:
+    """_detect_anomalies 四条规则：触发/不触发/边界（TASK-0048）。"""
+
+    # ① pending 数 < 2
+    def test_pending_low_触发_pending为1(self):
+        snap = {"tasks": [_task("TASK-0001", "pending")], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        types = [a["type"] for a in anomalies]
+        assert "pending_low" in types
+        a = [a for a in anomalies if a["type"] == "pending_low"][0]
+        assert a["task_id"] is None
+        assert "pending 数=1" in a["detail"]
+
+    def test_pending_low_不触发_pending为2(self):
+        snap = {"tasks": [_task("TASK-0001", "pending"), _task("TASK-0002", "pending")],
+                "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "pending_low" for a in anomalies)
+
+    # ② claimed 超 30 分钟
+    def test_claimed_stale_触发_31分钟(self):
+        snap = {"tasks": [_task("TASK-0001", "claimed", minutes_ago=31)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert any(a["type"] == "claimed_stale" and a["task_id"] == "TASK-0001"
+                   for a in anomalies)
+
+    def test_claimed_stale_不触发_29分钟(self):
+        snap = {"tasks": [_task("TASK-0001", "claimed", minutes_ago=29)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "claimed_stale" for a in anomalies)
+
+    def test_claimed_stale_边界恰好30分钟不触发(self):
+        snap = {"tasks": [_task("TASK-0001", "claimed", minutes_ago=30)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "claimed_stale" for a in anomalies)
+
+    # ③ done 超 5 分钟未核验
+    def test_done_unverified_触发_6分钟(self):
+        snap = {"tasks": [_task("TASK-0001", "done", minutes_ago=6)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert any(a["type"] == "done_unverified" and a["task_id"] == "TASK-0001"
+                   for a in anomalies)
+
+    def test_done_unverified_不触发_4分钟(self):
+        snap = {"tasks": [_task("TASK-0001", "done", minutes_ago=4)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "done_unverified" for a in anomalies)
+
+    def test_done_unverified_边界恰好5分钟不触发(self):
+        snap = {"tasks": [_task("TASK-0001", "done", minutes_ago=5)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "done_unverified" for a in anomalies)
+
+    # ④ open FBK 超 10 分钟
+    def test_fbk_open_stale_触发_11分钟(self):
+        snap = {"tasks": [], "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=11)]}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert any(a["type"] == "fbk_open_stale" and a["task_id"] == "FBK-0001"
+                   for a in anomalies)
+
+    def test_fbk_open_stale_不触发_9分钟(self):
+        snap = {"tasks": [], "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=9)]}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "fbk_open_stale" for a in anomalies)
+
+    def test_fbk_open_stale_边界恰好10分钟不触发(self):
+        snap = {"tasks": [], "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=10)]}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "fbk_open_stale" for a in anomalies)
+
+    # 非 open 状态 FBK 不检测（accepted/rejected 不触发）
+    def test_fbk_non_open不检测(self):
+        snap = {"tasks": [], "feedbacks": [
+            _fbk("FBK-0001", "accepted", minutes_ago=60),
+            _fbk("FBK-0002", "rejected", minutes_ago=60),
+        ]}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "fbk_open_stale" for a in anomalies)
+
+    # 时间解析失败跳过不报错
+    def test_时间解析失败跳过不报错(self):
+        snap = {"tasks": [{"task_id": "TASK-0001", "status": "claimed",
+                            "updated_at": "非法时间"}], "feedbacks": []}
+        # 不抛异常，且该卡不被计为 stale（时间解析失败跳过）
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "claimed_stale" for a in anomalies)
+
+    # 空快照：仅 pending_low（pending=0<2），无其他异常
+    def test_空快照仅pending_low(self):
+        anomalies = _detect_anomalies({}, now=_NOW)
+        assert len(anomalies) == 1
+        assert anomalies[0]["type"] == "pending_low"
+
+    # 综合：四条规则同时触发
+    def test_综合四条规则同时触发(self):
+        snap = {
+            "tasks": [
+                _task("TASK-0001", "pending"),  # pending=1 < 2
+                _task("TASK-0002", "claimed", minutes_ago=45),  # >30
+                _task("TASK-0003", "done", minutes_ago=10),  # >5
+            ],
+            "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=20)],  # >10
+        }
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        types = sorted(a["type"] for a in anomalies)
+        assert types == sorted(["pending_low", "claimed_stale",
+                                "done_unverified", "fbk_open_stale"])

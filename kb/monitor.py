@@ -87,6 +87,92 @@ def build_snapshot(service) -> str:
             f"【交流窗】\n{comm_section}")
 
 
+def _parse_iso(ts: str) -> datetime | None:
+    """解析 ISO 时间字符串，失败返回 None（_detect_anomalies 内部用）。"""
+    try:
+        return datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return None
+
+
+def _detect_anomalies(snapshot: dict, now: datetime | None = None) -> list[dict]:
+    """检测协作快照异常（TASK-0048 纯函数，不调 LLM 不发 HTTP，输入输出可单测）。
+
+    snapshot 结构（由调用方从 service 收集，本函数不关心来源）：
+        {"tasks": [{"task_id": str, "status": str, "updated_at": str}, ...],
+         "feedbacks": [{"fbk_id": str, "status": str, "updated_at": str}, ...]}
+
+    四条规则（边界：恰好等于阈值不触发，超过才触发）：
+        ①卡池 pending 数 < 2 时告急（type=pending_low，task_id=None）
+        ②claimed 卡超 30 分钟未动（type=claimed_stale）
+        ③done 状态卡超 5 分钟未被核验（type=done_unverified）
+        ④open FBK 超 10 分钟无人裁决（type=fbk_open_stale，task_id 填 fbk_id）
+
+    now 为当前时间（测试注入用），默认 datetime.now()；时间解析失败的卡跳过不报错。
+    每条异常输出 {"type": str, "task_id": str|None, "detail": str}。
+    """
+    now = now or datetime.now()
+    anomalies = []
+    tasks = snapshot.get("tasks", [])
+    feedbacks = snapshot.get("feedbacks", [])
+
+    # ①pending 数 < 2
+    pending_count = sum(1 for t in tasks if t.get("status") == "pending")
+    if pending_count < 2:
+        anomalies.append({
+            "type": "pending_low",
+            "task_id": None,
+            "detail": f"卡池 pending 数={pending_count} < 2，待办告急",
+        })
+
+    # ②claimed 超 30 分钟未动
+    for t in tasks:
+        if t.get("status") != "claimed":
+            continue
+        ts = _parse_iso(t.get("updated_at", ""))
+        if ts is None:
+            continue
+        minutes = (now - ts).total_seconds() / 60
+        if minutes > 30:
+            anomalies.append({
+                "type": "claimed_stale",
+                "task_id": t.get("task_id"),
+                "detail": f"claimed 卡 {t.get('task_id')} 已 {minutes:.0f} 分钟未动（>30）",
+            })
+
+    # ③done 超 5 分钟未核验
+    for t in tasks:
+        if t.get("status") != "done":
+            continue
+        ts = _parse_iso(t.get("updated_at", ""))
+        if ts is None:
+            continue
+        minutes = (now - ts).total_seconds() / 60
+        if minutes > 5:
+            anomalies.append({
+                "type": "done_unverified",
+                "task_id": t.get("task_id"),
+                "detail": f"done 卡 {t.get('task_id')} 已 {minutes:.0f} 分钟未核验（>5）",
+            })
+
+    # ④open FBK 超 10 分钟未裁决
+    for f in feedbacks:
+        if f.get("status") != "open":
+            continue
+        ts = _parse_iso(f.get("updated_at", ""))
+        if ts is None:
+            continue
+        minutes = (now - ts).total_seconds() / 60
+        if minutes > 10:
+            anomalies.append({
+                "type": "fbk_open_stale",
+                "task_id": f.get("fbk_id"),
+                "detail": f"open FBK {f.get('fbk_id')} 已 {minutes:.0f} 分钟未裁决（>10）",
+            })
+
+    return anomalies
+
+
 def build_messages(snapshot: str, time_str: str) -> list[dict]:
     """组装提示词（system 固定 + user 壳填快照）；预算 ≤700 token < 1500 硬上限。"""
     return [
