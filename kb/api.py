@@ -305,7 +305,8 @@ def create_app(settings: Settings | None = None,
         # 本地监控 Agent（TASK-0017）：serve 模式默认启用，仅读配置决定间隔；
         # TestClient 测试默认不启动（monitor_enabled 默认 False，测试按需开）
         if kb.settings.monitor_enabled and str(wd) not in ("", "."):
-            monitor = MonitorAgent(kb, kb.settings.monitor_interval)
+            monitor = MonitorAgent(kb, kb.settings.monitor_interval,
+                                   dispatch_enabled=kb.settings.dispatch_enabled)
             monitor.start()
             serve_log.info("监控线程启动 interval=%s分钟", kb.settings.monitor_interval)
         try:
@@ -460,7 +461,8 @@ def create_app(settings: Settings | None = None,
         成功返回 {"summary": 摘要, "id": 记录id}；本地 LLM 不可用/摘要为空 → 502
         MONITOR_UNAVAILABLE。不依赖常驻线程，前端按钮/定时器按需调用。
         """
-        record = run_once_summary(kb, max_tokens=kb.settings.monitor_max_tokens)
+        record = run_once_summary(kb, max_tokens=kb.settings.monitor_max_tokens,
+                                   dispatch_enabled=kb.settings.dispatch_enabled)
         if record is None:
             raise HTTPException(status_code=502, detail={
                 "error": "MONITOR_UNAVAILABLE",

@@ -10,7 +10,9 @@ import pytest
 
 from kb.llm import LLMError
 from kb.monitor import (MonitorAgent, _detect_anomalies, build_messages,
-                        build_snapshot, maybe_open_dashboard)
+                        build_snapshot, maybe_open_dashboard,
+                        run_once_dispatch, build_anomaly_snapshot,
+                        run_once_summary)
 
 
 # ---- 测试替身 ----
@@ -334,3 +336,74 @@ class TestDetectAnomalies:
         types = sorted(a["type"] for a in anomalies)
         assert types == sorted(["pending_low", "claimed_stale",
                                 "done_unverified", "fbk_open_stale"])
+
+
+# ---- TASK-0049：异常调度（comm:dispatch）----
+class TestDispatch:
+    """run_once_dispatch / build_anomaly_snapshot / run_once_summary 接入。"""
+
+    def test_有异常时写comm_dispatch(self):
+        # 空 taskboard → pending=0 < 2 → pending_low 触发
+        svc = FakeService([])
+        svc.llm.result = "待办告急：卡池 pending 数为 0"
+        run_once_dispatch(svc, max_tokens=300)
+        dispatch = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
+        assert len(dispatch) == 1
+        assert dispatch[0]["source"] == "kb-dispatch"
+        assert dispatch[0]["content"] == "待办告急：卡池 pending 数为 0"
+        # LLM 护栏：prefer=local / max_tokens=300
+        assert svc.llm.calls[-1]["prefer"] == "local"
+        assert svc.llm.calls[-1]["max_tokens"] == 300
+
+    def test_无异常不写comm_dispatch(self):
+        now = datetime.now().isoformat()
+        records = [
+            _rec("TASK-0001 pending worker-1 | 标题A", ["taskboard"], updated_at=now),
+            _rec("TASK-0002 pending worker-2 | 标题B", ["taskboard"], updated_at=now),
+        ]
+        svc = FakeService(records)
+        svc.llm.result = "不应被调用"
+        run_once_dispatch(svc, max_tokens=300)
+        assert not any("comm:dispatch" in (a["tags"] or []) for a in svc.added)
+        assert not svc.llm.calls  # 无异常不调 LLM（避免刷屏）
+
+    def test_LLM失败兜底不崩溃(self):
+        svc = FakeService([])  # pending_low 触发
+        svc.llm.error = LLMError("本地不可用")
+        # 不抛异常，不写 comm:dispatch
+        run_once_dispatch(svc, max_tokens=300)
+        assert not any("comm:dispatch" in (a["tags"] or []) for a in svc.added)
+
+    def test_run_once_summary接入_dispatch_enabled默认开(self):
+        svc = FakeService([])  # pending_low
+        svc.llm.result = "监控摘要"
+        run_once_summary(svc, max_tokens=300)  # dispatch_enabled 默认 True
+        tags_list = [tuple(a["tags"] or []) for a in svc.added]
+        assert ("comm:monitor",) in tags_list
+        assert ("comm:dispatch",) in tags_list
+
+    def test_dispatch_enabled_false不写(self):
+        svc = FakeService([])  # pending_low
+        svc.llm.result = "监控摘要"
+        run_once_summary(svc, max_tokens=300, dispatch_enabled=False)
+        tags_list = [tuple(a["tags"] or []) for a in svc.added]
+        assert ("comm:monitor",) in tags_list
+        assert ("comm:dispatch",) not in tags_list
+
+    def test_build_anomaly_snapshot收集(self):
+        now = datetime.now().isoformat()
+        records = [
+            _rec("TASK-0001 claimed worker-1 | 标题A", ["taskboard"], updated_at=now),
+            _rec("坏首行", ["taskboard"], updated_at=now),  # 解析失败跳过
+            _rec("FBK-0001 feedback TASK-0001 | objection precheck\n结果：open",
+                 ["feedback"], updated_at=now),
+            _rec("坏反馈首行", ["feedback"], updated_at=now),  # 跳过
+        ]
+        svc = FakeService(records)
+        snap = build_anomaly_snapshot(svc)
+        assert len(snap["tasks"]) == 1
+        assert snap["tasks"][0]["task_id"] == "TASK-0001"
+        assert snap["tasks"][0]["status"] == "claimed"
+        assert len(snap["feedbacks"]) == 1
+        assert snap["feedbacks"][0]["fbk_id"] == "FBK-0001"
+        assert snap["feedbacks"][0]["status"] == "open"
