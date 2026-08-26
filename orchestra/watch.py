@@ -1,15 +1,17 @@
-"""终端看板模块（TASK-0031 包化⑥：自 board.py 机械搬移；TASK-0035 增反馈卡段）。
+"""终端看板模块（TASK-0031 包化⑥：自 board.py 机械搬移；TASK-0035 增反馈卡段；
+TASK-0060 任务卡行附 B3 轮次列）。
 
 含 watch 相关：
 - _watch_frame：渲染看板一轮文本（worker 段 + 任务卡段 + open 反馈卡段 + 可选交流窗段）
 - cmd_watch：前台轮询重绘，支持 --once 单轮与 Ctrl+C 干净退出
 
 board.py 仅做 CLI 调度，通过 import 复用本模块；
-依赖方向：board.py → 本模块 → cards/registry/comm/feedback → client.py。
+依赖方向：board.py → 本模块 → cards/registry/comm/feedback/b3 → client.py。
 """
 import json
 import time
 
+from b3 import parse_rounds
 from cards import TAG, _fmt_time, parse_header
 from client import _request
 from comm import _comm_tag, _truncate
@@ -50,7 +52,18 @@ def _watch_frame(include_comm: bool = False) -> str:
         if parse_fbk_result(card["content"]) == "open":
             open_fbks.append((h, card))
             open_counts[h["task_id"]] = open_counts.get(h["task_id"], 0) + 1
-    # 任务卡段（TASK 状态 assignee HH:MM 标题 [FBK:N]；无 open 反馈不显示标注）
+    # 轮次数据（B3/TASK-0060：tag=rounds 一次取数，卡行附 [当前轮/配额]）
+    rounds_items = _request("GET", "/memories?tag=rounds&limit=1000") \
+        .get("items", [])
+    rounds_map: dict[str, dict] = {}   # TASK-NNNN → parse_rounds 结果
+    for r_card in rounds_items:
+        try:
+            r = parse_rounds(r_card["content"])
+        except ValueError:
+            continue
+        rounds_map[r["task_id"]] = r
+    # 任务卡段（TASK 状态 assignee HH:MM 标题 [当前轮/配额] [FBK:N]；
+    # 无 rounds 记录显示 [–]，无 open 反馈不显示 FBK 标注）
     cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
     for card in cards:
         try:
@@ -59,6 +72,11 @@ def _watch_frame(include_comm: bool = False) -> str:
             continue
         line = (f"{h['task_id']} {h['status']} {h['assignee']} "
                 f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
+        r = rounds_map.get(h["task_id"])
+        if r:
+            line += f" [{r['total']}/{r['quota']['total']}]"
+        else:
+            line += " [–]"
         n = open_counts.get(h["task_id"], 0)
         if n:
             line += f" [FBK:{n}]"
