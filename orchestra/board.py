@@ -19,7 +19,8 @@ from registry import cmd_register, cmd_workers
 from watch import cmd_watch
 from worktree import (cmd_worktree_clean, cmd_worktree_enter,
                       cmd_worktree_setup)
-from b3 import (check_summary_tags, get_quota, increment_rounds, render_rounds)
+from b3 import (check_summary_tags, cmd_add_with_rounds, cmd_resume,
+                 get_quota, increment_rounds, render_rounds)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -153,6 +154,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_b3_check = b3_sub.add_parser("summary-check",
                                     help="校验 SUMMARY 保留标签四类齐全")
     p_b3_check.add_argument("content", help="SUMMARY 记录文本")
+    p_b3_resume = b3_sub.add_parser("resume",
+                                     help="claimed 卡唤醒续做：先读该卡 summary（不依赖对话历史）")
+    p_b3_resume.add_argument("task_id", help="如 TASK-0046")
     return parser
 
 
@@ -162,9 +166,10 @@ _DISPATCH = {
     "list-pending": lambda a: cmd_list_pending(),
     "pending-count": lambda a: cmd_pending_count(),
     "workers": lambda a: cmd_workers(),
-    "add": lambda a: cmd_add(assignee=a.assignee, title=a.title, goal=a.goal,
-                             input_=a.input, constraints=a.constraints,
-                             acceptance=a.acceptance, docs=a.docs),
+    "add": lambda a: cmd_add_with_rounds(assignee=a.assignee, title=a.title,
+                                          goal=a.goal, input_=a.input,
+                                          constraints=a.constraints,
+                                          acceptance=a.acceptance, docs=a.docs),
     "claim": lambda a: cmd_claim(task_id=a.task_id, assignee=a.assignee),
     "show": lambda a: cmd_show(a.task_id),
     "verify": lambda a: cmd_verify(a.task_id, action=a.action, note=a.note,
@@ -196,6 +201,7 @@ _DISPATCH = {
         "rounds-render": lambda a: print(render_rounds(a.task_id, a.complexity)),
         "rounds-increment": lambda a: print(increment_rounds(a.content, a.node)),
         "summary-check": lambda a: print(check_summary_tags(a.content)),
+        "resume": lambda a: cmd_resume(a.task_id),
     },
 }
 

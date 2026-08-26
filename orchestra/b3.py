@@ -1,13 +1,21 @@
-"""B3 精细化成本管控：配额表 / rounds 记录 / summary 校验（TASK-0053）。
+"""B3 精细化成本管控：配额表 / rounds 记录 / summary 校验 / 建卡联动 / 中断恢复。
 
-纯函数模块，不调 LLM 不发 HTTP；board.py 接线子命令调用。
+核心函数（get_quota/parse_rounds/increment_rounds/render_rounds/check_summary_tags/
+extract_complexity/find_latest_summary）为纯函数，不调 LLM 不发 HTTP；
+命令函数（cmd_add_with_rounds/cmd_resume）复用 cards 纯函数 + client._request 接线。
 依据：docs/superpowers/specs/2026-08-26-b3-cost-control-design.md
-  §1.1 ROUNDS 格式、§1.2 SUMMARY 保留标签、§3 配额表。
+  §1.1 ROUNDS 格式、§1.2 SUMMARY 保留标签、§2 流程、§3 配额表、§4.5 中断恢复。
 
 - get_quota：按复杂度返回 precheck/milestone/total 配额
 - parse_rounds / increment_rounds / render_rounds：ROUNDS 记录解析/递增/渲染
 - check_summary_tags：SUMMARY 保留标签四类齐全校验
+- extract_complexity：从卡约束字段提取复杂度（TASK-0054）
+- find_latest_summary：从 summary 记录列表找该卡最新摘要（TASK-0054）
+- cmd_add_with_rounds：建卡+初始化 rounds 记录（TASK-0054）
+- cmd_resume：claimed 卡唤醒续做，先读该卡 summary（TASK-0054）
 """
+from cards import (TAG, _next_task_id, check_limits, parse_header, render_card)
+from client import _request
 
 # 配额表（spec §3）：simple=1/1/3, medium=2/2/5, complex=2/3/8
 _QUOTA_TABLE = {
@@ -126,3 +134,83 @@ def check_summary_tags(content: str) -> list[str]:
         if tag not in content:
             missing.append(tag)
     return missing
+
+
+# ---- TASK-0054：建卡联动与中断恢复 ----
+import re as _re
+
+_COMPLEXITY_RE = _re.compile(r"(?:配额|复杂度)[：:\s]+(simple|medium|complex)", _re.IGNORECASE)
+
+
+def extract_complexity(constraints: str) -> str:
+    """从卡约束字段提取复杂度（spec §3：配额由协调者拆卡时在卡内'约束'注明）。
+
+    匹配 '配额 simple' / '复杂度：medium' 等格式；未注明返回空串（由 get_quota 默认 medium）。
+    纯函数，不调 HTTP。
+    """
+    if not constraints:
+        return ""
+    m = _COMPLEXITY_RE.search(constraints)
+    return m.group(1).lower() if m else ""
+
+
+def find_latest_summary(summaries: list[dict], task_id: str) -> str | None:
+    """从 summary 记录列表中找到该卡的最新 summary，返回 content（spec §4.5 中断恢复）。
+
+    summaries 每条为 {"content": str, "updated_at": str}（kb list 返回的 items 子集）；
+    SUMMARY 首行格式 'SUMMARY TASK-NNNN round-N | 正文'，按 updated_at 降序取第一条匹配。
+    纯函数，不调 HTTP；无匹配返回 None。
+    """
+    matched = []
+    for s in summaries:
+        content = s.get("content", "")
+        first = content.split("\n", 1)[0].strip()
+        # 首行以 'SUMMARY <task_id>' 开头（兼容 round-N 后缀）
+        if first.startswith(f"SUMMARY {task_id}"):
+            matched.append(s)
+    if not matched:
+        return None
+    # 按 updated_at 降序（字符串 ISO 格式可直接比较）
+    matched.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
+    return matched[0]["content"]
+
+
+def cmd_add_with_rounds(assignee: str, title: str, goal: str, input_: str,
+                         constraints: str, acceptance: str, docs: str = "") -> str:
+    """创建任务卡 + 初始化 rounds 记录（TASK-0054 建卡联动）。
+
+    复用 cards 纯函数（check_limits/render_card/_next_task_id）+ client._request；
+    建卡后按 constraints 标注的复杂度创建 rounds 记录（未注明默认 medium）。
+    返回 task_id；rounds 记录 tag=rounds。
+    """
+    check_limits(title=title, goal=goal, input=input_,
+                 constraints=constraints, acceptance=acceptance, docs=docs)
+    cards_list = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    task_id = _next_task_id(cards_list)
+    content = render_card(task_id, "pending", assignee, title,
+                          goal=goal, input_=input_, constraints=constraints,
+                          acceptance=acceptance, docs=docs)
+    resp = _request("POST", "/memories", {"content": content, "tags": [TAG]})
+    print(f"已创建 {task_id} → 记录 {resp['id']}（assignee: {assignee}）")
+    # 初始化 rounds 记录（spec §2 任务启动：协调者拆卡→标注复杂度→建 rounds 记录）
+    complexity = extract_complexity(constraints)
+    rounds_content = render_rounds(task_id, complexity)
+    rounds_resp = _request("POST", "/memories",
+                            {"content": rounds_content, "tags": ["rounds"]})
+    label = complexity if complexity else f"{_DEFAULT_COMPLEXITY}(默认)"
+    print(f"rounds 已初始化 {task_id} → 记录 {rounds_resp['id']}（复杂度: {label}）")
+    return task_id
+
+
+def cmd_resume(task_id: str) -> None:
+    """claimed 卡唤醒续做：先读该卡 summary 记录（spec §4.5 中断恢复，不依赖对话历史）。
+
+    从 kb 读取 tag=summary 记录，用 find_latest_summary 找该卡最新摘要并输出；
+    无 summary 时明确提示（worker 从任务卡原文续做）。纯检索只读，不改卡。
+    """
+    summaries = _request("GET", "/memories?tag=summary&limit=1000").get("items", [])
+    latest = find_latest_summary(summaries, task_id)
+    if latest is None:
+        print(f"[resume] {task_id} 无 summary 记录，从任务卡原文续做")
+        return
+    print(f"[resume] {task_id} 最新 summary：\n{latest}")
