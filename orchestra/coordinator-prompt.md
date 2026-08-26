@@ -30,35 +30,50 @@
 
 > **更新纪律**：每完成一轮"核验→合并→推送"收口后，协调者必须把本节更新为最新状态再提交（提交信息 `文档: 协调者接力状态更新至TASK-NNNN`）。本节是下一个协调者的唯一交接面，宁详勿略。
 
-**最后更新：2026-08-26 21:30 ｜ 更新人：协调者（GLM-5.3）｜ 快照：B2 反馈闭环全链路验证，TASK-0001~0037 共 37 卡全核验**
+**最后更新：2026-08-26 22:10 ｜ 更新人：协调者（GLM-5.3）｜ 快照：调度监测架构落地，TASK-0001~0050 中 49 张核验，0049 停等放行中**
 
 ### 项目现状（一句话）
 
-kb 记忆服务 v1.0.1 生产可用（65 项测试全绿，A1.2 日志已交付）；orchestra 协作系统 B1 全部收口（含协调者 skill 化）、包化分层落地（8 模块）、B2 反馈闭环全链路验证（feedback.py 完整：add/list/show/decide + 配额门禁，协议 v1.4，120 项测试全绿）。
+kb 记忆服务 v1.0.1 生产可用（A1.2 日志已交付，charset 修复 v1.0.2 候选）；orchestra B1+包化+B2 全收口，调度监测架构落地（协调者循环常驻自动核验 + DispatchAgent 检测函数就绪），168 项测试全绿。
 
 ### 进行中的卡
 
-无。任务板 TASK-0001~0037 全部核验（TASK-0023 failed 为重派记录保留）。
+| 卡 | 负责人 | 状态 | 说明 |
+|---|---|---|---|
+| TASK-0049 DispatchAgent接入comm:dispatch | worker-2 | claimed | FBK-0003 已 accepted（0048 已合入），等 worker-2 被唤醒后继续 |
+| TASK-0023 看板Worker表inferred行 | worker-4 | pending | 重派卡，低优先级 |
 
-### 最近完成（第九批，2026-08-26，B2 实战演练 + B1.7）
+### 最近完成（第十批，2026-08-26 22:00~22:10，全员并行 + 调度监测架构）
 
-- TASK-0037：B2 precheck 首次正式演练——designer-1 预审 0035/0036 均通过（五字段完备、依赖方向正确），无 objection，comm:done 留痕
-- TASK-0035：watch.py 新增 open 反馈卡段（复用 feedback 解析、无 open 不渲染），看板可观察反馈状态
-- TASK-0036：B1.7 协调者 skill 化——`orchestra-coordinator` SKILL.md（41 行精简版，指向 coordinator-prompt.md），protocol 双 skill 节已补
-- **B2 三节点闭环全链路验证完成**：FBK-0001（precheck clarify 停等 → accepted → worker 续做）+ FBK-0002（review 冒烟 → rejected 清理）+ TASK-0037（precheck 预审通过）
+- **协调者循环首次实战**（coordinator_loop.py，8ed3b64）：TASK-0038~0047 共 13 张卡自动核验合并推送（merge→pytest→verify→push→clean），期间发现并修复无分支卡漏 commit 缺口（eaa0264：共享区改动现在会补提交再 verify）
+- **调度监测架构定稿**（用户确认，对照业界 supervisor-dispatcher 模式修正）：designer 拆卡直接进池 → worker 领卡 → 协调者循环自动核验 → DispatchAgent（qwen3:4b 每 5 分钟唤醒）**只监测播报不派发决策**（四规则：卡池<2 告急/claimed 超时 30min/done 积压 5min/open FBK 10min 无裁决）→ 写 comm:dispatch
+- TASK-0048：_detect_anomalies 四规则纯函数 + 15 用例（DispatchAgent 检测层，worker-3）
+- TASK-0050：协议 v1.5 §12 调度监测节 + designer 拆卡职责（designer-1）
+- TASK-0038/0045：kb JSON charset 修复 + 测试断言（v1.0.2 候选合入，worker-1/worker-4）
+- TASK-0039/0040/0041/0042/0043：看板反馈摘要/feedback --task 过滤/dashboard 反馈区/worktree --all/pending-count（worker-2/3/4）
+- TASK-0046/0047：**B3 成本管控 spec + P2-2 鉴权 spec 两份设计书产出**（designer-1，下一阶段输入）
+- **FBK-0003 为 B2 闭环第三次实战**：worker-2 发现依赖未合入 → clarify 停等 → 协调者合并 0048 → accepted 放行
 
 ### 后续规划（下一步做什么）
 
-**近期（B2 收口 + 方向选择，当前）**：
-1. B2 设计书第 6 节三条验收标准已全部满足（可追溯/不超配额/双份留痕），B2 可宣告收口
-2. B2 里程碑阶段（milestone/review 节点）可在后续真实任务中自然演练，无需专项拆卡
-3. 协调者 skill 已完成 skill 化（SKILL.md），本机安装需人工确认（worker-4 已复制到仓库，安装路径 `~\.trae-cn\skills\orchestra-coordinator\`）
+**近期（当前）**：
+1. TASK-0049 完成后 DispatchAgent 即具备完整闭环（检测+播报），提醒用户重启 kb 服务生效（KB_DISPATCH_ENABLED 默认 true）
+2. DispatchAgent 验收：人为制造异常（如 claimed 卡挂 30min）看 comm:dispatch 是否播报
+3. TASK-0023（重派卡，dashboard inferred 行）可塞给空闲 worker
 
-**中期（二选一或穿插，按用户意向）**：
-- **orchestra 线 B3 成本管控**（★★★）：滚动窗口/动态配额/增量沉淀/模型分级（先立 spec 再拆卡，B2 稳定运行一周后启动）
-- **kb 线 P2-2 鉴权**（A2，N19-N20）：API Key 鉴权（详见 docs/superpowers/plans/2026-08-24-p2-roadmap.md）；P2-3 遗忘机制、P2-4 Web UI/CLI 排后
+**中期（两份 spec 已就绪，按用户意向选）**：
+- **B3 成本管控**（★★★，spec：docs/superpowers/specs/2026-08-26-b3-cost-control-design.md）：滚动窗口/动态配额/增量沉淀/模型分级
+- **kb P2-2 鉴权**（spec：docs/superpowers/specs/2026-08-26-p2-auth-design.md）：API Key 鉴权 N19-N20
 
-**远期**：B4 自适应（轮次阈值自学习/复杂度预判/成本-质量平衡/经验复用）；支线 L2 终端 REPL、本地统计 worker。
+**远期**：B4 自适应；支线 L2 终端 REPL、本地统计 worker。
+
+### 踩坑沉淀（新增，供接力协调者避坑）
+
+- **协调者循环无分支卡必须补 commit**：worker 在共享区直接改（未走 worktree/分支）时，verify 前先 git status 检查，有改动 add+commit+push 再 verify——已修复（eaa0264），勿回退
+- **两个协调者循环勿并行**：git 操作会竞争，启动前确认旧实例已停（StopCommand 失败时换 terminal 或重启机器）
+- **worker-4 Qoder 的申报习惯**：分支未预建会自建解锁（已授权模式），结果栏含详细申报，核验时读结果栏再决定
+- **test_worktree.py GBK 预存问题**：Windows 下跑全量测试加 PYTHONUTF8=1
+- **验证优先级**：跑 orchestra/tests/ + 改动相关 kb tests（当前合计 168 项，全量 kb tests 245 项约 65s）
 
 ### 协调者注意事项（踩坑沉淀）
 
