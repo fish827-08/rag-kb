@@ -15,6 +15,12 @@ from datetime import datetime
 
 from kb.models import Record
 
+# B3 rounds 解析（TASK-0058）：orchestra 不在 path 时降级为 None，不采集 rounds
+try:
+    from orchestra.b3 import parse_rounds as _b3_parse_rounds
+except ImportError:
+    _b3_parse_rounds = None
+
 logger = logging.getLogger("kb.monitor")
 
 # 快照行数上限（YAGNI 不配置化，设计书第 5 节）
@@ -106,13 +112,15 @@ def _detect_anomalies(snapshot: dict, now: datetime | None = None) -> list[dict]
 
     snapshot 结构（由调用方从 service 收集，本函数不关心来源）：
         {"tasks": [{"task_id": str, "status": str, "updated_at": str}, ...],
-         "feedbacks": [{"fbk_id": str, "status": str, "updated_at": str}, ...]}
+         "feedbacks": [{"fbk_id": str, "status": str, "updated_at": str}, ...],
+         "rounds": {task_id: {"total": int, "quota": {"total": int}, "complexity": str}, ...}}
 
-    四条规则（边界：恰好等于阈值不触发，超过才触发）：
+    五条规则（边界：恰好等于阈值不触发，超过才触发；rounds 达到上限即触发）：
         ①卡池 pending 数 < 2 时告急（type=pending_low，task_id=None）
         ②claimed 卡超 30 分钟未动（type=claimed_stale）
         ③done 状态卡超 5 分钟未被核验（type=done_unverified）
         ④open FBK 超 10 分钟无人裁决（type=fbk_open_stale，task_id 填 fbk_id）
+        ⑤claimed 卡 rounds 达到/超过配额上限（type=rounds_exceeded，TASK-0058 B3 轮次告警）
 
     now 为当前时间（测试注入用），默认 datetime.now()；时间解析失败的卡跳过不报错。
     每条异常输出 {"type": str, "task_id": str|None, "detail": str}。
@@ -176,6 +184,25 @@ def _detect_anomalies(snapshot: dict, now: datetime | None = None) -> list[dict]
                 "detail": f"open FBK {f.get('fbk_id')} 已 {minutes:.0f} 分钟未裁决（>10）",
             })
 
+    # ⑤claimed 卡 rounds 达到/超过配额上限（TASK-0058，B3 轮次告警）
+    rounds_map = snapshot.get("rounds", {})
+    for t in tasks:
+        if t.get("status") != "claimed":
+            continue
+        tid = t.get("task_id")
+        rd = rounds_map.get(tid)
+        if rd is None:
+            continue
+        quota_total = rd.get("quota", {}).get("total", 0)
+        total = rd.get("total", 0)
+        if quota_total > 0 and total >= quota_total:
+            complexity = rd.get("complexity", "?")
+            anomalies.append({
+                "type": "rounds_exceeded",
+                "task_id": tid,
+                "detail": f"{tid} {complexity}第{total}轮/共{quota_total}，轮次超限",
+            })
+
     return anomalies
 
 
@@ -222,7 +249,17 @@ def build_anomaly_snapshot(service) -> dict:
             "status": status,
             "updated_at": _iso_str(rec.updated_at),
         })
-    return {"tasks": tasks, "feedbacks": feedbacks}
+    # rounds 记录（TASK-0058）：tag=rounds，用 b3.parse_rounds 解析，按 task_id 建索引
+    rounds_map = {}
+    if _b3_parse_rounds is not None:
+        records, _ = service.list_records(tag="rounds", limit=1000)
+        for rec in records:
+            try:
+                parsed = _b3_parse_rounds(rec.content)
+                rounds_map[parsed["task_id"]] = parsed
+            except (ValueError, KeyError, TypeError):
+                continue  # 解析失败跳过
+    return {"tasks": tasks, "feedbacks": feedbacks, "rounds": rounds_map}
 
 
 def run_once_dispatch(service, max_tokens: int = 300):
