@@ -94,12 +94,13 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 
 | 模块 | 职责 |
 |---|---|
-| `board.py` | 仅 CLI 入口：argparse 子命令调度（status/add/claim/show/verify/new-worker/register/workers/report/list-comm/watch/worktree），内部 `from client import ...` 等 |
+| `board.py` | 仅 CLI 入口：argparse 子命令调度（status/add/claim/show/verify/new-worker/register/workers/report/list-comm/watch/worktree），内部 `from cards import ...` 等按模块导入 |
 | `client.py` | kb REST HTTP 客户端：`KB_BASE` / `_request` / `BoardUnavailable`；仅标准库 urllib，依赖最底层 |
-| `cards.py` | 卡片纯函数（无 HTTP 依赖）：`LIMITS`/`STATUSES` 常量、`render_card`/`parse_header`/`check_limits`/`_fmt_time`/`_next_task_id` |
+| `cards.py` | 卡片模块：纯函数（`LIMITS`/`STATUSES`、`render_card`/`parse_header`/`check_limits`/`_fmt_time`/`_next_task_id`）+ 任务卡 CRUD（`cmd_status`/`cmd_add`/`cmd_claim`/`cmd_show`/`cmd_verify`/`cmd_list_pending`/`cmd_new_worker`，含 `--docs` 文档同步清单与核验硬门禁） |
 | `registry.py` | worker 注册表：`REGISTRY_TAG` 常量、`cmd_register`/`cmd_workers`/`_now_iso`；经 `client._request` 读写 tag=registry 记录 |
 | `comm.py` | 交流窗：`COMM_CHANNELS`/`COMM_TEXT_LIMIT` 常量、`cmd_report`/`cmd_list_comm`/`_comm_tag`/`_truncate`；时间格式化复用 `cards._fmt_time` |
-| （后续） | worktree/watch 拆分进行中，各自模块文件到位后补本表 |
+| `worktree.py` | git worktree 隔离：`cmd_worktree_setup`/`cmd_worktree_enter`/`cmd_worktree_clean`（TASK-0025 治本分支串扰）；仅标准库 subprocess/pathlib |
+| `watch.py` | 终端看板：`_watch_frame` 渲染（worker 段 + 卡段 + 可选交流窗段）、`cmd_watch` 前台轮询（`--once` 单轮） |
 
 - 依赖方向：`board.py → 各模块 → client.py`；底层只有 client.py 依赖 urllib
 - 对外命令接口零变化：`python orchestra\board.py <子命令>` 照旧（board.py 内 import 各模块）
