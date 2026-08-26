@@ -77,6 +77,9 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 挂载后可用的 MCP 工具：`write_memory` / `search_memory` / `read_memory` /
 `update_memory` / `delete_memory` / `add_document` / `add_webpage` / `ask_kb`。
 
+> 启用 `KB_API_KEY` 鉴权后，MCP 客户端需在连接配置加 `headers`（`Authorization: Bearer <key>`）；
+> 仓库内 `.mcp.json` 模板不含真实 key（JSON 不支持注释），配法见 [USER_GUIDE §5.2](docs/USER_GUIDE.md#52-客户端适配n20启用鉴权后各客户端如何带-key)。
+
 ## REST 端点速查
 
 | 方法 | 路径 | 说明 |
@@ -131,6 +134,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask `
 | `KB_DEEPSEEK_API_KEY` | 空 | 云端降级 API Key（可选，只填在本机 `.env`） |
 | `KB_CHUNK_SIZE` / `KB_CHUNK_OVERLAP` | `500` / `100` | 文档切分参数 |
 | `KB_SENSITIVE_NAMESPACES` | 空 | 逗号分隔的敏感 namespace，命中强制本地回答不出网 |
+| `KB_API_KEY` | 空 | 空=不鉴权（本地回环零摩擦）；非空=启用 Bearer/X-API-Key 鉴权；orchestra 客户端自动带 `X-API-Key` 头 |
 
 ## agent-orchestra — 多 Agent 协作系统（实验）
 
