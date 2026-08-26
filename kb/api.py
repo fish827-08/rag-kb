@@ -535,14 +535,16 @@ def create_app(settings: Settings | None = None,
 
     @app.post("/api/v1/monitor/summary")
     def post_monitor_summary() -> dict:
-        """按需生成监控摘要（TASK-0021 去常驻 / TASK-0059 降级）：单轮（快照→LLM→写comm:monitor）。
+        """按需生成监控摘要（TASK-0021 去常驻 / TASK-0059 降级 / TASK-0065 纯文本模式）：单轮（快照→摘要→写comm:monitor）。
 
-        成功返回 {"summary": 摘要, "id": 记录id}；LLM 不可用时降级为纯文本摘要仍返回 200；
-        仅 build_snapshot/add_memory 失败返回 None → 502 MONITOR_UNAVAILABLE。
+        monitor_llm="off"（默认）时全程纯文本不调 LLM（零成本/不抢GPU）；"auto" 时
+        LLM 可用摘要化、不可用降级纯文本仍返回 200；仅 build_snapshot/add_memory
+        失败返回 None → 502 MONITOR_UNAVAILABLE。
         不依赖常驻线程，前端按钮/定时器按需调用。
         """
         record = run_once_summary(kb, max_tokens=kb.settings.monitor_max_tokens,
-                                   dispatch_enabled=kb.settings.dispatch_enabled)
+                                   dispatch_enabled=kb.settings.dispatch_enabled,
+                                   monitor_llm=kb.settings.monitor_llm)
         if record is None:
             raise HTTPException(status_code=502, detail={
                 "error": "MONITOR_UNAVAILABLE",

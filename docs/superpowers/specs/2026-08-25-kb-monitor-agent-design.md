@@ -71,3 +71,16 @@
 - 异常检测失败只记 WARNING，不影响监控主流程；
 - 纯函数 `_detect_anomalies` 不调 LLM 不发 HTTP，输入输出可单测；
 - 提示词预算：system 固定 + user 壳（异常列表），远低于 1500 token 硬上限。
+
+### 2.7 纯文本模式（TASK-0065）
+
+- `kb/config.py` 新增 `monitor_llm: str = "off"`（环境变量 `KB_MONITOR_LLM`），
+  取值 `off`/`auto`，默认 `off`；
+- `off` 模式：`run_once_summary` / `run_once_dispatch` 全程纯文本模板渲染，
+  永不调 LLM（零成本/不抢 GPU），复用 TASK-0059 的 `_fallback_summary_text`/
+  `_fallback_dispatch_text`；
+- `auto` 模式：现有行为（LLM 可用摘要化、不可用降级纯文本）；
+- `MonitorAgent.__init__` 新增 `monitor_llm`，`_run_once` 透传；端点
+  `POST /api/v1/monitor/summary` 传 `monitor_llm=kb.settings.monitor_llm`；
+- 效果：'本地无 LLM 完整工作'成为默认，用户显存紧张场景 monitor 也不抢 GPU；
+- `.env.example` 补充 `KB_MONITOR_LLM=` 及其他 monitor 相关键名。

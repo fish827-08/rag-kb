@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     monitor_max_tokens: int = 300               # 摘要输出上限（护栏：≤300，硬约束）
     monitor_autotimer: int = 0                  # KB_MONITOR_AUTOTIMER：看板前端自动轮询间隔（分钟），0=关
     dispatch_enabled: bool = True                # KB_DISPATCH_ENABLED：监控单轮后异常调度（comm:dispatch），默认开（TASK-0049）
+    monitor_llm: str = "off"                     # KB_MONITOR_LLM：监控摘要模式 off=全程纯文本不调LLM(默认零成本/不抢GPU) / auto=LLM可用摘要化不可用降级(TASK-0065)
     dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
     dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 
