@@ -317,6 +317,8 @@ class TestMain:
             "items": [], "total": 0}
         mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
             "items": [], "total": 0}
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {
+            "items": [], "total": 0}
         board.main()
         assert "无已注册 worker" in capsys.readouterr().out
 

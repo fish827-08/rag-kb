@@ -1,11 +1,11 @@
-"""终端看板模块（TASK-0031 包化⑥：自 board.py 机械搬移）。
+"""终端看板模块（TASK-0031 包化⑥：自 board.py 机械搬移；TASK-0035 增反馈卡段）。
 
 含 watch 相关：
-- _watch_frame：渲染看板一轮文本（worker 段 + 任务卡段 + 可选交流窗段）
+- _watch_frame：渲染看板一轮文本（worker 段 + 任务卡段 + open 反馈卡段 + 可选交流窗段）
 - cmd_watch：前台轮询重绘，支持 --once 单轮与 Ctrl+C 干净退出
 
 board.py 仅做 CLI 调度，通过 import 复用本模块；
-依赖方向：board.py → 本模块 → cards/registry/comm → client.py。
+依赖方向：board.py → 本模块 → cards/registry/comm/feedback → client.py。
 """
 import json
 import time
@@ -13,13 +13,14 @@ import time
 from cards import TAG, _fmt_time, parse_header
 from client import _request
 from comm import _comm_tag, _truncate
+from feedback import TAG as FEEDBACK_TAG, parse_fbk_header, parse_fbk_result
 from registry import REGISTRY_TAG
 
 
 def _watch_frame(include_comm: bool = False) -> str:
-    """渲染看板一轮文本：worker 段 + 任务卡段 +（可选）交流窗段。
+    """渲染看板一轮文本：worker 段 + 任务卡段 + open 反馈卡段 +（可选）交流窗段。
 
-    纯函数便于单测；行格式分别复用 cmd_workers / cmd_status / cmd_list_comm。
+    纯函数便于单测；行格式分别复用 cmd_workers / cmd_status / feedback 解析。
     """
     lines = []
     # worker 段（名字 模型 状态 最后活跃）
@@ -45,6 +46,25 @@ def _watch_frame(include_comm: bool = False) -> str:
             continue
         lines.append(f"{h['task_id']} {h['status']} {h['assignee']} "
                      f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
+    # open 反馈卡段（B2/TASK-0035：列出全部 open 状态 FBK 卡；无 open 不显示该段）
+    fbks = _request("GET", f"/memories?tag={FEEDBACK_TAG}&limit=1000") \
+        .get("items", [])
+    open_fbks = []
+    for card in fbks:
+        try:
+            h = parse_fbk_header(card["content"])
+        except ValueError:
+            continue
+        if parse_fbk_result(card["content"]) == "open":
+            open_fbks.append((h, card))
+    if open_fbks:
+        lines.append("-- 反馈卡(open) --")
+        for h, card in open_fbks:
+            summary = next((l[len("摘要："):] for l in
+                            card["content"].split("\n")
+                            if l.startswith("摘要：")), "")
+            lines.append(f"{h['fbk_id']} open {h['task_id']} {h['fb_type']} "
+                         f"{h['stage']} {_truncate(summary)}")
     # 交流窗段（--comm 时附最近 5 条）
     if include_comm:
         comms = _request("GET", "/memories?limit=1000").get("items", [])

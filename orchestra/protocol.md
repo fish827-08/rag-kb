@@ -101,7 +101,7 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 | `registry.py` | worker 注册表：`REGISTRY_TAG` 常量、`cmd_register`/`cmd_workers`/`_now_iso`；经 `client._request` 读写 tag=registry 记录 |
 | `comm.py` | 交流窗：`COMM_CHANNELS`/`COMM_TEXT_LIMIT` 常量、`cmd_report`/`cmd_list_comm`/`_comm_tag`/`_truncate`；时间格式化复用 `cards._fmt_time` |
 | `worktree.py` | git worktree 隔离：`cmd_worktree_setup`/`cmd_worktree_enter`/`cmd_worktree_clean`（TASK-0025 治本分支串扰）；仅标准库 subprocess/pathlib |
-| `watch.py` | 终端看板：`_watch_frame` 渲染（worker 段 + 卡段 + 可选交流窗段）、`cmd_watch` 前台轮询（`--once` 单轮） |
+| `watch.py` | 终端看板：`_watch_frame` 渲染（worker 段 + 卡段 + **open 反馈卡段**（B2/TASK-0035，无 open 不显示） + 可选交流窗段）、`cmd_watch` 前台轮询（`--once` 单轮） |
 | `feedback.py` | B2 反馈卡（TASK-0032/0033）：`FBK-NNNN` 编号（tag=feedback 关联 TASK-NNNN）、add/list/show/**decide**、三类型必附字段校验（objection 必附替代方案等）、结果状态机 open→accepted/rejected、分节点配额硬门禁（precheck/milestone 各 2 轮、单任务总 5 轮封顶，超限拒绝新卡转仲裁）、裁决后结论级写 `comm:feedback` 归档 |
 
 - 依赖方向：`board.py → 各模块 → client.py`；底层只有 client.py 依赖 urllib
