@@ -1,6 +1,6 @@
 # agent-orchestra 协议总纲
 
-版本：v1.4（2026-08-26，反馈节点）｜ v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
+版本：v1.5（2026-08-26，skill 化双 skill 节）｜ v1.4（2026-08-26，反馈节点）｜ v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
 
 ## 1. 角色
 
@@ -123,16 +123,18 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 - 铁律：无替代方案的异议直接驳回，杜绝只否定不建设
 - 阻塞规则：目标卡存在 open 状态反馈时，协调者不得将其 verified
 
-## 12. Skill 化（B1.7，2026-08-26 新增）
+## 12. Skill 化（B1.7，2026-08-26 新增；v1.5 补全要素）
 
-两类角色均已包装为 Trae skill（仓库源在 `orchestra/skills/`，安装副本落本机 `C:\Users\<用户>\.trae-cn\skills\`，普通复制）：
+两类角色均已包装为 Trae skill：仓库源在 `orchestra/skills/`，安装副本落本机 `C:\Users\<用户>\.trae-cn\skills\`，普通复制（非链接）。
 
-| skill | 角色 | 仓库源 | 完整规约 |
-|---|---|---|---|
-| `orchestra-worker` | worker（执行者） | `orchestra/skills/orchestra-worker/SKILL.md` | `orchestra/worker-prompt.md` |
-| `orchestra-coordinator` | 协调者 | `orchestra/skills/orchestra-coordinator/SKILL.md` | `orchestra/coordinator-prompt.md` |
+| 要素 | `orchestra-worker` | `orchestra-coordinator` |
+|---|---|---|
+| 用途 | worker（执行者）：被唤醒后到 kb 任务板领卡、执行、回写、待命 | 协调者：拆卡分发、核验合并、重启管控与接力状态维护 |
+| 仓库源 | `orchestra/skills/orchestra-worker/SKILL.md` | `orchestra/skills/orchestra-coordinator/SKILL.md` |
+| 安装路径 | `C:\Users\<用户>\.trae-cn\skills\orchestra-worker\SKILL.md` | `C:\Users\<用户>\.trae-cn\skills\orchestra-coordinator\SKILL.md` |
+| 唤醒方式 | 用户说"你是 worker-N，开始工作"，或要求领任务/查任务卡 | 用户说"你是协调者"、粘贴唤醒提示词，或要求核验/合并/拆卡/派活/汇报任务板状态；也可直接调 skill |
+| 完整规约 | `orchestra/worker-prompt.md` | `orchestra/coordinator-prompt.md` |
 
 - SKILL.md 只含 frontmatter（name/description）+ 精简上岗流程与硬纪律；详细规则一律以对应规约文件为准（正文指向它，不复制大段）
-- 触发方式：用户说"你是 worker-N / 你是协调者"、粘贴唤醒提示词，或直接调 skill
 - 规约更新后需同步修订对应 SKILL.md 并重装副本（仓库版与安装副本保持逐字一致）
 - 对外协作接口零变化：skill 仅是唤醒入口，任务卡/分支/交流窗/反馈机制照旧
