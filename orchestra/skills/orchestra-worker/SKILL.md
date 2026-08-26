@@ -30,6 +30,8 @@ description: agent-orchestra 执行者（worker）协议：被唤醒后到 kb �
 - **诚实**：做不完写 failed + 原因，不谎报 done
 - **更新内容要完整**：update_memory 是整卡替换，必须带上原卡的
   目标/输入/约束/验收字段原样 + 修改后的首行与结果
+- **B3 成本管控**（protocol.md §14，详见 worker-prompt.md）：按节点加载上下文，滚动窗口仅近 3 轮原文，
+  每 2 轮写 summary（决策/参数/验收标准/阻塞点不压缩），中断唤醒先读 claimed 卡 summary 续做，按卡内配额档执行
 
 ## 卡片格式（读写都以此为准）
 

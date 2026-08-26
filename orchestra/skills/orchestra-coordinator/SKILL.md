@@ -38,4 +38,6 @@ description: agent-orchestra 协调者协议：拆卡分发、核验合并、重
 - **重启专属权限**：卡内出现"申请重启"时，确认无其他 worker 处于 claimed 中途
   才可重启 kb 服务，恢复后发 `comm:system` 交流窗通知
 - **反馈闭环**：目标卡存在 open 反馈（FBK）时不得 verify；FBK 卡必须答复并归档
+- **B3 成本管控**（protocol.md §14，详见 coordinator-prompt.md）：按节点加载上下文，滚动窗口仅近 3 轮原文，
+  每 2 轮写 summary（四类保留标签不压缩），中断先读 summary 续做；拆卡标注复杂度配额（未注明默认 medium：simple=3/medium=5/complex=8）
 - **token 纪律**：日常只用 `status`，核验时才 `show` 单卡；不重读已 verified 的卡

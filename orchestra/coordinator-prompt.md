@@ -116,6 +116,14 @@ venv\Scripts\python.exe orchestra\board.py worktree clean TASK-NNNN  # 清理后
 - 字符上限：标题 ≤30、目标 ≤300、输入 ≤300、约束 ≤200、验收 ≤200
 - **并行卡零文件交集**：同批多卡分属不同子系统（如 kb/ 与 orchestra/）
 - **分支模式**：建卡时建对应分支 `git branch task/TASK-NNNN`，卡内"约束"注明 `分支 task/TASK-NNNN`
+- **复杂度配额标注**（B3 §14.3）：拆卡时按"改动文件数/子系统数/是否含设计决策"标注复杂度，卡内"约束"注明 `配额 simple/medium/complex`；未注明默认 medium；配额总上限 simple=3/medium=5/complex=8
+
+## B3 成本管控纪律（v1.6 新增，全文见 protocol.md §14）
+
+- **按节点加载上下文**（§14.1）：precheck/milestone/review 三节点各自独立上下文，切换节点即清空；仅从 kb 检索本节点所需（任务卡 + 本节点反馈卡 + 相关 summary）
+- **滚动窗口**（§14.2）：上下文仅保留近 3 轮原文（当前轮 + 前 2 轮）；更早轮次只留 summary，需要时 `search_memory` 检索召回，不堆对话历史（与下方 token 纪律同向）
+- **增量沉淀**（§14.4）：每 2 轮（或节点结束/中断时）把关键结论写 summary（tag=summary，含来源轮次）；决策/参数/验收标准/阻塞点四类保留标签强制不压缩；摘要后回读校验，缺失重生成（最多 1 次）
+- **中断续做**（§14.4）：唤醒续做 claimed 卡时先读该卡的 summary，从摘要续做，不依赖对话历史
 
 ## 分发流程
 
