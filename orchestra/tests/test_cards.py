@@ -361,3 +361,56 @@ class TestDocs:
         cards.cmd_verify("TASK-0007", action="reject", note="文档未同步")
         patch = [c for c in mock_request.calls if c[0] == "PATCH"][0]
         assert patch[2]["content"].startswith("TASK-0007 pending worker-2")
+
+
+class TestPendingCount:
+    """cmd_pending_count：统计各状态卡数，一行输出（TASK-0043）。"""
+
+    def test_pending_count_各状态计数正确(self, mock_request, capsys):
+        import cards
+        cards_list = [
+            _card("TASK-0001 pending worker-1 | 卡1"),
+            _card("TASK-0002 pending worker-2 | 卡2"),
+            _card("TASK-0003 pending worker-3 | 卡3"),
+            _card("TASK-0004 claimed worker-1 | 卡4"),
+            _card("TASK-0005 claimed worker-2 | 卡5"),
+            _card("TASK-0006 done worker-1 | 卡6"),
+            _card("TASK-0007 verified worker-1 | 卡7"),
+            _card("TASK-0008 verified worker-2 | 卡8"),
+            _card("TASK-0009 failed worker-1 | 卡9"),
+        ]
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": cards_list, "total": len(cards_list)}
+        cards.cmd_pending_count()
+        out = capsys.readouterr().out.strip()
+        assert out == "pending:3 claimed:2 done:1 verified:2 failed:1"
+
+    def test_pending_count_空板返回全零(self, mock_request, capsys):
+        import cards
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [], "total": 0}
+        cards.cmd_pending_count()
+        out = capsys.readouterr().out.strip()
+        assert out == "pending:0 claimed:0 done:0 verified:0 failed:0"
+
+    def test_pending_count_非法首行跳过(self, mock_request, capsys):
+        import cards
+        cards_list = [
+            _card("TASK-0001 pending worker-1 | 卡1"),
+            _card("这不是一张任务卡"),  # 非法首行
+            _card("TASK-0002 done worker-1 | 卡2"),
+        ]
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": cards_list, "total": len(cards_list)}
+        cards.cmd_pending_count()
+        out = capsys.readouterr().out.strip()
+        assert out == "pending:1 claimed:0 done:1 verified:0 failed:0"
+
+    def test_pending_count_纯只读不改卡(self, mock_request):
+        import cards
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [_card("TASK-0001 pending worker-1 | 卡1")], "total": 1}
+        cards.cmd_pending_count()
+        # 仅发 GET 请求，无 PATCH/POST
+        methods = [c[0] for c in mock_request.calls]
+        assert methods == ["GET"]

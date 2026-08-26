@@ -1,17 +1,17 @@
 # agent-orchestra 协议总纲
 
-版本：v1.5（2026-08-26，skill 化双 skill 节）｜ v1.4（2026-08-26，反馈节点）｜ v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
+版本：v1.5（2026-08-26，skill 化双 skill 节 + 调度监测/designer 拆卡）｜ v1.4（2026-08-26，反馈节点）｜ v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
 
 ## 1. 角色
 
 | 角色 | 载体 | 职责 |
 |---|---|---|
 | 用户 | 人 | 发起需求、开 worker 任务、终验 |
-| 协调者 | 一个 TraeWork 任务 | 拆卡、分发、核验、打回、合并分支、重启服务 |
-| 设计者 | 一个 TraeWork 任务 | 写设计书与验收测试草案、评审交付；**不写业务实现代码**（协议见 designer-prompt.md，2026-08-24 用户提前激活三角色编制） |
+| 协调者 | 一个 TraeWork 任务 | 分发、核验、打回、合并分支、重启服务、仲裁（v1.5 起不再拆卡，拆卡归设计者） |
+| 设计者 | 一个 TraeWork 任务 | 写设计书与验收测试草案、评审交付、**拆卡**（从 ROADMAP 待办拆细卡直接入 pending 池，见 §13）；**不写业务实现代码**（协议见 designer-prompt.md） |
 | worker | 其他 TraeWork 任务（任意模型） | 领卡、执行、回写 |
 
-> 三角色编制（协调者→设计者→workers）2026-08-24 生效。设计者拆技术方案定验收，协调者只管调度/合并/重启/汇报。
+> 三角色编制（协调者→设计者→workers）2026-08-24 生效。设计者拆技术方案、定验收、拆细卡；协调者管核验/合并/重启/汇报与仲裁（v1.5 起拆卡由设计者承担，协调者不再拆卡）。
 
 ## 2. 任务卡
 
@@ -71,6 +71,7 @@ worker 有权把**重要过程信息**写入 kb 供其他 agent 检索（用现�
 | `comm:test` | 待测试项 / 测试结果 |
 | `comm:system` | 系统级事件（重启/环境变更，协调者专用） |
 | `comm:feedback` | 反馈节点结论（异议/风险/澄清的裁决结果，B2） |
+| `comm:dispatch` | DispatchAgent 监测播报（卡池告急/claimed 滞留/done 积压/反馈悬置，v1.5） |
 
 纪律：交流窗只写**结论级**信息（≤300 字符），不写过程流水账；与任务卡重复的信息只进卡不进窗。
 
@@ -138,3 +139,34 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 - SKILL.md 只含 frontmatter（name/description）+ 精简上岗流程与硬纪律；详细规则一律以对应规约文件为准（正文指向它，不复制大段）
 - 规约更新后需同步修订对应 SKILL.md 并重装副本（仓库版与安装副本保持逐字一致）
 - 对外协作接口零变化：skill 仅是唤醒入口，任务卡/分支/交流窗/反馈机制照旧
+
+## 13. 调度监测与 designer 拆卡（v1.5 新增）
+
+### 13.1 三层反馈闭环
+
+| 层 | 载体 | 职责 | 节奏 |
+|---|---|---|---|
+| 监测层 | DispatchAgent（qwen3:4b，寄生 kb serve） | 只监测播报，不做派发决策；跑四条异常检测规则，异常写 `comm:dispatch` | 每 5 分钟 |
+| 执行层 | 常驻协调者循环（`coordinator_loop.py`） | 自动核验 done 卡（open FBK 检查→merge→pytest→verify→push→清理）；failed 打回 pending | 每 60 秒 |
+| 裁决层 | 主协调者对话 AI（面向用户） | 深度核查、异常处置决策、合并冲突/测试失败仲裁、重启审批 | 人工唤醒 |
+
+- DispatchAgent 复用 `kb/monitor.py` 快照（`build_snapshot`）+ `_detect_anomalies` 纯函数；强制本地 qwen3:4b，不路由云端，不直接改任务板状态
+- 协调者循环不拆卡（卡池告急时由 DispatchAgent 播报，designer 补卡）
+
+### 13.2 四条检测规则（`_detect_anomalies`）
+
+| 规则 | 触发条件 | 输出 type |
+|---|---|---|
+| 卡池告急 | pending 卡数 < 2 | `pool_low` |
+| claimed 滞留 | claimed 卡超 30 分钟未更新（按 `updated_at`） | `claimed_stale` |
+| done 积压 | done 卡超 5 分钟未核验（协调者循环可能挂了） | `verify_backlog` |
+| 反馈悬置 | open FBK 超 10 分钟无人裁决 | `fbk_pending` |
+
+每条异常输出结构化 dict：`{type, task_id, detail}`；无异常返回空列表。纯函数不调 LLM/HTTP。
+
+### 13.3 designer 拆卡职责
+
+- designer 职责从"预审"扩展为"预审 + 拆卡"：从 ROADMAP 待办（叶子节点）拆成可执行细卡，直接写入 pending 池（`board.py add`）
+- 拆卡粒度：一卡一任务、五字段齐、并行卡零文件交集（同 coordinator-prompt 拆卡原则）
+- 安全兜底：拆出的卡靠 precheck 预审（§11）+ 协调者循环自动测试双保险；有问题走反馈卡 objection/risk
+- designer 仍不写业务实现代码；拆卡是设计职责的延伸

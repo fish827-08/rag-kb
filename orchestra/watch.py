@@ -37,19 +37,11 @@ def _watch_frame(include_comm: bool = False) -> str:
             lines.append(f"{data.get('worker', '?')} {data.get('model', '?')} "
                          f"{data.get('status', '?')} "
                          f"{data.get('last_seen', '?')}")
-    # 任务卡段（TASK 状态 assignee HH:MM 标题）
-    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
-    for card in cards:
-        try:
-            h = parse_header(card["content"])
-        except ValueError:
-            continue
-        lines.append(f"{h['task_id']} {h['status']} {h['assignee']} "
-                     f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
-    # open 反馈卡段（B2/TASK-0035：列出全部 open 状态 FBK 卡；无 open 不显示该段）
+    # 反馈卡数据（一次取数两用：任务卡段标注 open 数 + open 反馈卡段渲染）
     fbks = _request("GET", f"/memories?tag={FEEDBACK_TAG}&limit=1000") \
         .get("items", [])
     open_fbks = []
+    open_counts: dict[str, int] = {}   # TASK-NNNN → 该卡 open FBK 数
     for card in fbks:
         try:
             h = parse_fbk_header(card["content"])
@@ -57,6 +49,21 @@ def _watch_frame(include_comm: bool = False) -> str:
             continue
         if parse_fbk_result(card["content"]) == "open":
             open_fbks.append((h, card))
+            open_counts[h["task_id"]] = open_counts.get(h["task_id"], 0) + 1
+    # 任务卡段（TASK 状态 assignee HH:MM 标题 [FBK:N]；无 open 反馈不显示标注）
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+        except ValueError:
+            continue
+        line = (f"{h['task_id']} {h['status']} {h['assignee']} "
+                f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
+        n = open_counts.get(h["task_id"], 0)
+        if n:
+            line += f" [FBK:{n}]"
+        lines.append(line)
+    # open 反馈卡段（B2/TASK-0035：列出全部 open 状态 FBK 卡；无 open 不显示该段）
     if open_fbks:
         lines.append("-- 反馈卡(open) --")
         for h, card in open_fbks:

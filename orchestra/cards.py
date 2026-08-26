@@ -128,6 +128,25 @@ def cmd_list_pending() -> None:
         print("无待办任务卡")
 
 
+def cmd_pending_count() -> None:
+    """统计任务板各状态卡数，一行输出（如 pending:3 claimed:2 done:1 verified:30 failed:1）。
+
+    纯只读统计，不改卡；空板返回全零；非法首行记录跳过不计数。
+    输出格式固定顺序、空格分隔，便于 shell 解析。
+    """
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    counts = {"pending": 0, "claimed": 0, "done": 0, "verified": 0, "failed": 0}
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+        except ValueError:
+            continue  # 非法首行跳过，不参与计数
+        status = h["status"]
+        if status in counts:
+            counts[status] += 1
+    print(" ".join(f"{k}:{v}" for k, v in counts.items()))
+
+
 def cmd_add(assignee: str, title: str, goal: str, input_: str,
             constraints: str, acceptance: str, docs: str = "") -> None:
     """创建任务卡（pending）；字段超长抛 ValueError。

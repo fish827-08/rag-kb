@@ -61,9 +61,47 @@ def cmd_worktree_enter(task_id: str, repo=None) -> None:
     print(str(wt))
 
 
-def cmd_worktree_clean(task_id: str, repo=None) -> None:
-    """删除任务卡 worktree，目录无残留（可再 setup 重建）。"""
+def cmd_worktree_clean(task_id: str = "", repo=None, all_: bool = False) -> None:
+    """删除任务卡 worktree，目录无残留（可再 setup 重建）。
+
+    --all 模式（TASK-0042）：扫描 .worktrees/ 下所有目录批量清理，
+    逐个 git worktree remove --force，非原子（一个失败不影响其他），
+    清理前安全提示列出将清理的目录；无目录时明确提示。
+    无 --all 时保持单卡清理行为（需指定 task_id）。
+    """
     base = Path(repo) if repo else REPO_ROOT
+    wt_root = base / ".worktrees"
+    if all_:
+        if not wt_root.exists() or not any(wt_root.iterdir()):
+            print("无 worktree 目录可清理")
+            return
+        targets = sorted([d for d in wt_root.iterdir() if d.is_dir()])
+        print(f"将批量清理 {len(targets)} 个 worktree：")
+        for t in targets:
+            print(f"  - {t}")
+        success = 0
+        failed = 0
+        for t in targets:
+            r = subprocess.run(
+                ["git", "-C", str(base), "worktree", "remove", "--force", str(t)],
+                capture_output=True, text=True)
+            if r.returncode == 0:
+                print(f"已清理：{t}")
+                success += 1
+            else:
+                print(f"清理失败（跳过）：{t} — {r.stderr.strip()}")
+                failed += 1
+            # 兜底：非 git worktree 的脏目录残留时 rmdir 清掉
+            if t.exists():
+                try:
+                    t.rmdir()
+                except OSError:
+                    pass
+        print(f"批量清理完成：成功 {success}，失败 {failed}")
+        return
+    # 单卡模式
+    if not task_id:
+        raise ValueError("单卡清理需指定 task_id，或使用 --all 批量清理")
     wt = _wt_dir(task_id, base)
     if not wt.exists():
         print(f"worktree 不存在：{wt}（无需清理）")

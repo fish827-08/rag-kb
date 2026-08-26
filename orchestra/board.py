@@ -12,7 +12,7 @@ import sys
 
 from client import BoardUnavailable
 from cards import (cmd_add, cmd_claim, cmd_list_pending, cmd_new_worker,
-                   cmd_show, cmd_status, cmd_verify)
+                   cmd_pending_count, cmd_show, cmd_status, cmd_verify)
 from comm import COMM_CHANNELS, cmd_list_comm, cmd_report
 from feedback import TYPES, cmd_fbk_add, cmd_fbk_list, cmd_fbk_show, cmd_fbk_decide
 from registry import cmd_register, cmd_workers
@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, help_ in (("status", "一行一卡看板"),
                         ("list-pending", "只列待办卡"),
+                        ("pending-count", "统计各状态卡数（一行输出）"),
                         ("workers", "一行一 worker 列表")):
         sub.add_parser(name, help=help_)
 
@@ -91,9 +92,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_wt = sub.add_parser("worktree", help="git worktree 隔离（TASK-0025）")
     p_wt.add_argument("action", choices=["setup", "enter", "clean"],
                       help="setup 建隔离目录 / enter 打印进入路径 / clean 清理")
-    p_wt.add_argument("task_id", help="任务卡号，如 TASK-0025")
+    p_wt.add_argument("task_id", nargs="?", default="",
+                      help="任务卡号，如 TASK-0025（clean --all 时可省略）")
     p_wt.add_argument("--repo", default=None,
                       help="仓库根（默认自动探测；测试注入用）")
+    p_wt.add_argument("--all", dest="all_", action="store_true",
+                      help="clean 时批量清理所有 worktree（非原子，逐个失败不影响其他）")
 
     p_fb = sub.add_parser("feedback", help="B2 反馈卡（add/list/show）")
     fb_sub = p_fb.add_subparsers(dest="fb_action", required=True)
@@ -136,6 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
 _DISPATCH = {
     "status": lambda a: cmd_status(),
     "list-pending": lambda a: cmd_list_pending(),
+    "pending-count": lambda a: cmd_pending_count(),
     "workers": lambda a: cmd_workers(),
     "add": lambda a: cmd_add(assignee=a.assignee, title=a.title, goal=a.goal,
                              input_=a.input, constraints=a.constraints,
@@ -154,7 +159,7 @@ _DISPATCH = {
     "worktree": {
         "setup": lambda a: cmd_worktree_setup(a.task_id, repo=a.repo),
         "enter": lambda a: cmd_worktree_enter(a.task_id, repo=a.repo),
-        "clean": lambda a: cmd_worktree_clean(a.task_id, repo=a.repo),
+        "clean": lambda a: cmd_worktree_clean(a.task_id, repo=a.repo, all_=a.all_),
     },
     "feedback": {
         "add": lambda a: cmd_fbk_add(proposer=a.proposer, task_id=a.task_id,

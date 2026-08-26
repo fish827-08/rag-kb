@@ -142,3 +142,50 @@ class TestWatch:
         watch.cmd_watch(interval=5, comm=False, once=True)
         out = capsys.readouterr().out
         assert "反馈卡" not in out
+
+    # ---- TASK-0039：任务卡行附 open FBK 数 ----
+    def test_watch_卡行附open反馈数(self, mock_request, capsys):
+        """有 open FBK 的任务卡行末尾显示 [FBK:N]（按目标卡聚合）。"""
+        import watch
+        mock_request.responses["GET /memories?tag=registry&limit=1000"] = {
+            "items": [], "total": 0}
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [
+                _card("TASK-0026 pending worker-2 | 有反馈的卡\n目标：x"),
+                _card("TASK-0027 pending worker-3 | 无反馈的卡\n目标：y"),
+            ], "total": 2}
+        fbk1 = ("FBK-0001 feedback TASK-0026 | objection precheck\n"
+                "提出者：designer-1\n目标卡：TASK-0026\n"
+                "类型：objection\n节点：precheck\n摘要：缺验收测试\n"
+                "替代方案：补黑盒用例\n结果：open")
+        fbk2 = ("FBK-0002 feedback TASK-0026 | risk milestone\n"
+                "提出者：worker-1\n目标卡：TASK-0026\n"
+                "类型：risk\n节点：milestone\n摘要：OOM\n"
+                "阻塞点/影响面：阻塞合入\n结果：open")
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {
+            "items": [_fbk(fbk1), _fbk(fbk2)], "total": 2}
+        watch.cmd_watch(interval=5, comm=False, once=True)
+        out = capsys.readouterr().out
+        assert "TASK-0026 pending worker-2 12:30 有反馈的卡 [FBK:2]" in out
+
+    def test_watch_卡行无open反馈时不显示标注(self, mock_request, capsys):
+        """无 open FBK（或 FBK 均已 closed）的任务卡行不带 [FBK: 标注。"""
+        import watch
+        mock_request.responses["GET /memories?tag=registry&limit=1000"] = {
+            "items": [], "total": 0}
+        mock_request.responses["GET /memories?tag=taskboard&limit=1000"] = {
+            "items": [
+                _card("TASK-0027 pending worker-3 | 全closed的卡\n目标：y"),
+                _card("TASK-0028 pending worker-4 | 零反馈的卡\n目标：z"),
+            ], "total": 2}
+        fbk_closed = ("FBK-0003 feedback TASK-0027 | risk milestone\n"
+                      "提出者：worker-1\n目标卡：TASK-0027\n"
+                      "类型：risk\n节点：milestone\n摘要：OOM\n"
+                      "阻塞点/影响面：阻塞合入\n结果：accepted")
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {
+            "items": [_fbk(fbk_closed)], "total": 1}
+        watch.cmd_watch(interval=5, comm=False, once=True)
+        out = capsys.readouterr().out
+        assert "TASK-0027 pending worker-3 12:30 全closed的卡" in out
+        assert "TASK-0028 pending worker-4 12:30 零反馈的卡" in out
+        assert "[FBK:" not in out  # 两行均不应出现标注

@@ -85,3 +85,75 @@ def test_setup_分支不存在报错(tmp_path):
     repo = _init_repo(tmp_path)
     with pytest.raises(ValueError, match="不存在"):
         worktree.cmd_worktree_setup("TASK-0000", repo=repo)
+
+
+def _init_multi_branch_repo(tmp_path: Path) -> Path:
+    """初始化 git 仓库并建多个 task 分支（TASK-1001/1002/1003），供 --all 批量清理测试。"""
+    repo = _init_repo(tmp_path)
+    for branch in ("task/TASK-1001", "task/TASK-1002", "task/TASK-1003"):
+        subprocess.run(["git", "-C", str(repo), "branch", branch],
+                       capture_output=True, check=True)
+    return repo
+
+
+class TestCleanAll:
+    """cmd_worktree_clean --all 批量清理（TASK-0042）。"""
+
+    def test_clean_all_批量清理多个目录(self, tmp_path, capsys):
+        import worktree
+        repo = _init_multi_branch_repo(tmp_path)
+        for tid in ("TASK-1001", "TASK-1002", "TASK-1003"):
+            worktree.cmd_worktree_setup(tid, repo=repo)
+        wt_root = repo / ".worktrees"
+        assert len(list(wt_root.iterdir())) == 3
+        capsys.readouterr()
+        worktree.cmd_worktree_clean(repo=repo, all_=True)
+        out = capsys.readouterr().out
+        assert "将批量清理 3 个 worktree" in out
+        assert "批量清理完成：成功 3，失败 0" in out
+        assert not any(wt_root.iterdir())
+
+    def test_clean_all_无目录时提示(self, tmp_path, capsys):
+        import worktree
+        repo = _init_repo(tmp_path)
+        worktree.cmd_worktree_clean(repo=repo, all_=True)
+        out = capsys.readouterr().out
+        assert "无 worktree 目录可清理" in out
+
+    def test_clean_all_空目录时提示(self, tmp_path, capsys):
+        import worktree
+        repo = _init_repo(tmp_path)
+        (repo / ".worktrees").mkdir()
+        worktree.cmd_worktree_clean(repo=repo, all_=True)
+        out = capsys.readouterr().out
+        assert "无 worktree 目录可清理" in out
+
+    def test_clean_all_单卡模式不受影响(self, tmp_path):
+        import worktree
+        repo = _init_repo(tmp_path)
+        with pytest.raises(ValueError, match="单卡清理需指定 task_id"):
+            worktree.cmd_worktree_clean(repo=repo, all_=False)
+
+    def test_clean_all_非原子一个失败不影响其他(self, tmp_path, capsys, monkeypatch):
+        import worktree
+        repo = _init_multi_branch_repo(tmp_path)
+        for tid in ("TASK-1001", "TASK-1002"):
+            worktree.cmd_worktree_setup(tid, repo=repo)
+        capsys.readouterr()
+        real_run = subprocess.run
+
+        def fake_run(args, **kwargs):
+            if "TASK-1001" in str(args):
+                class FakeResult:
+                    returncode = 1
+                    stderr = "simulated failure"
+                return FakeResult()
+            return real_run(args, **kwargs)
+        monkeypatch.setattr(worktree.subprocess, "run", fake_run)
+        worktree.cmd_worktree_clean(repo=repo, all_=True)
+        out = capsys.readouterr().out
+        assert "清理失败（跳过）" in out
+        assert "批量清理完成：成功 1，失败 1" in out
+        remaining = [d.name for d in (repo / ".worktrees").iterdir() if d.is_dir()]
+        assert "TASK-1001" in remaining
+        assert "TASK-1002" not in remaining
