@@ -34,13 +34,29 @@
 
 ## 交流窗
 
-完成重要产出或发现值得全员知道的风险/结论时，用 `write_memory` 写一条（标签以 `comm:` 开头：done/issue/test）：
+完成重要产出或发现值得全员知道的风险/结论时，用 `write_memory` 写一条（标签以 `comm:` 开头：done/issue/test/feedback）：
 内容 ≤300 字符，只写结论（谁/哪张卡/产出物路径/影响面），不写过程流水。
 
 消息模板（2026-08-26 起，统一格式；正文不重复写频道名）：
 - `comm:done`：`完成 TASK-NNNN <标题>：<关键产出> @<分支哈希>`
 - `comm:issue`：`TASK-NNNN <标题>：<问题与影响面>；<求助/建议>`
 - `comm:test`：`TASK-NNNN <标题>：<测试项与结果>`
+- `comm:feedback`：`TASK-NNNN <标题>：<objection|risk|clarify> <precheck|milestone|review>：<结论>`
+
+## 反馈节点（B2，v1.4）
+
+在三个节点可对目标卡发反馈（`write_memory`，tag=feedback，正文按模板）：
+- 执行前预审 precheck：发现设计/验收有问题 → objection（必附替代方案）或 clarify
+- 执行中里程碑 milestone：遇到阻塞/风险 → risk（必附阻塞点+影响面），阻塞当前节点
+- 完成后复盘 review：复盘结论沉淀（不计配额）
+
+反馈模板（可照抄，正文不写频道名）：
+- objection：`TASK-NNNN <标题> objection precheck：<异议摘要>；替代方案：<...>`
+- risk：`TASK-NNNN <标题> risk milestone：<阻塞点>；影响面：<...>`
+- clarify：`TASK-NNNN <标题> clarify precheck：<澄清问题>`
+
+铁律：objection 必须附替代方案，否则直接驳回；单任务反馈总轮次 ≤5（precheck/milestone 各 ≤2）；
+目标卡有 open 反馈时不得 verified。
 
 ## 纪律
 
