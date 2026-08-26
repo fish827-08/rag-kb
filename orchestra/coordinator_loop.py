@@ -91,14 +91,24 @@ def _auto_verify_done(task_id, assignee, title):
     branch = f"task/{task_id}"
     rc, out = _run(["git", "rev-parse", "--verify", branch])
     if rc != 0:
-        # 无分支卡（直接在 main 提交的）：跑测试 → verify
+        # 无分支卡（直接在主工作区改的）：跑测试 → 补提交 → verify
+        # 漏 commit 修复（15f879d 前车之鉴）：worker 共享区改动必须落 main
         rc, out = _run(PY + ["-m", "pytest", "orchestra/tests/", "-q"],
                        timeout=180)
         if rc != 0:
             _verify(task_id, "reject", f"自动核验：测试失败（{rc}）")
             return f"{task_id} 打回（测试失败）"
+        rc, out = _run(["git", "status", "--porcelain"])
+        if out:  # 有未提交改动才补提交
+            _run(["git", "add", "-A"])
+            rc, out = _run(["git", "commit", "-m",
+                            f"orchestra: {task_id} {title}（自动核验补提交）"])
+            if rc != 0:
+                return f"{task_id} 补提交失败：{out}"
+            _run(["git", "push", "origin", "main"], timeout=60)
+            steps.append("已补提交")
         _verify(task_id, "pass", "自动核验：测试全绿")
-        return f"{task_id} ✅ 测试全绿/verified（无分支已在 main）"
+        return f"{task_id} ✅ 测试全绿/verified{'/'.join('/' + s for s in steps)}（无分支）"
 
     # 3. merge --no-ff（自动提交到 main）
     rc, out = _run(["git", "merge", "--no-ff", branch, "-m",
