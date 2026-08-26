@@ -11,3 +11,5 @@ models/
 logs/
 # orchestra worktree 隔离目录（TASK-0025）
 .worktrees/
+# orchestra 协调者循环临时快照（TASK-0061）
+.kb_tmp/

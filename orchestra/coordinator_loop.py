@@ -8,10 +8,13 @@
 3. failed 卡：verify --reject 回 pending
 4. 无 done/failed 时空转
 5. 每轮结果写 comm:system（≤300 字符）
+6. TASK-0061：每轮对比快照检测新 open FBK，写 comm:system 广播
+   'FBK-NNNN open 待裁决（TASK-XXXX/类型）'（快照存 .kb_tmp/，勿入 git）
 
 Ctrl+C 干净退出。
 不拆卡（卡用完时 comm:system 通知用户来建新卡）。
 """
+import json
 import re
 import subprocess
 import sys
@@ -22,6 +25,8 @@ REPO = Path(__file__).resolve().parent.parent
 PY = [str(REPO / "venv" / "Scripts" / "python.exe")]
 BOARD = PY + [str(REPO / "orchestra" / "board.py")]
 INTERVAL = 60  # 秒
+# open FBK 快照（TASK-0061）：记录上一轮见过的 open FBK-ID 集合
+SNAPSHOT = REPO / ".kb_tmp" / "fbk_snapshot.json"
 
 
 def _run(cmd, cwd=REPO, timeout=120):
@@ -63,6 +68,56 @@ def _has_open_fbk(task_id):
         if task_id in line and " open " in line:
             return True
     return False
+
+
+def _list_open_fbks():
+    """解析 board feedback list 输出，返回 [(fbk_id, task_id, fb_type)]。
+
+    行格式：FBK-0001 open TASK-0026 objection precheck 22:00 摘要
+    仅取 open 状态行；命令失败/无输出返回空列表（广播缺轮，下轮补上）。
+    """
+    rc, out = _run(BOARD + ["feedback", "list"])
+    if rc != 0:
+        return []
+    fbks = []
+    for line in out.splitlines():
+        m = re.match(r"(FBK-\d+)\s+open\s+(TASK-\d+)\s+(\S+)", line)
+        if m:
+            fbks.append(m.groups())
+    return fbks
+
+
+def _broadcast_new_fbks(snapshot_path=None):
+    """对比上一轮快照，新出现的 open FBK 写 comm:system 广播（TASK-0061）。
+
+    快照记录上一轮的 open FBK-ID 集合，每轮更新为当前集合：
+    - 新增 → 逐条广播 'FBK-NNNN open 待裁决（TASK-XXXX/类型）'
+    - 已见过的 → 不重复广播（避免刷屏）
+    - 关闭的 → 移出快照（之后再 open 会视为新事件重新广播）
+    返回本轮新广播的 [(fbk_id, task_id, fb_type)]。
+    """
+    path = Path(snapshot_path) if snapshot_path else SNAPSHOT
+    current = _list_open_fbks()
+    prev = set()
+    if path.exists():
+        try:
+            prev = set(json.loads(path.read_text(encoding="utf-8")))
+        except (ValueError, OSError):
+            prev = set()  # 快照损坏时按空快照处理（宁可多广播一次）
+    new = [f for f in current if f[0] not in prev]
+    for fbk_id, task_id, fb_type in new:
+        msg = f"FBK 广播：{fbk_id} open 待裁决（{task_id}/{fb_type}）"
+        _comm_system(msg)
+        print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+    # 快照更新为当前 open 集合（目录不存在时自动创建）
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(sorted(f[0] for f in current),
+                                    ensure_ascii=False),
+                        encoding="utf-8")
+    except OSError as e:
+        print(f"[警告] 快照写入失败：{e}")
+    return new
 
 
 def _verify(task_id, action, note=""):
@@ -188,6 +243,8 @@ def main():
     try:
         while True:
             t = time.strftime("%H:%M:%S")
+            # TASK-0061：每轮先检测新 open FBK 并广播（空转轮也检测）
+            _broadcast_new_fbks()
             done, failed, raw = _parse_status()
             if not done and not failed:
                 # 空转时只打印一行心跳
