@@ -1,5 +1,11 @@
 import os
+import sys
+from pathlib import Path
+
 import pytest
+
+# 仓库根加入 sys.path（对齐 kb serve 运行时工作目录，使 orchestra.b3 等可 import）
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 # 全部测试统一使用小模型，避免下载 2GB 的 BGE-M3
