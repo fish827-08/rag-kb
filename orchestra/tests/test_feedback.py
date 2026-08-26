@@ -1,4 +1,4 @@
-"""feedback.py 单测（TASK-0032：B2 反馈卡）。
+﻿"""feedback.py 单测（TASK-0032：B2 反馈卡）。
 
 覆盖：字段校验（三类型必附字段/长度/枚举）、状态机（open→accepted/rejected）、
 编号递增、add/list/show 命令与 CLI 分发。
@@ -226,3 +226,157 @@ class TestBoardDispatch:
         with pytest.raises(SystemExit) as ei:
             board.main()
         assert ei.value.code == 1
+
+
+# ---- TASK-0033：配额门禁 + decide ----
+def _make_fbk(fbk_id, task_id, fb_type, stage, result="open"):
+    """构造一条反馈卡记录（content 含完整字段）。"""
+    import feedback
+    content = feedback.render_fbk(
+        fbk_id, proposer="designer-1", task_id=task_id,
+        fb_type=fb_type, stage=stage, summary="s",
+        alt="a" if fb_type == "objection" else "",
+        impact="i" if fb_type == "risk" else "",
+        question="q" if fb_type == "clarify" else "",
+        result=result)
+    return {"id": fbk_id.lower(), "content": content, "tags": ["feedback"]}
+
+
+class TestQuota:
+    """分节点配额硬门禁（B2 §3：precheck 2 / milestone 2 / 总 5 / review 不计）。"""
+
+    def test_count_按节点统计(self):
+        import feedback
+        cards = [
+            _make_fbk("FBK-0001", "TASK-0026", "objection", "precheck"),
+            _make_fbk("FBK-0002", "TASK-0026", "risk", "precheck"),
+            _make_fbk("FBK-0003", "TASK-0026", "clarify", "milestone"),
+            _make_fbk("FBK-0004", "TASK-0026", "objection", "review"),
+            _make_fbk("FBK-0005", "TASK-0099", "objection", "precheck"),  # 其他任务不计
+        ]
+        c = feedback.count_task_feedback("TASK-0026", cards)
+        assert c["precheck"] == 2
+        assert c["milestone"] == 1
+        assert c["review"] == 1
+        assert c["total"] == 4
+
+    def test_check_quota_precheck第3轮拒绝提示仲裁(self):
+        import feedback
+        cards = [_make_fbk("FBK-0001", "TASK-0026", "objection", "precheck"),
+                 _make_fbk("FBK-0002", "TASK-0026", "risk", "precheck")]
+        with pytest.raises(ValueError, match="仲裁"):
+            feedback.check_quota("TASK-0026", "precheck", cards)
+
+    def test_check_quota_milestone第3轮拒绝(self):
+        import feedback
+        cards = [_make_fbk("FBK-0001", "TASK-0026", "clarify", "milestone"),
+                 _make_fbk("FBK-0002", "TASK-0026", "risk", "milestone")]
+        with pytest.raises(ValueError, match="仲裁"):
+            feedback.check_quota("TASK-0026", "milestone", cards)
+
+    def test_check_quota总第6轮拒绝(self):
+        import feedback
+        # precheck 2 + milestone 2 + review 1 = 5，再加任意节点触发总上限
+        cards = [
+            _make_fbk("FBK-0001", "TASK-0026", "objection", "precheck"),
+            _make_fbk("FBK-0002", "TASK-0026", "risk", "precheck"),
+            _make_fbk("FBK-0003", "TASK-0026", "clarify", "milestone"),
+            _make_fbk("FBK-0004", "TASK-0026", "objection", "milestone"),
+            _make_fbk("FBK-0005", "TASK-0026", "clarify", "review"),
+        ]
+        with pytest.raises(ValueError, match="仲裁"):
+            feedback.check_quota("TASK-0026", "precheck", cards)
+
+    def test_check_quota_review不计配额(self):
+        import feedback
+        # review 节点即使已有多条也不拒绝（沉淀性）
+        cards = [_make_fbk(f"FBK-000{i}", "TASK-0026", "clarify", "review") for i in range(1, 6)]
+        feedback.check_quota("TASK-0026", "review", cards)  # 不抛异常
+
+    def test_check_quota未超限通过(self):
+        import feedback
+        cards = [_make_fbk("FBK-0001", "TASK-0026", "objection", "precheck")]
+        feedback.check_quota("TASK-0026", "precheck", cards)  # 不抛异常
+
+
+class TestAddQuota:
+    """cmd_fbk_add 集成配额门禁：超限拒绝新卡且不发请求。"""
+
+    def test_add_precheck超限拒绝不发请求(self, mock_request):
+        import feedback
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {
+            "items": [_make_fbk("FBK-0001", "TASK-0026", "objection", "precheck"),
+                      _make_fbk("FBK-0002", "TASK-0026", "risk", "precheck")]}
+        with pytest.raises(ValueError, match="仲裁"):
+            feedback.cmd_fbk_add(proposer="designer-1", task_id="TASK-0026",
+                                 fb_type="clarify", stage="precheck",
+                                 summary="s", question="q")
+        # 仅发了 GET 统计请求，未发 POST 创建
+        methods = [c[0] for c in mock_request.calls]
+        assert "POST" not in methods
+
+
+class TestDecide:
+    """cmd_fbk_decide：open→accepted/rejected + comm:feedback 归档。"""
+
+    def test_decide_open到accepted(self, mock_request, capsys):
+        import feedback
+        fbk = _make_fbk("FBK-0001", "TASK-0026", "objection", "precheck", result="open")
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {"items": [fbk]}
+        mock_request.responses["PATCH /memories/fbk-0001"] = fbk
+        mock_request.responses["POST /memories"] = {"id": "comm1"}
+        feedback.cmd_fbk_decide("FBK-0001", "accepted", note="方案合理", decider="coordinator")
+        # PATCH 内容结果字段已改 accepted
+        patch = [c for c in mock_request.calls if c[0] == "PATCH"][0]
+        assert "结果：accepted" in patch[2]["content"]
+        # comm:feedback 已写
+        post = [c for c in mock_request.calls if c[0] == "POST"][0]
+        assert post[2]["tags"] == ["comm:feedback"]
+        assert "FBK-0001" in post[2]["content"]
+        assert "accepted" in post[2]["content"]
+
+    def test_decide_open到rejected(self, mock_request):
+        import feedback
+        fbk = _make_fbk("FBK-0001", "TASK-0026", "objection", "precheck", result="open")
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {"items": [fbk]}
+        mock_request.responses["PATCH /memories/fbk-0001"] = fbk
+        mock_request.responses["POST /memories"] = {"id": "comm1"}
+        feedback.cmd_fbk_decide("FBK-0001", "rejected", note="无替代方案")
+        patch = [c for c in mock_request.calls if c[0] == "PATCH"][0]
+        assert "结果：rejected" in patch[2]["content"]
+
+    def test_decide非open拒绝不改卡(self, mock_request):
+        import feedback
+        fbk = _make_fbk("FBK-0001", "TASK-0026", "objection", "precheck", result="accepted")
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {"items": [fbk]}
+        with pytest.raises(ValueError):
+            feedback.cmd_fbk_decide("FBK-0001", "rejected")
+        # 未发 PATCH / POST
+        methods = [c[0] for c in mock_request.calls]
+        assert "PATCH" not in methods
+        assert "POST" not in methods
+
+    def test_decide_comm_feedback不超300字符(self, mock_request):
+        import feedback
+        fbk = _make_fbk("FBK-0001", "TASK-0026", "objection", "precheck", result="open")
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {"items": [fbk]}
+        mock_request.responses["PATCH /memories/fbk-0001"] = fbk
+        mock_request.responses["POST /memories"] = {"id": "comm1"}
+        feedback.cmd_fbk_decide("FBK-0001", "accepted",
+                                 note="x" * 500, decider="coordinator")
+        post = [c for c in mock_request.calls if c[0] == "POST"][0]
+        assert len(post[2]["content"]) <= 300
+
+    def test_main_feedback_decide分发(self, mock_request, monkeypatch, capsys):
+        import sys
+        import board
+        fbk = _make_fbk("FBK-0001", "TASK-0026", "objection", "precheck", result="open")
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {"items": [fbk]}
+        mock_request.responses["PATCH /memories/fbk-0001"] = fbk
+        mock_request.responses["POST /memories"] = {"id": "comm1"}
+        monkeypatch.setattr(
+            sys, "argv",
+            ["board.py", "feedback", "decide", "FBK-0001", "--accepted", "--note", "ok"])
+        board.main()
+        patch = [c for c in mock_request.calls if c[0] == "PATCH"][0]
+        assert "结果：accepted" in patch[2]["content"]
