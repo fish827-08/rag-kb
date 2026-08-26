@@ -1,21 +1,27 @@
-"""orchestra 卡片纯函数模块（TASK-0029 包化②：从 board.py 机械拆出）。
+"""orchestra 任务卡模块（TASK-0029 拆出纯函数；TASK-0031 收口并入任务板 CRUD）。
 
-只含不依赖 HTTP 的卡片格式化 / 解析 / 校验 / 渲染函数与常量：
-- LIMITS / STATUSES：字段上限与状态机合法值
-- render_card：渲染完整卡片文本
-- parse_header：解析卡片首行
-- check_limits：字段长度校验
-- _fmt_time：ISO 时间 → HH:MM
-- _next_task_id：现有卡最大编号 +1
+两层职责（均为任务卡领域）：
+- 纯函数（无 HTTP）：LIMITS/STATUSES 常量、render_card/parse_header/
+  check_limits/_fmt_time/_next_task_id
+- 任务板 CRUD（走 client._request）：cmd_status/cmd_list_pending/cmd_add/
+  cmd_show/cmd_claim/cmd_verify/cmd_new_worker；含 --docs 文档同步清单机制
+  （包化设计 §4：add 声明清单渲染进卡，verify pass 未确认即拒绝）
 
-board.py 仍负责 HTTP 请求（_request）与子命令（cmd_*），通过 import 复用本模块。
+board.py 仅做 CLI 调度，通过 import 复用本模块；
+依赖方向：board.py → 本模块 → client.py。
 """
 import re
+import sys
 from datetime import datetime
 
-# 各字段字符上限（设计文档第 4 节）
+from client import _request
+
+# 任务卡记录 tag
+TAG = "taskboard"
+
+# 各字段字符上限（设计文档第 4 节；docs 为文档同步清单上限，包化设计 §4）
 LIMITS = {"title": 30, "goal": 300, "input": 300,
-          "constraints": 200, "acceptance": 200, "result": 1000}
+          "constraints": 200, "acceptance": 200, "result": 1000, "docs": 300}
 # 状态机合法值
 STATUSES = ("pending", "claimed", "done", "failed", "verified")
 
@@ -24,8 +30,12 @@ _HEADER_RE = re.compile(r"^(TASK-\d{4}) (\w+) (\S+) \| (.+)$")
 
 def render_card(task_id: str, status: str, assignee: str, title: str,
                 goal: str, input_: str, constraints: str,
-                acceptance: str, result: str = "", note: str = "") -> str:
-    """渲染完整卡片文本；首行为可检索状态行。"""
+                acceptance: str, result: str = "", note: str = "",
+                docs: str = "") -> str:
+    """渲染完整卡片文本；首行为可检索状态行。
+
+    docs：文档同步清单（包化设计 §4），非空时追加"文档同步："行。
+    """
     lines = [
         f"{task_id} {status} {assignee} | {title}",
         f"目标：{goal}",
@@ -34,6 +44,8 @@ def render_card(task_id: str, status: str, assignee: str, title: str,
         f"验收：{acceptance}",
         f"结果：{result}",
     ]
+    if docs:
+        lines.append(f"文档同步：{docs}")
     if note:
         lines.append(f"备注：{note}")
     return "\n".join(lines)
@@ -76,3 +88,145 @@ def _next_task_id(cards: list[dict]) -> str:
         except (ValueError, IndexError):
             continue  # 非法卡不参与编号
     return f"TASK-{max_num + 1:04d}"
+
+
+def cmd_status() -> None:
+    """每卡一行：TASK-0003 claimed worker-1 12:30 标题。"""
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    if not cards:
+        print("无任务卡")
+        return
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+        except ValueError:
+            print(f"[警告] 记录 {card.get('id', '?')} 首行非法，已跳过")
+            continue
+        print(f"{h['task_id']} {h['status']} {h['assignee']} "
+              f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
+
+
+def cmd_list_pending() -> None:
+    """只列出 pending 状态的任务卡；无待办时给出明确提示。
+
+    取卡与解析复用 cmd_status 的方式（_request + parse_header），
+    一行一卡格式与 status 完全一致。
+    """
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    lines = []
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+        except ValueError:
+            continue  # 非法卡无法判定状态，不参与过滤
+        if h["status"] == "pending":
+            lines.append(f"{h['task_id']} {h['status']} {h['assignee']} "
+                         f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
+    if lines:
+        print("\n".join(lines))
+    else:
+        print("无待办任务卡")
+
+
+def cmd_add(assignee: str, title: str, goal: str, input_: str,
+            constraints: str, acceptance: str, docs: str = "") -> None:
+    """创建任务卡（pending）；字段超长抛 ValueError。
+
+    docs：文档同步清单（包化设计 §4），如 "USER_GUIDE.md(端点速查节)"；
+    非空时渲染为卡内"文档同步："行，verify pass 时为硬门禁。
+    """
+    # 注意：input 用作 kwargs 键以对齐 LIMITS["input"]（而非形参名 input_）
+    check_limits(title=title, goal=goal, input=input_,
+                 constraints=constraints, acceptance=acceptance, docs=docs)
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    task_id = _next_task_id(cards)
+    content = render_card(task_id, "pending", assignee, title,
+                          goal=goal, input_=input_, constraints=constraints,
+                          acceptance=acceptance, docs=docs)
+    resp = _request("POST", "/memories",
+                    {"content": content, "tags": [TAG]})
+    print(f"已创建 {task_id} → 记录 {resp['id']}（assignee: {assignee}）")
+
+
+def _find_card(task_id: str) -> tuple[dict, dict]:
+    """按 TASK 编号找卡；返回 (记录, 首行解析)，找不到 SystemExit(1)。"""
+    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
+    for card in cards:
+        try:
+            h = parse_header(card["content"])
+        except ValueError:
+            continue
+        if h["task_id"] == task_id:
+            return card, h
+    print(f"错误：任务卡 {task_id} 不存在", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def cmd_show(task_id: str) -> None:
+    """打印整卡（核验用）。"""
+    card, _ = _find_card(task_id)
+    print(card["content"])
+
+
+def cmd_claim(task_id: str, assignee: str) -> None:
+    """认领卡片：pending→claimed 并更新 assignee。
+
+    仅 pending 状态可认领；其他状态报错不误改。
+    """
+    card, h = _find_card(task_id)
+    if h["status"] != "pending":
+        print(f"错误：{task_id} 状态为 {h['status']}，"
+              f"仅 pending 可认领", file=sys.stderr)
+        raise SystemExit(1)
+    # 重写首行：status 改 claimed，assignee 更新为指定值
+    content = card["content"].split("\n", 1)
+    rest = content[1] if len(content) > 1 else ""
+    new_content = (f"{task_id} claimed {assignee} | {h['title']}"
+                   + ("\n" + rest if rest else ""))
+    _request("PATCH", f"/memories/{card['id']}", {"content": new_content})
+    print(f"{task_id} → claimed（assignee: {assignee}）")
+
+
+def cmd_verify(task_id: str, action: str, note: str,
+               docs_done: bool = False) -> None:
+    """核验流转：pass → verified；reject → pending（note 写入备注行）。
+
+    仅 done/failed 状态可流转；其他状态 SystemExit(1)。
+    文档同步硬门禁（包化设计 §4）：卡内含"文档同步："清单且未传
+    docs_done 时拒绝 pass，防止文档同步被遗漏。
+    """
+    card, h = _find_card(task_id)
+    if h["status"] not in ("done", "failed"):
+        print(f"错误：{task_id} 状态为 {h['status']}，"
+              f"仅 done/failed 可核验", file=sys.stderr)
+        raise SystemExit(1)
+    docs_line = next((l for l in card["content"].split("\n")
+                      if l.startswith("文档同步：")), "")
+    if action == "pass" and docs_line and not docs_done:
+        print(f"错误：{task_id} 声明了文档同步清单未确认完成：\n{docs_line}\n"
+              f"请核对清单内文档已同步后加 --docs-done 重新核验",
+              file=sys.stderr)
+        raise SystemExit(1)
+    new_status = "verified" if action == "pass" else "pending"
+    content = card["content"].split("\n", 1)
+    # 重写首行；reject 时若有 note 追加备注行
+    rest = content[1] if len(content) > 1 else ""
+    if action == "reject" and note:
+        # 去掉旧备注行（若有）再追加新备注
+        rest = "\n".join(l for l in rest.split("\n")
+                         if not l.startswith("备注："))
+        rest = (rest + f"\n备注：{note}").strip("\n")
+    new_content = (f"{task_id} {new_status} {h['assignee']} | {h['title']}"
+                   + ("\n" + rest if rest else ""))
+    _request("PATCH", f"/memories/{card['id']}", {"content": new_content})
+    print(f"{task_id} → {new_status}" + (f"（备注：{note}）" if note else ""))
+
+
+WORKER_INTRO = """你是 {name}，agent-orchestra 的执行者（worker）。
+请在当前任务中执行 skill：orchestra-worker，然后按其协议开始工作：
+查卡 → 认领 → 执行 → 回写 → 停止。若无待办任务，回复待命即可。"""
+
+
+def cmd_new_worker(name: str) -> None:
+    """打印该 worker 的引导语（用户复制到新 TraeWork 任务）。"""
+    print(WORKER_INTRO.format(name=name))

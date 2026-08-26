@@ -15,12 +15,14 @@ def mock_request(monkeypatch):
     用法：先设 mock_request.responses = {"GET /memories": {...}}，
     断言 mock_request.calls == [("GET", "/memories", body), ...]。
 
-    TASK-0030 包化③④：board/registry/comm 各自 from client import _request，
-    需逐模块 patch（仅 patch board 无法拦截 registry/comm 内的调用）。
+    TASK-0030/0031 包化：cards/registry/comm/watch 各自
+    from client import _request，需逐模块 patch（仅 patch 单模块无法拦截
+    其他模块内的调用）；board 已收口为纯调度，不再绑定 _request。
     """
-    import board
-    import registry
+    import cards
     import comm
+    import registry
+    import watch
 
     calls = []
     responses: dict = {}
@@ -35,7 +37,7 @@ def mock_request(monkeypatch):
                 return resp
         raise AssertionError(f"未预置的请求：{key}")
 
-    for mod in (board, registry, comm):
+    for mod in (cards, registry, comm, watch):
         monkeypatch.setattr(mod, "_request", fake)
     holder = type("Mock", (), {})()
     holder.calls = calls

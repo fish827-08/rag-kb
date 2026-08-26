@@ -1,319 +1,46 @@
 #!/usr/bin/env python3
-"""agent-orchestra 任务板 CLI：管理 kb 服务上的 taskboard 任务卡。
+"""agent-orchestra 任务板 CLI 入口：argparse 子命令调度。
 
 协调者专用；worker 走 MCP（orchestra-worker skill）。
-仅标准库；kb REST 契约见 rag-kb kb/api.py。
-
-用法：
-    board.py add --assignee w1 --title T --goal G --input I --constraints C --acceptance A
-    board.py status
-    board.py list-pending
-    board.py claim TASK-XXXX --assignee worker-N
-    board.py register NAME --model X --client Y
-    board.py workers
-    board.py report --channel done|issue|test|system --from NAME --text "..."
-    board.py list-comm [--channel X] [--limit N]
-    board.py watch [--interval N] [--comm] [--once]
-    board.py show TASK-0003
-    board.py verify TASK-0003 --pass | --reject [--note 原因]
-    board.py new-worker NAME
-    board.py worktree setup|enter|clean TASK-0025
+各子命令实现按模块分层（protocol.md §10）：
+client（HTTP）/ cards（任务卡 CRUD+纯函数）/ registry（注册）/
+comm（交流窗）/ worktree（隔离）/ watch（看板）。
+用法：python orchestra\\board.py <子命令>（--help 看各子命令参数）。
 """
 import argparse
-import json
-import subprocess
 import sys
-import time
-from pathlib import Path
 
-# kb REST 客户端（TASK-0028 包化①：从本文件拆出至 client.py）
-from client import KB_BASE, BoardUnavailable, _request
-
-# 卡片纯函数（TASK-0029 包化②：从本文件拆出至 cards.py）
-from cards import (LIMITS, STATUSES, render_card, parse_header,
-                   check_limits, _fmt_time, _next_task_id)
-
-# worker 注册表（TASK-0030 包化③：从本文件搬移至 registry.py）
-from registry import REGISTRY_TAG, cmd_register, cmd_workers
-
-# 交流窗（TASK-0030 包化④：从本文件搬移至 comm.py）
-from comm import COMM_CHANNELS, cmd_report, cmd_list_comm, _comm_tag, _truncate
-
-TAG = "taskboard"
-# 仓库根（board.py 位于 orchestra/ 下，仓库根为其上一级）；worktree 隔离目录（TASK-0025）
-REPO_ROOT = Path(__file__).resolve().parent.parent
-WORKTREES_DIR = REPO_ROOT / ".worktrees"
+from client import BoardUnavailable
+from cards import (cmd_add, cmd_claim, cmd_list_pending, cmd_new_worker,
+                   cmd_show, cmd_status, cmd_verify)
+from comm import COMM_CHANNELS, cmd_list_comm, cmd_report
+from registry import cmd_register, cmd_workers
+from watch import cmd_watch
+from worktree import (cmd_worktree_clean, cmd_worktree_enter,
+                      cmd_worktree_setup)
 
 
-def cmd_status() -> None:
-    """每卡一行：TASK-0003 claimed worker-1 12:30 标题。"""
-    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
-    if not cards:
-        print("无任务卡")
-        return
-    for card in cards:
-        try:
-            h = parse_header(card["content"])
-        except ValueError:
-            print(f"[警告] 记录 {card.get('id', '?')} 首行非法，已跳过")
-            continue
-        print(f"{h['task_id']} {h['status']} {h['assignee']} "
-              f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
-
-
-def cmd_list_pending() -> None:
-    """只列出 pending 状态的任务卡；无待办时给出明确提示。
-
-    取卡与解析复用 cmd_status 的方式（_request + parse_header），
-    一行一卡格式与 status 完全一致。
-    """
-    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
-    lines = []
-    for card in cards:
-        try:
-            h = parse_header(card["content"])
-        except ValueError:
-            continue  # 非法卡无法判定状态，不参与过滤
-        if h["status"] == "pending":
-            lines.append(f"{h['task_id']} {h['status']} {h['assignee']} "
-                         f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
-    if lines:
-        print("\n".join(lines))
-    else:
-        print("无待办任务卡")
-
-
-def cmd_add(assignee: str, title: str, goal: str, input_: str,
-            constraints: str, acceptance: str) -> None:
-    """创建任务卡（pending）；字段超长抛 ValueError。"""
-    # 注意：input 用作 kwargs 键以对齐 LIMITS["input"]（而非形参名 input_）
-    check_limits(title=title, goal=goal, input=input_,
-                 constraints=constraints, acceptance=acceptance)
-    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
-    task_id = _next_task_id(cards)
-    content = render_card(task_id, "pending", assignee, title,
-                          goal=goal, input_=input_, constraints=constraints,
-                          acceptance=acceptance)
-    resp = _request("POST", "/memories",
-                    {"content": content, "tags": [TAG]})
-    print(f"已创建 {task_id} → 记录 {resp['id']}（assignee: {assignee}）")
-
-
-def _find_card(task_id: str) -> tuple[dict, dict]:
-    """按 TASK 编号找卡；返回 (记录, 首行解析)，找不到 SystemExit(1)。"""
-    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
-    for card in cards:
-        try:
-            h = parse_header(card["content"])
-        except ValueError:
-            continue
-        if h["task_id"] == task_id:
-            return card, h
-    print(f"错误：任务卡 {task_id} 不存在", file=sys.stderr)
-    raise SystemExit(1)
-
-
-def cmd_show(task_id: str) -> None:
-    """打印整卡（核验用）。"""
-    card, _ = _find_card(task_id)
-    print(card["content"])
-
-
-def cmd_claim(task_id: str, assignee: str) -> None:
-    """认领卡片：pending→claimed 并更新 assignee。
-
-    仅 pending 状态可认领；其他状态报错不误改。
-    """
-    card, h = _find_card(task_id)
-    if h["status"] != "pending":
-        print(f"错误：{task_id} 状态为 {h['status']}，"
-              f"仅 pending 可认领", file=sys.stderr)
-        raise SystemExit(1)
-    # 重写首行：status 改 claimed，assignee 更新为指定值
-    content = card["content"].split("\n", 1)
-    rest = content[1] if len(content) > 1 else ""
-    new_content = (f"{task_id} claimed {assignee} | {h['title']}"
-                   + ("\n" + rest if rest else ""))
-    _request("PATCH", f"/memories/{card['id']}", {"content": new_content})
-    print(f"{task_id} → claimed（assignee: {assignee}）")
-
-
-def cmd_verify(task_id: str, action: str, note: str) -> None:
-    """核验流转：pass → verified；reject → pending（note 写入备注行）。
-
-    仅 done/failed 状态可流转；其他状态 SystemExit(1)。
-    """
-    card, h = _find_card(task_id)
-    if h["status"] not in ("done", "failed"):
-        print(f"错误：{task_id} 状态为 {h['status']}，"
-              f"仅 done/failed 可核验", file=sys.stderr)
-        raise SystemExit(1)
-    new_status = "verified" if action == "pass" else "pending"
-    content = card["content"].split("\n", 1)
-    # 重写首行；reject 时若有 note 追加备注行
-    rest = content[1] if len(content) > 1 else ""
-    if action == "reject" and note:
-        # 去掉旧备注行（若有）再追加新备注
-        rest = "\n".join(l for l in rest.split("\n")
-                         if not l.startswith("备注："))
-        rest = (rest + f"\n备注：{note}").strip("\n")
-    new_content = (f"{task_id} {new_status} {h['assignee']} | {h['title']}"
-                   + ("\n" + rest if rest else ""))
-    _request("PATCH", f"/memories/{card['id']}", {"content": new_content})
-    print(f"{task_id} → {new_status}" + (f"（备注：{note}）" if note else ""))
-
-
-def _watch_frame(include_comm: bool = False) -> str:
-    """渲染看板一轮文本：worker 段 + 任务卡段 +（可选）交流窗段。
-
-    纯函数便于单测；行格式分别复用 cmd_workers / cmd_status / cmd_list_comm。
-    """
-    lines = []
-    # worker 段（名字 模型 状态 最后活跃）
-    cards = _request("GET", f"/memories?tag={REGISTRY_TAG}&limit=1000") \
-        .get("items", [])
-    if not cards:
-        lines.append("无已注册 worker")
-    else:
-        for card in cards:
-            try:
-                data = json.loads(card["content"])
-            except (ValueError, TypeError):
-                continue
-            lines.append(f"{data.get('worker', '?')} {data.get('model', '?')} "
-                         f"{data.get('status', '?')} "
-                         f"{data.get('last_seen', '?')}")
-    # 任务卡段（TASK 状态 assignee HH:MM 标题）
-    cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
-    for card in cards:
-        try:
-            h = parse_header(card["content"])
-        except ValueError:
-            continue
-        lines.append(f"{h['task_id']} {h['status']} {h['assignee']} "
-                     f"{_fmt_time(card.get('updated_at', ''))} {h['title']}")
-    # 交流窗段（--comm 时附最近 5 条）
-    if include_comm:
-        comms = _request("GET", "/memories?limit=1000").get("items", [])
-        comms = [c for c in comms if _comm_tag(c.get("tags")) is not None]
-        comms.sort(key=lambda c: c.get("updated_at", ""), reverse=True)
-        if comms:
-            lines.append("-- 交流窗 --")
-            for card in comms[:5]:
-                tag = _comm_tag(card.get("tags")) or "comm:?"
-                lines.append(f"{_fmt_time(card.get('updated_at', ''))} | {tag} "
-                             f"| {card.get('source') or '?'} | "
-                             f"{_truncate(card.get('content', ''))}")
-    return "\n".join(lines)
-
-
-def cmd_watch(interval: int = 5, comm: bool = False, once: bool = False) -> None:
-    """终端看板：前台轮询重绘 worker 行 + 卡行（+--comm 交流窗）。
-
-    interval 须 ≥1（秒）；--once 单轮模式便于测试/脚本；
-    Ctrl+C 捕获后打印"watch 已退出"并干净返回（退出码 0）。
-    """
-    if interval < 1:
-        raise ValueError(f"interval 须 ≥1，收到 {interval}")
-    try:
-        while True:
-            print(_watch_frame(include_comm=comm))
-            if once:
-                return
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        print("watch 已退出")
-
-
-WORKER_INTRO = """你是 {name}，agent-orchestra 的执行者（worker）。
-请在当前任务中执行 skill：orchestra-worker，然后按其协议开始工作：
-查卡 → 认领 → 执行 → 回写 → 停止。若无待办任务，回复待命即可。"""
-
-
-def cmd_new_worker(name: str) -> None:
-    """打印该 worker 的引导语（用户复制到新 TraeWork 任务）。"""
-    print(WORKER_INTRO.format(name=name))
-
-
-def _wt_dir(task_id: str, repo=None) -> Path:
-    """返回任务卡 worktree 目录路径；repo 为测试注入用（默认 REPO_ROOT）。"""
-    base = Path(repo) if repo else REPO_ROOT
-    return base / ".worktrees" / task_id
-
-
-def cmd_worktree_setup(task_id: str, repo=None) -> None:
-    """为任务卡建立隔离 worktree（TASK-0025 治本分支串扰）。
-
-    在 <repo>/.worktrees/TASK-NNNN 检出 task/TASK-NNNN 分支（非 detached，
-    worktree 独占该分支，主工作区无法再 checkout → 并发天然隔离）。
-    已注册 worktree / 脏目录（非空）拒绝；空残留目录自动清掉。
-    """
-    base = Path(repo) if repo else REPO_ROOT
-    branch = f"task/{task_id}"
-    wt = _wt_dir(task_id, base)
-    if wt.exists():
-        listed = subprocess.run(
-            ["git", "-C", str(base), "worktree", "list", "--porcelain"],
-            capture_output=True, text=True).stdout
-        if f"worktree {wt}" in listed:
-            raise ValueError(f"worktree 已存在：{wt}（可 clean 后重建或直接使用）")
-        if any(wt.iterdir()):
-            raise ValueError(f"目标目录非空（脏目录）：{wt}")
-        wt.rmdir()  # 空残留目录，清掉后重建
-    check = subprocess.run(["git", "-C", str(base), "rev-parse", "--verify",
-                            branch], capture_output=True)
-    if check.returncode != 0:
-        raise ValueError(f"分支 {branch} 不存在（协调者应预建该分支）")
-    r = subprocess.run(["git", "-C", str(base), "worktree", "add",
-                        str(wt), branch], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise ValueError(f"worktree add 失败：{r.stderr.strip()}")
-    print(f"worktree 就绪：{wt}（分支 {branch}）")
-
-
-def cmd_worktree_enter(task_id: str, repo=None) -> None:
-    """打印进入该任务卡 worktree 的目录（worker 在其内开发/提交）。"""
-    base = Path(repo) if repo else REPO_ROOT
-    wt = _wt_dir(task_id, base)
-    if not wt.exists():
-        raise ValueError(f"worktree 不存在：{wt}（先 setup）")
-    print(str(wt))
-
-
-def cmd_worktree_clean(task_id: str, repo=None) -> None:
-    """删除任务卡 worktree，目录无残留（可再 setup 重建）。"""
-    base = Path(repo) if repo else REPO_ROOT
-    wt = _wt_dir(task_id, base)
-    if not wt.exists():
-        print(f"worktree 不存在：{wt}（无需清理）")
-        return
-    r = subprocess.run(["git", "-C", str(base), "worktree", "remove", "--force",
-                        str(wt)], capture_output=True, text=True)
-    if r.returncode != 0:
-        raise ValueError(f"worktree remove 失败：{r.stderr.strip()}")
-    print(f"worktree 已清理：{wt}")
-
-
-def main() -> None:
-    """CLI 入口；退出码 0 成功 / 1 参数或校验失败 / 2 服务不可达。"""
+def build_parser() -> argparse.ArgumentParser:
+    """构建 CLI 解析器（12 个子命令，参数与拆分前完全一致）。"""
     parser = argparse.ArgumentParser(description="agent-orchestra 任务板")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_add = sub.add_parser("add", help="创建任务卡")
-    p_add.add_argument("--assignee", required=True)
-    p_add.add_argument("--title", required=True)
-    p_add.add_argument("--goal", required=True)
-    p_add.add_argument("--input", required=True)
-    p_add.add_argument("--constraints", required=True)
-    p_add.add_argument("--acceptance", required=True)
+    for name in ("assignee", "title", "goal", "input",
+                 "constraints", "acceptance"):
+        p_add.add_argument(f"--{name}", required=True)
+    p_add.add_argument("--docs", default="",
+                       help="文档同步清单，如 USER_GUIDE.md(端点速查节)")
 
-    sub.add_parser("status", help="一行一卡看板")
-    sub.add_parser("list-pending", help="只列待办卡")
+    for name, help_ in (("status", "一行一卡看板"),
+                        ("list-pending", "只列待办卡"),
+                        ("workers", "一行一 worker 列表")):
+        sub.add_parser(name, help=help_)
 
     p_claim = sub.add_parser("claim", help="认领卡片（pending→claimed）")
     p_claim.add_argument("task_id")
     p_claim.add_argument("--assignee", required=True,
-                         help="认领者 worker 名字")
+                          help="认领者 worker 名字")
 
     p_show = sub.add_parser("show", help="打印整卡")
     p_show.add_argument("task_id")
@@ -326,6 +53,9 @@ def main() -> None:
     group.add_argument("--reject", dest="action", action="store_const",
                        const="reject")
     p_verify.add_argument("--note", default="")
+    p_verify.add_argument("--docs-done", dest="docs_done",
+                          action="store_true",
+                          help="确认文档同步清单已完成（有清单时核验前置）")
 
     p_new = sub.add_parser("new-worker", help="打印 worker 引导语")
     p_new.add_argument("name")
@@ -335,20 +65,19 @@ def main() -> None:
     p_register.add_argument("--model", required=True, help="模型名")
     p_register.add_argument("--client", required=True, help="客户端名")
 
-    sub.add_parser("workers", help="一行一 worker 列表")
-
     p_report = sub.add_parser("report", help="写一条交流窗记录")
-    p_report.add_argument("--channel", required=True, choices=COMM_CHANNELS,
-                          help="交流窗频道")
+    p_report.add_argument("--channel", required=True,
+                           choices=COMM_CHANNELS, help="交流窗频道")
     p_report.add_argument("--from", dest="from_", required=True,
                           help="report 者身份")
-    p_report.add_argument("--text", required=True, help="结论级内容（≤300 字符）")
+    p_report.add_argument("--text", required=True,
+                           help="结论级内容（≤300 字符）")
 
     p_list_comm = sub.add_parser("list-comm", help="按频道列交流窗记录")
     p_list_comm.add_argument("--channel", choices=COMM_CHANNELS, default=None,
-                             help="缺省列全部 comm:* 频道")
+                              help="缺省列全部 comm:* 频道")
     p_list_comm.add_argument("--limit", type=int, default=10,
-                             help="最多列几条（默认 10）")
+                              help="最多列几条（默认 10）")
 
     p_watch = sub.add_parser("watch", help="终端看板（实时监控）")
     p_watch.add_argument("--interval", type=int, default=5,
@@ -364,42 +93,44 @@ def main() -> None:
     p_wt.add_argument("task_id", help="任务卡号，如 TASK-0025")
     p_wt.add_argument("--repo", default=None,
                       help="仓库根（默认自动探测；测试注入用）")
+    return parser
 
-    args = parser.parse_args()
+
+# 子命令 → 处理器映射（入参为解析后的 argparse 命名空间）
+_DISPATCH = {
+    "status": lambda a: cmd_status(),
+    "list-pending": lambda a: cmd_list_pending(),
+    "workers": lambda a: cmd_workers(),
+    "add": lambda a: cmd_add(assignee=a.assignee, title=a.title, goal=a.goal,
+                             input_=a.input, constraints=a.constraints,
+                             acceptance=a.acceptance, docs=a.docs),
+    "claim": lambda a: cmd_claim(task_id=a.task_id, assignee=a.assignee),
+    "show": lambda a: cmd_show(a.task_id),
+    "verify": lambda a: cmd_verify(a.task_id, action=a.action, note=a.note,
+                                   docs_done=a.docs_done),
+    "new-worker": lambda a: cmd_new_worker(a.name),
+    "register": lambda a: cmd_register(a.name, model=a.model, client=a.client),
+    "report": lambda a: cmd_report(channel=a.channel, from_=a.from_,
+                                   text=a.text),
+    "list-comm": lambda a: cmd_list_comm(channel=a.channel, limit=a.limit),
+    "watch": lambda a: cmd_watch(interval=a.interval, comm=a.comm,
+                                 once=a.once),
+    "worktree": {
+        "setup": lambda a: cmd_worktree_setup(a.task_id, repo=a.repo),
+        "enter": lambda a: cmd_worktree_enter(a.task_id, repo=a.repo),
+        "clean": lambda a: cmd_worktree_clean(a.task_id, repo=a.repo),
+    },
+}
+
+
+def main() -> None:
+    """CLI 入口；退出码 0 成功 / 1 参数或校验失败 / 2 服务不可达。"""
+    args = build_parser().parse_args()
     try:
-        if args.command == "add":
-            cmd_add(assignee=args.assignee, title=args.title, goal=args.goal,
-                    input_=args.input, constraints=args.constraints,
-                    acceptance=args.acceptance)
-        elif args.command == "status":
-            cmd_status()
-        elif args.command == "list-pending":
-            cmd_list_pending()
-        elif args.command == "claim":
-            cmd_claim(task_id=args.task_id, assignee=args.assignee)
-        elif args.command == "show":
-            cmd_show(args.task_id)
-        elif args.command == "verify":
-            cmd_verify(args.task_id, action=args.action, note=args.note)
-        elif args.command == "new-worker":
-            cmd_new_worker(args.name)
-        elif args.command == "register":
-            cmd_register(args.name, model=args.model, client=args.client)
-        elif args.command == "workers":
-            cmd_workers()
-        elif args.command == "report":
-            cmd_report(channel=args.channel, from_=args.from_, text=args.text)
-        elif args.command == "list-comm":
-            cmd_list_comm(channel=args.channel, limit=args.limit)
-        elif args.command == "watch":
-            cmd_watch(interval=args.interval, comm=args.comm, once=args.once)
-        elif args.command == "worktree":
-            if args.action == "setup":
-                cmd_worktree_setup(args.task_id, repo=args.repo)
-            elif args.action == "enter":
-                cmd_worktree_enter(args.task_id, repo=args.repo)
-            else:
-                cmd_worktree_clean(args.task_id, repo=args.repo)
+        handler = _DISPATCH[args.command]
+        if isinstance(handler, dict):  # worktree 按 action 二级分发
+            handler = handler[args.action]
+        handler(args)
     except BoardUnavailable as e:
         print(f"错误：{e}\n请先启动 kb 服务：python -m kb serve",
               file=sys.stderr)
