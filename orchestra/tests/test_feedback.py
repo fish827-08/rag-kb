@@ -1,4 +1,4 @@
-﻿"""feedback.py 单测（TASK-0032：B2 反馈卡）。
+"""feedback.py 单测（TASK-0032：B2 反馈卡）。
 
 覆盖：字段校验（三类型必附字段/长度/枚举）、状态机（open→accepted/rejected）、
 编号递增、add/list/show 命令与 CLI 分发。
@@ -150,6 +150,40 @@ class TestList:
         feedback.cmd_fbk_list()
         out = capsys.readouterr().out
         assert "FBK-0002" in out and "非法" in out
+
+    # ---- TASK-0040：--task 目标卡过滤 ----
+    def test_list_task过滤_只返回该卡反馈(self, mock_request, capsys):
+        import feedback
+        a = feedback.render_fbk("FBK-0001", proposer="designer-1",
+                                task_id="TASK-0001", fb_type="objection",
+                                stage="precheck", summary="A 反馈",
+                                alt="补用例")
+        b = feedback.render_fbk("FBK-0002", proposer="worker-1",
+                                task_id="TASK-0002", fb_type="risk",
+                                stage="milestone", summary="B 反馈",
+                                impact="阻塞")
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {
+            "items": [_fbk(a), _fbk(b)], "total": 2}
+        feedback.cmd_fbk_list(task_id="TASK-0001")
+        out = capsys.readouterr().out
+        assert "FBK-0001 open TASK-0001" in out
+        assert "FBK-0002" not in out  # 目标卡 TASK-0002 的反馈被过滤
+
+    def test_list_task过滤_不传返回全部(self, mock_request, capsys):
+        import feedback
+        a = feedback.render_fbk("FBK-0001", proposer="designer-1",
+                                task_id="TASK-0001", fb_type="objection",
+                                stage="precheck", summary="A 反馈",
+                                alt="补用例")
+        b = feedback.render_fbk("FBK-0002", proposer="worker-1",
+                                task_id="TASK-0002", fb_type="clarify",
+                                stage="review", summary="B 反馈",
+                                question="q")
+        mock_request.responses["GET /memories?tag=feedback&limit=1000"] = {
+            "items": [_fbk(a), _fbk(b)], "total": 2}
+        feedback.cmd_fbk_list()  # 缺省不传 → 列全部（现有行为不变）
+        out = capsys.readouterr().out
+        assert "FBK-0001" in out and "FBK-0002" in out
 
 
 class TestShow:

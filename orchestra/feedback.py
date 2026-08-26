@@ -206,8 +206,11 @@ def cmd_fbk_add(proposer: str, task_id: str, fb_type: str, stage: str,
     print(f"已创建 {fbk_id}（{fb_type} → {task_id}）→ 记录 {resp['id']}")
 
 
-def cmd_fbk_list() -> None:
-    """一行一反馈卡：FBK-0001 open TASK-0026 objection precheck 摘要。"""
+def cmd_fbk_list(task_id: str = "") -> None:
+    """一行一反馈卡：FBK-0001 open TASK-0026 objection precheck 摘要。
+
+    task_id 非空时按目标卡 TASK-NNNN 过滤（TASK-0040）；缺省列出全部。
+    """
     cards = _request("GET", f"/memories?tag={TAG}&limit=1000").get("items", [])
     if not cards:
         print("无反馈卡")
@@ -218,6 +221,8 @@ def cmd_fbk_list() -> None:
         except ValueError:
             print(f"[警告] 记录 {card.get('id', '?')} 首行非法，已跳过")
             continue
+        if task_id and h["task_id"] != task_id:
+            continue  # TASK-0040：按目标卡过滤
         result = parse_fbk_result(card["content"])
         # 摘要取"摘要："行，超宽截断显示
         summary = next((l[len("摘要："):] for l in

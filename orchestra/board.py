@@ -115,6 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_fb_add.add_argument("--question", default="",
                           help="澄清问题（clarify 必附）")
     p_fb_list = fb_sub.add_parser("list", help="一行一反馈卡")
+    p_fb_list.add_argument("--task", dest="task_id", default="",
+                           help="按目标卡 TASK-NNNN 过滤（缺省列全部）")
     p_fb_show = fb_sub.add_parser("show", help="打印整张反馈卡")
     p_fb_show.add_argument("fbk_id", help="如 FBK-0001")
     p_fb_decide = fb_sub.add_parser("decide", help="裁决反馈卡（open→accepted/rejected）+ comm:feedback 归档")
@@ -159,7 +161,7 @@ _DISPATCH = {
                                      fb_type=a.fb_type, stage=a.stage,
                                      summary=a.summary, alt=a.alt,
                                      impact=a.impact, question=a.question),
-        "list": lambda a: cmd_fbk_list(),
+        "list": lambda a: cmd_fbk_list(task_id=a.task_id),
         "show": lambda a: cmd_fbk_show(a.fbk_id),
         "decide": lambda a: cmd_fbk_decide(a.fbk_id, action=a.action,
                                             note=a.note, decider=a.decider),
