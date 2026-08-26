@@ -1,11 +1,15 @@
 # rag-kb — 本地 Agent 记忆服务 + 多 Agent 协作系统
 
-本仓库含两个子系统：
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+
+本仓库含两个子系统（[ROADMAP](ROADMAP.md)）：
 
 | 子系统 | 一句话定位 | 状态 |
 |---|---|---|
-| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品） | v1.0.1 生产可用 |
-| **agent-orchestra** | 基于 kb 共享任务板的跨任务多 Agent 协作系统（实验） | MVP 真机验证通过 |
+| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品，开发主线） | v1.0.1 生产可用 |
+| **agent-orchestra** | 基于 kb 共享任务板的跨任务多 Agent 协作系统（❄️ 维护模式，自用脚手架） | B1-B3 收口冻结 |
+
+> 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
 ## kb — 本地优先的 Agent 记忆与知识服务
 
