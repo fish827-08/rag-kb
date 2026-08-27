@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     # ---- 记忆治理 A3（N22a 语义去重，TASK-0069）----
     dedup_enabled: bool = False                   # KB_DEDUP_ENABLED：语义去重开关，默认关（零行为变化）
     dedup_threshold: float = 0.92                 # KB_DEDUP_THRESHOLD：去重余弦相似度阈值，≥此值视为重复（BGE-M3，0.92以上高度重复）
+    # ---- 记忆治理审计（N23b/TASK-0073）：治理操作结构化审计日志 ----
+    audit_dedup_enabled: bool = True               # KB_AUDIT_DEDUP_ENABLED：去重拦截审计，默认开
+    audit_decay_enabled: bool = False              # KB_AUDIT_DECAY_ENABLED：衰减降权审计，默认关
+    audit_freshness_enabled: bool = False          # KB_AUDIT_FRESHNESS_ENABLED：新鲜度加权审计，默认关
     dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
     dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 
