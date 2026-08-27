@@ -72,7 +72,18 @@ class KBService:
     # ---- 记忆 CRUD ----
     def add_memory(self, content: str, tags: list[str] | None = None,
                    source: str | None = None, namespace: str = "default") -> Record:
-        """写入一条记忆短文本并嵌入。"""
+        """写入一条记忆短文本并嵌入。
+
+        N22a/TASK-0069：dedup_enabled 时先做语义去重检查，命中则抛 DuplicateError
+        （api 层捕获返回 409）；关闭时零行为变化。
+        """
+        from kb.governance import DuplicateError, check_duplicate
+        if self.settings.dedup_enabled:
+            existing_id, similarity = check_duplicate(
+                content, self.store, self.embedder,
+                threshold=self.settings.dedup_threshold)
+            if existing_id is not None:
+                raise DuplicateError(existing_id, similarity)
         record = Record(content=content, tags=tags or [], source=source,
                         namespace=namespace)
         vec = self.embedder.embed_texts([content])[0]
