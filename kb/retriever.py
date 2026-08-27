@@ -52,26 +52,41 @@ class HybridRetriever:
         else:  # keyword（BM25 不受衰减影响，A3 spec §3.1）
             fused = sorted(keyword_hits, key=lambda x: x[1], reverse=True)[:top_k]
 
-        # 衰减应用点（TASK-0068，A3 spec §3.1）：仅 hybrid/vector 模式，BM25 不受影响
-        # 默认 decay_enabled=false 零行为变化；开启时对 RRF/向量融合分应用访问频率衰减
-        if (self.settings is not None and getattr(self.settings, "decay_enabled", False)
-                and mode != "keyword"):
-            from kb.governance import apply_decay, compute_decay_factor, days_since
+        # 治理排序应用点（TASK-0068 衰减 §3.1 + TASK-0070 新鲜度 §3.3）：仅 hybrid/vector 模式，BM25 不受影响
+        # 默认全关零行为变化；衰减看 last_accessed（访问冷热），新鲜度看 updated_at（内容新旧），两者正交相乘
+        decay_on = (self.settings is not None
+                    and getattr(self.settings, "decay_enabled", False))
+        freshness_on = (self.settings is not None
+                        and getattr(self.settings, "freshness_enabled", False))
+        if (decay_on or freshness_on) and mode != "keyword":
+            from kb.governance import (apply_decay, compute_decay_factor,
+                                        days_since, freshness_boost)
             now = datetime.now()
             rescored = []
             for rid, score in fused:
                 rec = self.store.get(rid)
                 if rec is None:
                     continue
-                # TASK-0067 未合入时用默认值（0/""），合入后自动生效（零文件交集）
-                access_count = getattr(rec, "access_count", 0) or 0
-                last_accessed = getattr(rec, "last_accessed", "") or ""
-                created_at = getattr(rec, "created_at", "") or ""
-                days = days_since(last_accessed, str(created_at), now)
-                decay = compute_decay_factor(days, access_count,
-                                              self.settings.decay_lambda,
-                                              self.settings.decay_gamma)
-                rescored.append((rid, apply_decay(score, decay)))
+                final = score
+                # 衰减（TASK-0068，§3.1）：access_count/last_accessed 用 getattr 兼容 TASK-0067 未合入
+                if decay_on:
+                    access_count = getattr(rec, "access_count", 0) or 0
+                    last_accessed = getattr(rec, "last_accessed", "") or ""
+                    created_at = getattr(rec, "created_at", "") or ""
+                    days = days_since(last_accessed, str(created_at), now)
+                    decay = compute_decay_factor(days, access_count,
+                                                  self.settings.decay_lambda,
+                                                  self.settings.decay_gamma)
+                    final = apply_decay(final, decay)
+                # 新鲜度（TASK-0070，§3.3）：用 updated_at，与衰减正交相乘
+                if freshness_on:
+                    updated_at = getattr(rec, "updated_at", "") or ""
+                    days_updated = days_since(str(updated_at), "", now)
+                    boost = freshness_boost(days_updated,
+                                            self.settings.freshness_beta,
+                                            self.settings.freshness_alpha)
+                    final *= boost
+                rescored.append((rid, final))
             fused = sorted(rescored, key=lambda x: x[1], reverse=True)
 
         fused = fused[:top_k]
