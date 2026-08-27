@@ -1,6 +1,7 @@
 # rag-kb — 本地 Agent 记忆服务 + 多 Agent 协作系统
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[English](README_EN.md) | 中文
 
 本仓库含两个子系统（[ROADMAP](ROADMAP.md)）：
 
