@@ -101,6 +101,11 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 | POST | `/api/v1/ingest/web` | 网页入库 `{url}`，抓取正文切分入库 |
 | POST | `/api/v1/ask` | RAG 问答 `{question}`；未配置 LLM 返回 503 |
 | GET | `/api/v1/healthz` | 健康检查与服务统计 |
+| GET | `/api/v1/governance/stats` | 记忆治理统计：`total_count`/`avg_access_count`/`stale_90d_count`（只读） |
+| GET | `/api/v1/governance/config` | 治理配置：衰减+新鲜度开关与参数（只读） |
+| POST | `/api/v1/memories` → **409** | 启用语义去重（`KB_DEDUP_ENABLED=true`）后写入命中重复返回 409：`{"error":"DUPLICATE","duplicate_of":"<已有记录id>","similarity":<相似度>}`（不写入） |
+
+> 记忆治理（去重/衰减/新鲜度）均默认关闭、零行为变化；用法见 [USER_GUIDE §3.5](docs/USER_GUIDE.md#35-记忆治理a3语义去重--衰减--新鲜度)。
 
 示例：
 
