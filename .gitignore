@@ -13,3 +13,9 @@ logs/
 .worktrees/
 # orchestra 协调者循环临时快照（TASK-0061）
 .kb_tmp/
+# SSH 私钥与凭据（严禁入库，2026-08-27）
+key/
+*.pem
+*.key
+# 评估报告（本地参考，不入库）
+评估报告/
