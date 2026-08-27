@@ -1,14 +1,70 @@
-"""CLI 入口：add / search / info / serve。"""
+"""CLI 入口：add / search / info / serve / forget / dedup。"""
 import json
+from datetime import datetime
 
 import typer
 from rich.console import Console
+from rich.table import Table
 
 from kb.config import Settings, get_settings
+from kb.governance import days_since
 from kb.service import KBService
 
 app = typer.Typer()
 console = Console()
+
+
+# ---- N23a 维护 CLI 候选筛选纯函数（可单测，不依赖 CLI/服务）----
+
+def find_stale_records(records, days: int, now: datetime | None = None):
+    """筛选超 N 天未命中的记录（N23a forget --stale）。
+
+    last_accessed 为空时用 created_at 替代（governance.days_since 语义）。
+    返回 [(record, days_float), ...]，按天数降序。
+    """
+    if now is None:
+        now = datetime.now()
+    stale = []
+    for r in records:
+        d = days_since(r.last_accessed, r.created_at, now=now)
+        if d > days:
+            stale.append((r, d))
+    stale.sort(key=lambda x: x[1], reverse=True)
+    return stale
+
+
+def find_duplicate_pairs(records_with_embeddings, threshold: float = 0.85):
+    """筛选相似度 > threshold 的记录对（N23a dedup）。
+
+    records_with_embeddings: [(record, embedding_vector), ...]
+    余弦相似度；返回 [(record_a, record_b, similarity), ...]，按相似度降序，无重复对。
+    """
+    import math
+    pairs = []
+    seen = set()
+    n = len(records_with_embeddings)
+    for i in range(n):
+        r1, e1 = records_with_embeddings[i]
+        for j in range(i + 1, n):
+            r2, e2 = records_with_embeddings[j]
+            dot = sum(a * b for a, b in zip(e1, e2))
+            norm1 = math.sqrt(sum(a * a for a in e1))
+            norm2 = math.sqrt(sum(b * b for b in e2))
+            if norm1 == 0 or norm2 == 0:
+                continue
+            sim = dot / (norm1 * norm2)
+            if sim > threshold:
+                pair_key = tuple(sorted([r1.id, r2.id]))
+                if pair_key not in seen:
+                    seen.add(pair_key)
+                    pairs.append((r1, r2, sim))
+    pairs.sort(key=lambda x: x[2], reverse=True)
+    return pairs
+
+
+def _truncate(text: str, n: int = 50) -> str:
+    """内容摘要截断，避免 CLI 输出过长。"""
+    return text[:n] + "…" if len(text) > n else text
 
 
 def resolve_device(settings: Settings, interactive: bool, input_fn=input) -> str:
@@ -88,6 +144,101 @@ def serve():
     s.device = resolve_device(s, interactive=True)
     app = create_app(s, enable_watcher=True)
     uvicorn.run(app, host=s.api_host, port=s.api_port)
+
+
+@app.command()
+def forget(
+    stale: bool = typer.Option(False, "--stale", help="扫描超 N 天未命中的陈旧记忆"),
+    days: int = typer.Option(90, "--days", help="未命中天数阈值（默认90）"),
+    dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run",
+                                  help="仅输出候选不删除（默认开启，安全优先）"),
+):
+    """维护：扫描超 N 天未命中的记忆，dry-run 输出候选，非 dry-run 可删除。
+
+    用法：
+      kb forget --stale --days 90 --dry-run        # 预览超90天未命中的记录
+      kb forget --stale --days 90 --no-dry-run     # 确认后删除
+    """
+    if not stale:
+        console.print("[yellow]请指定 --stale（当前仅支持陈旧未命中模式）[/yellow]")
+        raise typer.Exit(code=1)
+    svc = _service()
+    records = list(svc.store.iter_all())
+    candidates = find_stale_records(records, days)
+    if not candidates:
+        console.print(f"[green]无超 {days} 天未命中的记录[/green]")
+        return
+    # 输出候选表
+    table = Table(title=f"超 {days} 天未命中的记忆（{len(candidates)} 条）")
+    table.add_column("记录ID", style="cyan", no_wrap=True)
+    table.add_column("内容摘要", style="white")
+    table.add_column("最后命中", style="yellow")
+    table.add_column("天数", justify="right", style="red")
+    for r, d in candidates:
+        table.add_row(r.id, _truncate(r.content),
+                      r.last_accessed or f"(创建:{r.created_at[:10]})",
+                      f"{d:.1f}")
+    console.print(table)
+    if dry_run:
+        console.print(f"[blue][dry-run] 共 {len(candidates)} 条候选，未删除。"
+                      f"加 --no-dry-run 执行删除[/blue]")
+        return
+    # 非 dry-run：确认后删除
+    confirm = typer.prompt(f"确认删除以上 {len(candidates)} 条记录？输入 yes 继续",
+                            default="no")
+    if confirm.strip().lower() != "yes":
+        console.print("[yellow]已取消，未删除[/yellow]")
+        return
+    ids = [r.id for r, _ in candidates]
+    svc.store.delete(ids)
+    console.print(f"[green]已删除 {len(ids)} 条记录[/green]")
+
+
+@app.command()
+def dedup(
+    dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run",
+                                  help="仅输出候选对不修改（默认开启，安全优先）"),
+    threshold: float = typer.Option(0.85, "--threshold", help="相似度阈值（默认0.85）"),
+):
+    """维护：全库扫描相似度超阈值的重复对，dry-run 输出供人工审核。
+
+    用法：
+      kb dedup --dry-run                  # 预览相似度>0.85的重复对
+      kb dedup --threshold 0.90 --dry-run # 自定义阈值
+    """
+    svc = _service()
+    records = list(svc.store.iter_all())
+    if len(records) < 2:
+        console.print("[green]记录不足2条，无需去重扫描[/green]")
+        return
+    # 逐条计算 embedding（复用 embedder）
+    console.print(f"[blue]正在扫描 {len(records)} 条记录的相似度…[/blue]")
+    records_with_emb = []
+    for r in records:
+        vec = svc.embedder.embed_texts([r.content])[0]
+        records_with_emb.append((r, vec))
+    pairs = find_duplicate_pairs(records_with_emb, threshold=threshold)
+    if not pairs:
+        console.print(f"[green]无相似度 > {threshold} 的重复对[/green]")
+        return
+    # 输出候选对表
+    table = Table(title=f"相似度 > {threshold} 的重复对（{len(pairs)} 对）")
+    table.add_column("记录A", style="cyan", no_wrap=True)
+    table.add_column("记录B", style="cyan", no_wrap=True)
+    table.add_column("相似度", justify="right", style="red")
+    table.add_column("A摘要", style="white")
+    table.add_column("B摘要", style="white")
+    for r1, r2, sim in pairs:
+        table.add_row(r1.id, r2.id, f"{sim:.4f}",
+                      _truncate(r1.content, 30), _truncate(r2.content, 30))
+    console.print(table)
+    if dry_run:
+        console.print(f"[blue][dry-run] 共 {len(pairs)} 对候选，未修改数据。"
+                      f"请人工审核后手动处理（自动合并待后续实现）[/blue]")
+        return
+    # 非 dry-run：自动合并暂未实现
+    console.print("[yellow]自动合并功能暂未实现（N23c 智能层 consolidation）。"
+                  "请人工审核候选对后手动删除/合并。[/yellow]")
 
 
 def main() -> None:

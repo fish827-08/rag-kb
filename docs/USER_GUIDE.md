@@ -279,7 +279,40 @@ MCP 配置带 key 示例（本机自用，**勿提交入库**）：
 
 仓库内 `.mcp.json` 模板保持无 key（JSON 不支持注释，说明落本手册）；健康探针 `GET /api/v1/healthz` 永远无需 key。
 
-## 6. 常见问题与故障排查
+## 6. 维护命令（forget / dedup）
+
+N23a 新增两个维护 CLI（`python -m kb forget` / `dedup`），默认 **dry-run 安全优先**（只输出候选不修改数据），直接调用存储层遍历，不经过 REST/服务层。
+
+### 6.1 forget — 扫描陈旧未命中记忆
+
+```bash
+# 预览超 90 天未命中的记录（dry-run 默认开启，不删除）
+python -m kb forget --stale --days 90 --dry-run
+
+# 确认后删除（需输入 yes 二次确认）
+python -m kb forget --stale --days 90 --no-dry-run
+```
+
+- `--stale`：陈旧未命中模式（当前唯一模式，必传）
+- `--days N`：未命中天数阈值，默认 90
+- `--dry-run/--no-dry-run`：默认 dry-run（仅输出候选表：记录ID/内容摘要/最后命中时间/天数）；`--no-dry-run` 需输入 `yes` 确认后才删除
+- 天数计算：`last_accessed` 为空时用 `created_at` 替代（从未命中=创建时间）
+
+### 6.2 dedup — 扫描语义重复对
+
+```bash
+# 预览相似度 > 0.85 的重复对（dry-run 默认开启，不修改）
+python -m kb dedup --dry-run
+
+# 自定义阈值
+python -m kb dedup --threshold 0.90 --dry-run
+```
+
+- `--threshold FLOAT`：余弦相似度阈值，默认 0.85
+- `--dry-run/--no-dry-run`：默认 dry-run（输出候选对表：记录A/记录B/相似度/内容摘要）；`--no-dry-run` 暂未实现自动合并（N23c 智能层 consolidation 后续实现），提示人工审核后手动处理
+- 逐条计算 embedding 后两两比较余弦相似度，记录数较多时耗时随 O(n²) 增长
+
+## 7. 常见问题与故障排查
 
 **Q：healthz 访问不通？**
 服务没起来。检查：终端是否还开着、端口是否被占（`netstat -ano | findstr 8000`）、
