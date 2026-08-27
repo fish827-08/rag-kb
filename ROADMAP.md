@@ -31,8 +31,10 @@ rag-kb 生产级本地多Agent体系
 │   │
 │   ├── A2.5 生态合规与曝光 …………………… 🚧 进行中（评估报告 P0 三板斧）
 │   │   ├── ✅ LICENSE Apache-2.0（2026-08-27，评估报告最高优先级项）
-│   │   ├── 🚧 GitHub 镜像迁移 + 英文 README（待用户提供 GitHub key 与加速方案）
-│   │   └── 🔲 MCP 官方 Registry / awesome-mcp-servers 提交（依赖 GitHub 迁移）
+│   │   ├── ✅ GitHub 镜像迁移（github.com/fish827-08/rag-kb，443 端口 SSH，2026-08-27）
+│   │   ├── ✅ 英文 README（README_EN.md，双语互链，2026-08-27）
+│   │   ├── ✅ 敏感信息治理（git filter-repo 历史重写 + pre-push 钩子 + gitignore 扩充，2026-08-27）
+│   │   └── 🔲 MCP 官方 Registry / awesome-mcp-servers 提交（待用户操作）
 │   │
 │   ├── A3 记忆治理（遗忘/衰减/去重）N21-N23 … 🚧 下一个主力（唯一差异化机会）
 │   │   ├── 🔲 spec 立项（双层设计：无 LLM 规则 TTL+相似度去重 / 有 LLM 智能 consolidation）
