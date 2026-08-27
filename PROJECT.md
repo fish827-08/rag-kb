@@ -35,14 +35,18 @@
 | M4（N13-N16） | 文档摄取（pdf/docx/md/txt）、网页抓取、目录监听、README | ✅ 2026-08-24 |
 | v1.0.1 hotfix | top_k/mode/空内容校验 → 422、MCP 入口校验、SSE charset | ✅ 2026-08-24 |
 
-- 测试：**159 项全绿**（`tests/`，含鉴权 9 项 + monitor 47 项）
+- 测试：**271 项全绿**（`tests/`，含鉴权 9 项 + monitor 47 项 + A3 治理 60+ 项）
 - 基准：混合检索 26ms、/ask 端到端 ~2s（本地 qwen3:4b）
 - tag：`node-01`~`node-16`、`v1.0.0`、`v1.0.1`（均已推 Gitee）
 - v1.0.2：JSON charset 已修复（TASK-0003/0038/0045 交付，含测试断言）
 - **A2 鉴权已交付**（N19 ApiKeyMiddleware + N20 客户端自动带 key，TASK-0062/0064，空 key 不鉴权零摩擦）
 - **monitor 纯文本模式默认 off**（TASK-0065）：本地无 LLM 完整可用（KB_MONITOR_LLM=off/auto）
+- **A3 记忆治理全线交付**（2026-08-28，TASK-0066~0076，spec+双层实现）：
+  - 规则层：访问频率衰减（λ=0.02）+ 语义去重（阈值 0.92，409 拦截）+ 新鲜度权重（β=0.05，上限 1.3×）——三者默认关，零行为变化
+  - 维护面：`kb forget/dedup` CLI + `/api/v1/governance/stats|config` 端点 + 结构化审计日志（kb/audit.py）
+  - 智能层：consolidation 基础框架（kb/consolidation.py + spec，置信度门槛 + human 兜底，默认关）
 
-### ② agent-orchestra — B1/B2 收口 + B3 进行中（2026-08-27）
+### ② agent-orchestra — B1/B2/B3 收口后转入冻结维护（2026-08-28）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|

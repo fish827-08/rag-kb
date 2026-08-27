@@ -38,7 +38,7 @@
 > Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/memories" -Method Post -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
 > ```
 
-**最后更新：2026-08-27（N22 交付核验收口） ｜ 更新人：协调者 ｜ 快照：A3-N22 已合入 main（TASK-0069 去重409拦截 + TASK-0070 新鲜度+stats + TASK-0071 spec§3.2修订对齐409 + 测试隔离修复 394c846，kb 227 项全绿）；合并冲突3处(.env.example/config.py/governance.py)已手动解决；卡池空待拆 N23；worker-1 停派；awesome-mcp-servers PR 待人工提交**
+**最后更新：2026-08-28（A3 记忆治理全线收口） ｜ 更新人：协调者（GLM-5.3）｜ 快照：A3-N21/22/23 全部合入 main（165d8ed，TASK-0067~0076 verified，kb 271 项全绿）；A3 双层设计完整落地——规则层（衰减/去重409/新鲜度/forget+dedup CLI/governance stats+config端点/结构化审计）+ 智能层（consolidation 框架+spec）；worker-1 曾停派但额度紧张下仍交付 0076；下一步 A3.5 检索质量（reranker+评测基准）或 A3 实战验证期；Gitee 推送策略改为"大更新才推"（本次为大更新，已推）**
 
 ### ⚠️ 战略调整（2026-08-27，最高优先级背景知识）
 
