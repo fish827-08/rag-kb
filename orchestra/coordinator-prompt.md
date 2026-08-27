@@ -38,7 +38,7 @@
 > Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/memories" -Method Post -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
 > ```
 
-**最后更新：2026-08-27（N22b 交付核验收口） ｜ 更新人：协调者 ｜ 快照：A3-N22b 已合入 main（TASK-0070 新鲜度权重+governance stats/config 端点，kb 217 项全绿）；N22a 去重 TASK-0069 打回待修测试（409 拦截方案已人工确认）；A3 spec §3.2 修订 TASK-0071 已建派 designer-1；worker-1 停派；awesome-mcp-servers PR 待人工提交**
+**最后更新：2026-08-27（N22 交付核验收口） ｜ 更新人：协调者 ｜ 快照：A3-N22 已合入 main（TASK-0069 去重409拦截 + TASK-0070 新鲜度+stats + TASK-0071 spec§3.2修订对齐409 + 测试隔离修复 394c846，kb 227 项全绿）；合并冲突3处(.env.example/config.py/governance.py)已手动解决；卡池空待拆 N23；worker-1 停派；awesome-mcp-servers PR 待人工提交**
 
 ### ⚠️ 战略调整（2026-08-27，最高优先级背景知识）
 
@@ -50,29 +50,27 @@
 
 ### 进行中的卡
 
-- **TASK-0069** pending · worker-2 · N22a 语义去重（409 拦截）——测试打回：TestApi409::test_duplicate_returns_409 失败（`client.app.state.kb` 访问路径错误，`client.app` 是 function），实现代码正确只需修测试 mock；409 拦截方案已人工确认
-- **TASK-0071** pending · designer-1 · A3 spec §3.2 修订（merge→409 拦截）——纯文档，与 0069 零文件交集可并行
-- 其余卡全部 verified/failed；0056/0062/0063 为重复卡作废记录
+无。N22 全部收口（0069/0070/0071 全 verified 合入），卡池空待拆 N23。0056/0062/0063 为重复卡作废记录。
 
-### 最近完成（2026-08-27，A3-N22b 交付核验收口）
+### 最近完成（2026-08-27，A3-N22 交付核验收口）
 
-- **TASK-0070** N22b 新鲜度权重+governance API（worker-3）：governance.py 新增 freshness_boost（β=0.05/α=0.3，范围[1,1.3]）+ compute_stats（total/avg_access/stale_90d）；retriever.py 衰减+新鲜度正交相乘（BM25 不受影响）；api.py 新增 GET /governance/stats + /governance/config 两只读端点；config 新增 freshness_enabled/beta/alpha；test_n22_governance 17 passed；合并后全量 217 passed 零回归
-- **TASK-0069** N22a 语义去重（worker-2）：实现为 409 拦截方案（check_duplicate+DuplicateError+api 409 响应），实现代码正确；测试 9/10 通过（TestApi409 mock 路径错误），打回 pending 待修；409 拦截方案已人工确认（替代 spec 原 merge 策略）
-- **TASK-0071** A3 spec §3.2 修订（designer-1，已建卡 pending）：merge→409 拦截文档对齐，与 0069 并行
-- **N21 衰减交付**（前一轮收口）：TASK-0066 spec/0067 N21a/0068 N21b 全 verified，kb 200 项全绿，d1b82a1 修复测试环境隔离
-- **TASK-0056** 作废重复卡清理：pending→failed（与 0055 重复，FBK-0004 已 rejected）
+- **TASK-0069** N22a 语义去重 409 拦截（worker-2）：governance.py 新增 check_duplicate + DuplicateError；service.py add_memory 接入去重命中抛异常；api.py 捕获返回 409（error=DUPLICATE/duplicate_of/similarity）；config 新增 dedup_enabled/threshold；test_n22_dedup 10 项全绿
+- **TASK-0070** N22b 新鲜度权重+governance API（worker-3）：freshness_boost（β=0.05/α=0.3，范围[1,1.3]）+ compute_stats；retriever 衰减+新鲜度正交相乘；api 新增 /governance/stats + /governance/config；test_n22_governance 17 项全绿
+- **TASK-0071** A3 spec §3.2 修订（designer-1）：merge 策略→409 拦截，9 处全改（§2.3/§3.2/§4.1/§4.2/§4.3/§5/§6.2/§8），409 响应字段与实现逐字段对齐，全文零 merge 残留
+- **394c846** 测试隔离修复：test_n22_dedup.py 的 service/client fixture 加临时 KB_DATA_DIR，解决合并后全量 3 项失败（生产 ChromaDB 1024 维集合与测试小模型 512 维维度不匹配）
+- **合并冲突解决**：0069 与已合入的 0070 在 .env.example/config.py/governance.py 三处冲突，手动解决保留双方内容
+- **N22 全量回归**：kb tests/ **227 passed**（3:04），零失败零回归；默认全关零行为变化
+- **N21 衰减交付**（前一轮）：TASK-0066 spec/0067 N21a/0068 N21b 全 verified，kb 200→217 项全绿
+- **TASK-0056** 作废重复卡清理：pending→failed
 
 ### 后续规划（下一步做什么）
 
-**近期（当前，N22 进行中，全部为 A 线）**：
-1. ~~GitHub 迁移~~ **✅ 已完成（2026-08-27）**：双远程同步；历史重写；pre-push 钩子；英文 README。**仅剩 awesome-mcp-servers PR 人工提交**
-2. ~~A3 spec 立项~~ **✅（TASK-0066）**；~~N21 衰减~~ **✅（TASK-0067/0068，kb 200→217 项全绿）**
-3. ~~N22b 新鲜度+stats~~ **✅ 已合入（TASK-0070，kb 217 项全绿）**：freshness_boost + compute_stats + /governance/stats + /governance/config，衰减+新鲜度正交相乘
-4. **N22a 语义去重（进行中，TASK-0069）**：409 拦截方案已人工确认（替代 spec 原 merge 策略）；实现代码正确，测试打回待修（TestApi409 mock 路径错误）；修复后合并即 N22 收口
-5. **A3 spec §3.2 修订（进行中，TASK-0071，designer-1）**：merge→409 拦截文档对齐，与 0069 并行
-6. **N23**（N22 收口后）：维护 CLI（`kb forget --stale --days 90 --dry-run` / `kb dedup --dry-run`）+ 日志审计闭环 + 智能层 consolidation（可选，本地 qwen3:4b）
-7. **A3.5 检索质量**（A3 后）：reranker / BGE-M3 稀疏向量 / 评测基准
-8. **评估报告已归档**：`评估报告/` 目录两份多维度报告
+**近期（当前，N22 已收口，卡池空待拆 N23，全部为 A 线）**：
+1. ~~GitHub 迁移~~ **✅ 已完成**：双远程同步；历史重写；pre-push 钩子；英文 README。**仅剩 awesome-mcp-servers PR 人工提交**
+2. ~~A3 spec 立项~~ **✅（TASK-0066）**；~~N21 衰减~~ **✅（0067/0068，kb 200→217）**；~~N22 去重+新鲜度+stats~~ **✅（0069/0070/0071，kb 227 项全绿）**
+3. **N23 待拆（下一步）**：维护 CLI（`kb forget --stale --days 90 --dry-run` / `kb dedup --dry-run`）+ 日志审计闭环（每次 409 拦截/降权记日志）+ 智能层 consolidation（可选，本地 qwen3:4b 智能归并矛盾记忆）
+4. **A3.5 检索质量**（A3 后）：reranker / BGE-M3 稀疏向量 / 评测基准
+5. **评估报告已归档**：`评估报告/` 目录两份多维度报告
 
 **中期**：
 - A3 记忆治理落地 → A4 易用性（CLI 优先）
