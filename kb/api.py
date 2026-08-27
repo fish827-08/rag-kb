@@ -412,8 +412,18 @@ def create_app(settings: Settings | None = None,
 
     @app.post("/api/v1/memories")
     def create_memory(body: MemoryCreate) -> dict:
-        r = kb.add_memory(body.content, tags=body.tags,
-                          source=body.source, namespace=body.namespace)
+        from kb.governance import DuplicateError
+        try:
+            r = kb.add_memory(body.content, tags=body.tags,
+                              source=body.source, namespace=body.namespace)
+        except DuplicateError as e:
+            # N22a/TASK-0069：语义去重命中，返回 409 + 已有记录 id 与相似度
+            return JSONResponse(
+                status_code=409,
+                content={"error": "DUPLICATE",
+                         "message": "语义重复，已存在相似记录",
+                         "duplicate_of": e.existing_id,
+                         "similarity": round(e.similarity, 4)})
         return {"id": r.id, **r.model_dump()}
 
     @app.get("/api/v1/memories")
