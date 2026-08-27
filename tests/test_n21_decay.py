@@ -132,6 +132,11 @@ class _FakeStore:
     def query(self, vec, top_k=10):
         return [(r, 0.9 - i * 0.1) for i, r in enumerate(self._records.values())][:top_k]
 
+    def increment_access(self, record_ids):
+        """TASK-0067 合入后检索命中异步计数；测试 mock 空实现（计数逻辑由
+        test_n21_metadata.py 覆盖，此处只需接口存在不抛 AttributeError）。"""
+        pass
+
     def get(self, rid):
         return self._records.get(rid)
 

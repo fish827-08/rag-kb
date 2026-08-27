@@ -3,7 +3,9 @@ from pathlib import Path
 
 def test_默认配置(env_isolated):
     from kb.config import Settings
-    s = Settings()
+    # _env_file=None：禁用磁盘 .env（本地开发可能设了 KB_LLM_MODEL 降级值），
+    # 本测试断言代码默认值，须与本地配置完全隔离
+    s = Settings(_env_file=None)
     assert s.llm_mode == "auto"
     assert s.llm_model == "qwen3:4b"
     assert s.llm_temperature == 0.2

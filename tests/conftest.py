@@ -15,11 +15,13 @@ os.environ["KB_EMBED_MODEL"] = "BAAI/bge-small-zh-v1.5"
 @pytest.fixture
 def env_isolated(monkeypatch, tmp_path):
     """每个测试独立的 KB_DATA_DIR，并清掉配置单例缓存。
-    Ollama 基址指向不可达端口：LLM 探测确定性失败，测试不依赖本机 Ollama 运行状态。"""
+    Ollama 基址指向不可达端口：LLM 探测确定性失败，测试不依赖本机 Ollama 运行状态。
+    剥离本地 .env 的模型覆盖（如 KB_LLM_MODEL 降级值），保证默认值断言确定性。"""
     from kb import config
     monkeypatch.setenv("KB_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("KB_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("KB_OLLAMA_BASE_URL", "http://127.0.0.1:1")
+    monkeypatch.delenv("KB_LLM_MODEL", raising=False)
     config.get_settings.cache_clear()
     yield tmp_path
     config.get_settings.cache_clear()
