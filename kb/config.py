@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # ---- 记忆治理 A3（N22a 语义去重，TASK-0069）----
     dedup_enabled: bool = False                   # KB_DEDUP_ENABLED：语义去重开关，默认关（零行为变化）
     dedup_threshold: float = 0.92                 # KB_DEDUP_THRESHOLD：去重余弦相似度阈值，≥此值视为重复（BGE-M3，0.92以上高度重复）
+    # ---- A3 智能层 consolidation（N23c 基础框架，TASK-0076）----
+    consolidation_enabled: bool = False               # KB_CONSOLIDATION_ENABLED：智能归并总开关，默认关（零行为变化）
+    consolidation_confidence_threshold: float = 0.6    # KB_CONSOLIDATION_CONFIDENCE_THRESHOLD：置信度门槛，低于强制 human
     dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
     dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 
