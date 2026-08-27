@@ -10,10 +10,13 @@
 你是 agent-orchestra 协调者（角色定义见 orchestra/coordinator-prompt.md，先完整读它）。
 上岗三步：
 1. 读 orchestra/coordinator-prompt.md 全文，重点是文末"接力状态"节（当前进度与后续规划都在那里）；
-2. 跑 venv\Scripts\python.exe orchestra\board.py status 看任务板现状；
-3. 用一行一卡向用户汇报现状 + 下一步建议，等用户指令再行动。
+2. 读 RAG 进度快照：GET http://127.0.0.1:8000/api/v1/memories?tag=coordinator-progress&limit=3
+   （取最新一条，含主线方向/任务板状态/下一步/决策记录；与接力状态节互补，快照更实时）；
+3. 跑 venv\Scripts\python.exe orchestra\board.py status 看任务板现状；
+4. 用一行一卡向用户汇报现状 + 下一步建议，等用户指令再行动。
 纪律：遵守 AGENTS.md 红线与 coordinator-prompt.md 全部规则；不得代替人工声称验收完成；
-每次收口（核验+合并+推送）后必须更新"接力状态"节再提交。
+每次收口（核验+合并+推送）后必须做两件事——①更新"接力状态"节提交；
+②POST /api/v1/memories 写入新进度快照（tags=["coordinator-progress"]，内容含时间戳/主线/任务板状态/下一步/决策）。
 ```
 
 ## 接力指南（新协调者上岗读什么）
@@ -28,9 +31,14 @@
 
 ## 接力状态（动态节，每次收口后必须更新）
 
-> **更新纪律**：每完成一轮"核验→合并→推送"收口后，协调者必须把本节更新为最新状态再提交（提交信息 `文档: 协调者接力状态更新至TASK-NNNN`）。本节是下一个协调者的唯一交接面，宁详勿略。
+> **更新纪律**：每完成一轮"核验→合并→推送"收口后，协调者必须做**双写**——①把本节更新为最新状态再提交（提交信息 `文档: 协调者接力状态更新至TASK-NNNN`）；②POST `/api/v1/memories` 写入进度快照（`tags=["coordinator-progress"]`，内容含时间戳/主线/任务板状态/下一步/关键决策，≤500字）。前者进 git 永久可溯，后者进 RAG 供新协调者/任意 agent 检索读取（与 kb 检索生态天然打通）。快照写法示例：
+>
+> ```powershell
+> $body = @{content = "[协调者进度快照 时间] 主线：…；任务板：…；下一步：…；决策：…"; tags = @("coordinator-progress")} | ConvertTo-Json
+> Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/memories" -Method Post -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+> ```
 
-**最后更新：2026-08-27（A2.5 生态合规收口） ｜ 更新人：协调者（GLM-5.3）｜ 快照：A2.5 完成（LICENSE/GitHub 迁移/历史重写/英文 README）；卡池空待拆 A3 卡；awesome PR 待人工提交**
+**最后更新：2026-08-27（A3 spec 立项 + RAG 进度快照机制） ｜ 更新人：协调者（GLM-5.3）｜ 快照：A3 记忆治理 spec 已合入（TASK-0066 verified，c65553e）；N21-N23 待拆卡；worker-1 停派；进度快照机制启用（tag=coordinator-progress）**
 
 ### ⚠️ 战略调整（2026-08-27，最高优先级背景知识）
 
