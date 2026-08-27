@@ -148,6 +148,64 @@ curl "http://127.0.0.1:8000/api/v1/logs/events"
 
 支持格式：txt / md / pdf / docx。
 
+### 3.5 记忆治理（A3：语义去重 / 衰减 / 新鲜度）
+
+记忆只增不减会越来越噪。A3 记忆治理提供三个可选机制，**全部默认关闭（零行为变化）**，按需在 `.env` 开启：
+
+| 机制 | 开关 | 作用 |
+|---|---|---|
+| 语义去重（N22a） | `KB_DEDUP_ENABLED=true` | 写入前向量检索 top1，余弦相似度 ≥ `KB_DEDUP_THRESHOLD`（默认 0.92）即判重，**409 拦截不写入** |
+| 访问频率衰减（N21b） | `KB_DECAY_ENABLED=true` | hybrid/vector 检索排序：长期未访问的记忆降权，高频访问的加权 |
+| 新鲜度权重（N22b） | `KB_FRESHNESS_ENABLED=true` | hybrid/vector 检索排序：近期更新的内容最多加权 30% |
+
+#### 3.5.1 语义去重：409 拦截（不写入）
+
+开启后 `POST /api/v1/memories` 在写入前做去重检查，命中时返回 **409，新内容不落库**：
+
+```json
+HTTP 409 Conflict
+Content-Type: application/json; charset=utf-8
+
+{
+  "error": "DUPLICATE",
+  "message": "语义重复，已存在相似记录",
+  "duplicate_of": "<已有记录 id>",
+  "similarity": 0.9537
+}
+```
+
+**调用方处理方式**：
+- 从 409 响应取 `duplicate_of`（已有记录 id）与 `similarity`（相似度，保留 4 位小数）
+- 想更新旧记录 → `PATCH /api/v1/memories/{duplicate_of}`；纯重复 → 直接跳过即可（幂等语义）
+- 嵌入/检索异常时降级为不拦截（正常写入，服务日志记 WARNING），不因检查故障阻塞写入
+- `KB_DEDUP_ENABLED` 关闭时写入行为与以前完全一致；阈值用 `KB_DEDUP_THRESHOLD` 调（调低更严、调高更宽）
+
+#### 3.5.2 新鲜度权重与衰减（检索排序）
+
+两者正交相乘、独立开关，**只影响 `hybrid`/`vector` 模式排序**（keyword/BM25 路径不受影响）；都关闭时排序完全不变：
+
+- **新鲜度权重**（`KB_FRESHNESS_ENABLED`）：看 `updated_at`（内容新旧）——刚更新的记录最高加权 1+α 倍（默认 α=0.3，即最多 1.3 倍），加权随时间指数衰减（半衰期≈14 天，β=0.05）。调参：`KB_FRESHNESS_BETA` / `KB_FRESHNESS_ALPHA`
+- **访问频率衰减**（`KB_DECAY_ENABLED`）：看 `last_accessed`/`access_count`（访问冷热）——长期未访问降权（半衰期≈35 天，λ=0.02），高频访问加权（γ=0.3，access_count=10 时约 2.0 倍）。调参：`KB_DECAY_LAMBDA` / `KB_DECAY_GAMMA`
+
+#### 3.5.3 治理端点（只读）
+
+```powershell
+# 治理统计：总记录数 / 平均访问次数 / 超 90 天未命中数
+curl.exe http://127.0.0.1:8000/api/v1/governance/stats
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/governance/stats
+
+# 治理配置：当前衰减 + 新鲜度的开关与参数
+curl.exe http://127.0.0.1:8000/api/v1/governance/config
+Invoke-RestMethod http://127.0.0.1:8000/api/v1/governance/config
+```
+
+返回示例（字段结构）：
+
+- `/governance/stats`：`{"total_count": 279, "avg_access_count": 1.25, "stale_90d_count": 3}`
+- `/governance/config`：`{"decay_enabled": false, "decay_lambda": 0.02, "decay_gamma": 0.3, "freshness_enabled": false, "freshness_beta": 0.05, "freshness_alpha": 0.3}`
+
+> CLI 维护命令（批量清理等，N23a）开发中，后续版本提供。
+
 ## 4. orchestra：多 Agent 协作
 
 ### 4.1 它解决什么问题
@@ -237,6 +295,7 @@ worker 全部完成后，回协调者任务说"**核验**"。协调者会独立�
 | 隐私隔离 | `KB_SENSITIVE_NAMESPACES=私人笔记` 等逗号分隔，命中强制本地回答不出网 |
 | 性能调优 | `KB_DEVICE=cuda/cpu`；`KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` 切分参数 |
 | 局域网/多 Agent 访问鉴权 | `KB_API_KEY=<≥32随机字符>` 启用 Bearer/X-API-Key 鉴权（见 5.1） |
+| 记忆治理 | `KB_DEDUP_ENABLED`（去重）/ `KB_DECAY_ENABLED`（衰减）/ `KB_FRESHNESS_ENABLED`（新鲜度），均默认关（见 3.5） |
 
 完整键名见 [`.env.example`](../.env.example)。
 
