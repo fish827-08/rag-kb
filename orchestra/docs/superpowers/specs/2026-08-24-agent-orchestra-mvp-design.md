@@ -97,7 +97,7 @@ done/failed 均可被协调者 rejected → pending（打回重做）
 让任意新 TraeWork 任务一句话成为 worker 的关键件。
 
 - **源文件**：`orchestra/skills/orchestra-worker/SKILL.md`（版本化，随协议演进）
-- **安装**：复制到 `~/.trae-cn\skills\orchestra-worker\`（实施时用 skill-creator 生成规范结构）
+- **安装**：复制到 `~\.trae-cn\skills\orchestra-worker\`（实施时用 skill-creator 生成规范结构）
 - **触发**：worker 任务内用户说"你是 worker-1，开始工作"或 /orchestra-worker，agent 加载协议
 - **唤醒行为定义**（skill 核心内容）：
   1. 若本回合未声明身份 → 询问 worker 名字

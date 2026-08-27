@@ -32,7 +32,7 @@
 
 ## 3. 硬件与资源约束（务必遵守）
 
-- 用户机器：**GPU 6GB 显存 + 16GB 内存，Windows**。
+- 用户机器：**6GB 显存 + 16GB 内存，Windows**。
 - 本地 LLM 默认 `qwen3:4b`（2026-08-23 基准定型：实测 3.2GB 显存 @num_ctx 4096、80.2 tok/s、RAG 基准 4 项全过）；低配选项 `qwen3:1.7b`（~1.8GB、101.4 tok/s）。**两模型禁止同时加载**（合计 + embedding 超 6GB），路由/压缩/回答统一用当前配置的单个模型。
 - 显存预算：BGE-M3 fp16（约 1.1GB）+ `qwen3:4b`（3.2GB）= 4.3GB，可共存（已实测验证）；OOM 时 `KB_DEVICE=cpu` 或切 `qwen3:1.7b`。
 - `/ask` 智能路由（设计文档第 7 节）：本地守门（复杂度路由 / 上下文压缩 / 简单问题直答 / 隐私隔离 / 离线兜底），难题发云 `deepseek-v4-flash`；`KB_LLM_MODE=local|auto|cloud`，默认 auto。护栏参数硬编码默认值：`think:false`、`temperature 0.2`、`num_ctx 4096`、`max_tokens 800`、检索上下文 ≤2000 token 截断、强约束 system prompt。
