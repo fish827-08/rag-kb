@@ -61,6 +61,11 @@ class HybridRetriever:
         if (decay_on or freshness_on) and mode != "keyword":
             from kb.governance import (apply_decay, compute_decay_factor,
                                         days_since, freshness_boost)
+            # N23b/TASK-0073：治理审计开关（默认关，不阻塞主流程）
+            audit_decay_on = (self.settings is not None
+                              and getattr(self.settings, "audit_decay_enabled", False))
+            audit_freshness_on = (self.settings is not None
+                                  and getattr(self.settings, "audit_freshness_enabled", False))
             now = datetime.now()
             rescored = []
             for rid, score in fused:
@@ -78,6 +83,15 @@ class HybridRetriever:
                                                   self.settings.decay_lambda,
                                                   self.settings.decay_gamma)
                     final = apply_decay(final, decay)
+                    if audit_decay_on:
+                        from kb.audit import log_governance_event
+                        log_governance_event(
+                            "decay_applied", rid,
+                            {"decay_factor": round(decay, 6),
+                             "original_score": round(score, 6),
+                             "final_score": round(final, 6),
+                             "access_count": access_count,
+                             "days_since_access": round(days, 2)})
                 # 新鲜度（TASK-0070，§3.3）：用 updated_at，与衰减正交相乘
                 if freshness_on:
                     updated_at = getattr(rec, "updated_at", "") or ""
@@ -86,6 +100,13 @@ class HybridRetriever:
                                             self.settings.freshness_beta,
                                             self.settings.freshness_alpha)
                     final *= boost
+                    if audit_freshness_on:
+                        from kb.audit import log_governance_event
+                        log_governance_event(
+                            "freshness_applied", rid,
+                            {"boost": round(boost, 6),
+                             "final_score": round(final, 6),
+                             "days_since_updated": round(days_updated, 2)})
                 rescored.append((rid, final))
             fused = sorted(rescored, key=lambda x: x[1], reverse=True)
 

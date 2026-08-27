@@ -83,6 +83,13 @@ class KBService:
                 content, self.store, self.embedder,
                 threshold=self.settings.dedup_threshold)
             if existing_id is not None:
+                # N23b/TASK-0073：去重拦截审计日志（默认开，不阻塞主流程）
+                if getattr(self.settings, "audit_dedup_enabled", True):
+                    from kb.audit import log_governance_event
+                    log_governance_event(
+                        "dedup_blocked", existing_id,
+                        {"similarity": similarity, "duplicate_of": existing_id},
+                        namespace=namespace)
                 raise DuplicateError(existing_id, similarity)
         record = Record(content=content, tags=tags or [], source=source,
                         namespace=namespace)
