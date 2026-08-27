@@ -38,7 +38,7 @@
 > Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/memories" -Method Post -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
 > ```
 
-**最后更新：2026-08-27（N21 交付） ｜ 更新人：协调者（GLM-5.3）｜ 快照：A3-N21 已合入 main（d1b82a1，TASK-0067/0068 verified，kb 200 项全绿）；下一步拆 N22（语义去重）派 worker-2/3；worker-1 停派（额度）；B3 纪律已扩展至协调者；RAG 快照机制运转中（tag=coordinator-progress）**
+**最后更新：2026-08-27（N21 交付核验收口） ｜ 更新人：协调者 ｜ 快照：A3-N21 已合入 main（d1b82a1，TASK-0066 spec/0067 N21a/0068 N21b 全 verified，kb 200 项全绿+orchestra 207 项全绿）；作废卡 TASK-0056 已清理为 failed；卡池空待拆 N22（语义去重+新鲜度+stats）；worker-1 停派（额度）；awesome-mcp-servers PR 待人工提交**
 
 ### ⚠️ 战略调整（2026-08-27，最高优先级背景知识）
 
@@ -52,23 +52,25 @@
 
 无。任务板全部收口（0056/0062/0063 为重复卡作废记录）。**卡池已空，等协调者拆下一批。**
 
-### 最近完成（2026-08-27 00:00~00:30，B3 收尾 + A2 鉴权 + monitor 韧性）
+### 最近完成（2026-08-27，A3-N21 交付核验收口）
 
-- **TASK-0059** Dispatch 播报与主摘要 LLM 解耦（worker-3）：LLM 失败时监控链路降级纯文本仍完整可用
-- **TASK-0065** monitor 纯文本模式配置化（worker-3）：`KB_MONITOR_LLM=off/auto` **默认 off**——本地无 LLM 完整可用成为默认（用户定方向；Ollama 常因显存不足起不来，不再阻塞任何功能）
-- **TASK-0062** N19 ApiKeyMiddleware（worker-2）：空 key 不鉴权/白名单 healthz/compare_digest/401 charset，spec §7 全 9 用例绿
-- **TASK-0064** N20 客户端带 key（worker-4）：client.py 自动 X-API-Key + 隔离实例端到端三态验证 + USER_GUIDE/README 文档
-- **TASK-0058/0060/0061** 轮次告警/watch 轮次列/open FBK 自动广播（worker-3/1）
-- **A2 鉴权里程碑全链路交付**：P2-2 spec → 人工评审 → N19/N20 → 文档，**零真实 key 落仓**
-- 重复卡风波二次教训：0062/0063 因建卡超时+作废广播不及时导致 worker 重复施工一次（成果零浪费但浪费了工时）；处置 = failed + 卡文注明 + comm:system 广播
+- **TASK-0066** A3 记忆治理 spec 立项（designer-1）：双层设计（无LLM规则层+有LLM智能层），三件套公式（衰减 λ=0.02/γ=0.3、去重阈值 0.92、新鲜度 β=0.05/α=0.3），REST+MCP API，N21-N23 里程碑，11 项配置全默认关；spec c65553e 已合入
+- **TASK-0067** N21a Record 元数据扩展+命中计数（worker-2）：Record 新增 access_count/last_accessed，_clean_metadata 过滤 None/空串保留 0，from_chroma .get 兼容旧记录，retriever 异步 daemon 线程 increment_access 不阻塞返回；test_n21_metadata 11 passed
+- **TASK-0068** N21b 衰减评分公式模块（worker-3）：新建 kb/governance.py 纯函数（compute_decay_factor/apply_decay），config 新增 decay_enabled/lambda/gamma，retriever hybrid/vector 模式应用衰减重排、BM25 不受影响，getattr 兼容 0067 字段零文件交集；test_n21_decay 21 passed
+- **d1b82a1** 修复：测试环境隔离（conftest 剥 env 覆盖 + n01 禁用 .env 文件 + n21_decay 补 increment_access 接口），合并后 4378 基线 200 项全绿
+- **N21 全量回归**：kb tests/ 200 passed（2:51）+ orchestra/tests/ 207 passed，零失败零回归；默认 KB_DECAY_ENABLED=false 零行为变化
+- **TASK-0056** 作废重复卡清理：与 TASK-0055 重复（relation 子命令），状态从 pending 改为 failed 关闭（FBK-0004 已 rejected）
 
 ### 后续规划（下一步做什么）
 
-**近期（当前，卡池空待拆，全部为 A 线）**：
-1. ~~GitHub 迁移~~ **✅ 已完成（2026-08-27）**：github.com/fish827-08/rag-kb 双远程同步；git filter-repo 历史重写（圣羽/RTX 3060 清零）；pre-push 钩子 + gitignore 扩充（.env/credentials/secrets）；英文 README_EN.md。**仅剩 awesome-mcp-servers PR 人工提交**（草稿在 2026-08-27 会话，可重写：Memory 小节加 rag-kb 行）
-2. **A3 记忆治理 spec 立项**（designer 拆卡进池）：双层设计——无 LLM 时规则 TTL+相似度去重；有 LLM 时智能 consolidation。先做"访问频率衰减（access_count/last_accessed）+ 语义去重（写入前相似度检索）+ 新鲜度权重"
-3. **A3.5 检索质量**（A3 后）：reranker（bge-reranker-v2-m3）/ BGE-M3 稀疏向量 / 最小评测基准（50-100 条中文 QA 对）
-4. **评估报告已归档**：`评估报告/` 目录两份多维度报告（含完整竞品对比与路线建议，拆卡依据从中取）
+**近期（当前，卡池空待拆 N22，全部为 A 线）**：
+1. ~~GitHub 迁移~~ **✅ 已完成（2026-08-27）**：github.com/fish827-08/rag-kb 双远程同步；git filter-repo 历史重写；pre-push 钩子 + gitignore 扩充；英文 README_EN.md。**仅剩 awesome-mcp-servers PR 人工提交**
+2. ~~A3 记忆治理 spec 立项~~ **✅ 已完成（TASK-0066，c65553e）**：双层设计+三件套公式+API+N21-N23 里程碑
+3. ~~N21 衰减~~ **✅ 已交付（TASK-0067/0068，d1b82a1，kb 200 项全绿）**：Record 元数据扩展+命中计数+衰减评分公式模块，默认关闭零行为变化
+4. **N22 待拆（下一步）**：语义去重（写入前余弦>0.92 相似度检查+merge 更新路径，异常降级新增）+ 新鲜度权重（检索重排 β=0.05/α=0.3）+ 新增 /governance/stats 端点 + 集成测试 6 项（spec §6.2）；按 spec §5 N22 拆 2-3 张卡派 worker-2/3
+5. **N23**（N22 后）：维护 CLI（`kb forget --stale --days 90 --dry-run` / `kb dedup --dry-run`）+ 日志审计闭环 + 智能层 consolidation（可选，本地 qwen3:4b）
+6. **A3.5 检索质量**（A3 后）：reranker（bge-reranker-v2-m3）/ BGE-M3 稀疏向量 / 最小评测基准（50-100 条中文 QA 对）
+7. **评估报告已归档**：`评估报告/` 目录两份多维度报告
 
 **中期**：
 - A3 记忆治理落地 → A4 易用性（CLI 优先）
