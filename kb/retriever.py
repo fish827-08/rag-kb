@@ -1,4 +1,6 @@
 """混合检索：向量 + BM25 双路，RRF 融合。"""
+import threading
+
 from kb.bm25 import BM25Index
 from kb.embedder import Embedder
 
@@ -66,4 +68,13 @@ class HybridRetriever:
                 "tags": rec.tags,
                 "created_at": rec.created_at,
             })
+        # N21a/TASK-0067：命中记录异步更新 access_count+1 / last_accessed=now
+        # （daemon 线程，不阻塞检索返回；increment_access 内部捕获异常记 WARNING）
+        if results:
+            hit_ids = [r["id"] for r in results]
+            threading.Thread(
+                target=self.store.increment_access,
+                args=(hit_ids,),
+                daemon=True,
+            ).start()
         return results
