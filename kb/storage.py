@@ -33,8 +33,13 @@ class VectorStore(ABC):
 
 
 def _clean_metadata(record: Record) -> dict:
-    """Chroma metadata 不支持 None 值，写入前丢弃为 None 的字段（如 source）。"""
-    return {k: v for k, v in record.to_metadata().items() if v is not None}
+    """Chroma metadata 不支持 None 与空串，写入前丢弃；access_count=0 是有效值须保留。
+
+    N21a/TASK-0067：过滤规则从仅 None 扩展为 None + 空串 ""；
+    0（int）、0.0（float）等假值但非空串/None 的值保留（access_count=0 须入库）。
+    """
+    return {k: v for k, v in record.to_metadata().items()
+            if v is not None and v != ""}
 
 
 class ChromaStore(VectorStore):
@@ -124,3 +129,26 @@ class ChromaStore(VectorStore):
             rec = Record.from_chroma(rid, res["documents"][0][i], res["metadatas"][0][i] or {})
             hits.append((rec, 1 - res["distances"][0][i]))
         return hits
+
+    def increment_access(self, record_ids: list[str]) -> None:
+        """命中记录 access_count+1 与 last_accessed=now（N21a/TASK-0067，异步调用）。
+
+        逐条读取当前 access_count 后 +1，更新 Chroma metadata（仅改 access_count/last_accessed，
+        其余字段保留）；失败记 WARNING 不抛异常（检索路径异步调用，不阻塞返回）。
+        """
+        import logging
+        from datetime import datetime
+        logger = logging.getLogger("kb.storage")
+        try:
+            now = datetime.now().isoformat()
+            for rid in record_ids:
+                rec = self.get(rid)
+                if rec is None:
+                    continue
+                self._col.update(
+                    ids=[rid],
+                    metadatas=[{"access_count": rec.access_count + 1,
+                                "last_accessed": now}],
+                )
+        except Exception as e:
+            logger.warning("异步更新访问计数失败: %s", e)
