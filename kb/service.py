@@ -62,7 +62,7 @@ class KBService:
         self.store = ChromaStore(self.settings.chroma_dir)
         self.bm25 = BM25Index()
         self.bm25.rebuild(self.store.iter_all())
-        self.retriever = HybridRetriever(self.store, self.bm25, self.embedder)
+        self.retriever = HybridRetriever(self.store, self.bm25, self.embedder, settings=self.settings)
         self.llm = llm or LLMClient(self.settings)
         # 云端客户端注入点：None=无独立云端客户端（真实云端由 self.llm 统一承担）
         self._cloud_client = None
