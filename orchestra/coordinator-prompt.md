@@ -38,7 +38,7 @@
 > Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/memories" -Method Post -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
 > ```
 
-**最后更新：2026-08-27（A3 spec 立项 + RAG 进度快照机制） ｜ 更新人：协调者（GLM-5.3）｜ 快照：A3 记忆治理 spec 已合入（TASK-0066 verified，c65553e）；N21-N23 待拆卡；worker-1 停派；进度快照机制启用（tag=coordinator-progress）**
+**最后更新：2026-08-27（N21 交付） ｜ 更新人：协调者（GLM-5.3）｜ 快照：A3-N21 已合入 main（d1b82a1，TASK-0067/0068 verified，kb 200 项全绿）；下一步拆 N22（语义去重）派 worker-2/3；worker-1 停派（额度）；B3 纪律已扩展至协调者；RAG 快照机制运转中（tag=coordinator-progress）**
 
 ### ⚠️ 战略调整（2026-08-27，最高优先级背景知识）
 
