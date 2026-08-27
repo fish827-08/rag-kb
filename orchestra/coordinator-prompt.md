@@ -30,7 +30,7 @@
 
 > **更新纪律**：每完成一轮"核验→合并→推送"收口后，协调者必须把本节更新为最新状态再提交（提交信息 `文档: 协调者接力状态更新至TASK-NNNN`）。本节是下一个协调者的唯一交接面，宁详勿略。
 
-**最后更新：2026-08-27（战略调整） ｜ 更新人：协调者（GLM-5.3）｜ 快照：B 线冻结维护、A 线唯一主线；LICENSE 已补；GitHub 迁移待 key；无待办卡**
+**最后更新：2026-08-27（A2.5 生态合规收口） ｜ 更新人：协调者（GLM-5.3）｜ 快照：A2.5 完成（LICENSE/GitHub 迁移/历史重写/英文 README）；卡池空待拆 A3 卡；awesome PR 待人工提交**
 
 ### ⚠️ 战略调整（2026-08-27，最高优先级背景知识）
 
@@ -57,7 +57,7 @@
 ### 后续规划（下一步做什么）
 
 **近期（当前，卡池空待拆，全部为 A 线）**：
-1. **GitHub 迁移**（等用户提供 GitHub key + 加速方案后执行）：建 GitHub 镜像仓库 → 推送 → 英文 README → 提交 awesome-mcp-servers/MCP Registry
+1. ~~GitHub 迁移~~ **✅ 已完成（2026-08-27）**：github.com/fish827-08/rag-kb 双远程同步；git filter-repo 历史重写（圣羽/RTX 3060 清零）；pre-push 钩子 + gitignore 扩充（.env/credentials/secrets）；英文 README_EN.md。**仅剩 awesome-mcp-servers PR 人工提交**（草稿在 2026-08-27 会话，可重写：Memory 小节加 rag-kb 行）
 2. **A3 记忆治理 spec 立项**（designer 拆卡进池）：双层设计——无 LLM 时规则 TTL+相似度去重；有 LLM 时智能 consolidation。先做"访问频率衰减（access_count/last_accessed）+ 语义去重（写入前相似度检索）+ 新鲜度权重"
 3. **A3.5 检索质量**（A3 后）：reranker（bge-reranker-v2-m3）/ BGE-M3 稀疏向量 / 最小评测基准（50-100 条中文 QA 对）
 4. **评估报告已归档**：`评估报告/` 目录两份多维度报告（含完整竞品对比与路线建议，拆卡依据从中取）
@@ -80,6 +80,8 @@
 - **test_worktree.py GBK 预存问题**：Windows 下跑全量测试加 PYTHONUTF8=1
 - **验证优先级**：orchestra/tests/（207 项）+ 改动相关 kb tests；全量 kb tests 159 项约 70s
 - **重派/拆卡前查重**：git log 搜关键词 + 查功能是否已在主线（TASK-0023 教训）
+- **GitHub 推送命令**（中文用户名坑）：`$env:GIT_SSH_COMMAND="ssh -i C:\Users\圣羽\.ssh\id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=$PWD\.kb_tmp\known_hosts -p 443"; git push github main`——**必须显式指定 key 路径**（git 子进程里中文用户名路径会乱码导致 ssh 找不到默认密钥），known_hosts 落仓库内 .kb_tmp/（已 gitignore）
+- **历史重写后双端强推**：git push --force 两侧都要做（origin=gitee 用凭据管理器，github 用上述 SSH 参数）
 
 ### 协调者注意事项（踩坑沉淀）
 
