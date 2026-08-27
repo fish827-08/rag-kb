@@ -6,6 +6,7 @@
 - api.create_memory：DuplicateError→409+duplicate_of+similarity
 - 阈值可配置
 """
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -76,9 +77,17 @@ class TestServiceAddMemory:
     """service.add_memory 去重接入（module-scoped KBService，减少 BGE-M3 加载）。"""
 
     @pytest.fixture(scope="module")
-    def service(self):
+    def service(self, tmp_path_factory):
         from kb.service import KBService
-        return KBService()
+        from kb import config
+        # 临时数据目录隔离：避免写入生产 ChromaDB（1024维集合）导致维度不匹配
+        tmp = tmp_path_factory.mktemp("kb_dedup_svc")
+        os.environ["KB_DATA_DIR"] = str(tmp)
+        os.environ["KB_LOG_DIR"] = str(tmp / "logs")
+        config.get_settings.cache_clear()
+        svc = KBService()
+        yield svc
+        config.get_settings.cache_clear()
 
     def test_dedup_enabled_duplicate_raises(self, service):
         """dedup 开 + check_duplicate 命中 → 抛 DuplicateError，不落库。"""
@@ -120,11 +129,18 @@ class TestApi409:
     """api.create_memory 捕获 DuplicateError 返回 409（module-scoped TestClient）。"""
 
     @pytest.fixture(scope="module")
-    def client(self):
+    def client(self, tmp_path_factory):
         from fastapi.testclient import TestClient
         from kb.api import create_app
+        from kb import config
+        # 临时数据目录隔离：避免写入生产 ChromaDB 导致维度不匹配
+        tmp = tmp_path_factory.mktemp("kb_dedup_api")
+        os.environ["KB_DATA_DIR"] = str(tmp)
+        os.environ["KB_LOG_DIR"] = str(tmp / "logs")
+        config.get_settings.cache_clear()
         with TestClient(create_app()) as c:
             yield c
+        config.get_settings.cache_clear()
 
     def test_duplicate_returns_409(self, client):
         """DuplicateError → 409 + duplicate_of + similarity + error=DUPLICATE。
