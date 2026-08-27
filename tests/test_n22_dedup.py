@@ -127,10 +127,14 @@ class TestApi409:
             yield c
 
     def test_duplicate_returns_409(self, client):
-        """DuplicateError → 409 + duplicate_of + similarity + error=DUPLICATE。"""
+        """DuplicateError → 409 + duplicate_of + similarity + error=DUPLICATE。
+
+        注意：TestClient 经中间件包装后 client.app 是 ASGI 函数对象，
+        无法通过 .state.kb 访问实例；改用类级别 patch KBService.add_memory。
+        """
         from kb.governance import DuplicateError
-        with patch.object(client.app.state.kb, "add_memory",
-                          side_effect=DuplicateError("existing-456", 0.94)):
+        with patch("kb.service.KBService.add_memory",
+                   side_effect=DuplicateError("existing-456", 0.94)):
             r = client.post("/api/v1/memories", json={"content": "test"})
         assert r.status_code == 409
         body = r.json()
