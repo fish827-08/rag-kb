@@ -34,7 +34,7 @@
 ```
 ┌─────────────────────────────────────────────┐
 │  有 LLM 智能层（N23 可选，本地 qwen3:4b）    │
-│  - consolidation：合并矛盾记忆                │
+│  - consolidation：归并矛盾记忆                │
 │  - 智能遗忘建议：标记可删除候选               │
 ├─────────────────────────────────────────────┤
 │  无 LLM 规则层（N21-N22，确定性，零依赖）     │
@@ -62,7 +62,7 @@
 
 ```
 写入路径（POST /api/v1/memories）：
-  嵌入 → [去重检查：query top_k 相似] → 超阈值→更新旧记录(merge+bump) / 未超→新增
+  嵌入 → [去重检查：query top_k 相似] → 超阈值→返回409拦截(不写库) / 未超→新增
   → 写 Chroma（含 access_count=0, last_accessed=""）
 
 检索路径（POST /api/v1/search）：
@@ -93,24 +93,28 @@ final_score = rrf_score * decay_factor
 
 ### 3.2 语义去重
 
-**机制**：写入前对新内容做向量检索，取 top_k=3 最相似记录；若最高余弦相似度 ≥ 阈值，则不新增，改为更新最相似记录。
+**机制**：写入前对新内容做向量检索，取 top_k=3 最相似记录；若最高余弦相似度 > 阈值，则不写库，返回 409 拦截响应（与 TASK-0069 实现对齐：`kb/service.py` 抛 `DuplicateError`，`kb/api.py` 捕获转 409）。
 
-**更新策略（merge）**：
-- content：取新内容（新信息优先）；旧内容不保留（避免冗余）
-- access_count：旧值 +1（视为一次访问）
-- last_accessed：now
-- updated_at：now
-- created_at：保留旧值（保留原始入库时间）
-- tags/source/namespace：保留旧值（去重不改变归属）
+**409 拦截响应字段**（HTTP 409，JSON）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `error` | str | 固定 `"DUPLICATE"` |
+| `message` | str | 人类可读说明，如"检测到语义重复，已拦截写入" |
+| `duplicate_of` | str | 命中的最相似旧记录 ID |
+| `similarity` | float | 余弦相似度（0-1），供调用方判断 |
+
+- 调用方（agent/CLI）收到 409 后可选择：忽略（不写入）、或改用 `update_memory` 更新已有记录（更新路径不走去重拦截）
+- 409 拦截不修改任何已有记录（只读检测，不写库）
 
 | 参数 | 默认 | 依据 |
 |---|---|---|
-| `KB_DEDUP_THRESHOLD` | 0.92 | BGE-M3 余弦相似度；0.92 以上为高度语义重复（实测同句改写 ~0.94-0.98，相关但不同 ~0.75-0.88）；阈值可调，过高漏去重、过低误合并 |
+| `KB_DEDUP_THRESHOLD` | 0.92 | BGE-M3 余弦相似度；0.92 以上为高度语义重复（实测同句改写 ~0.94-0.98，相关但不同 ~0.75-0.88）；阈值可调，过高漏去重、过低误拦截 |
 | `KB_DEDUP_TOPK` | 3 | 只比对最相似的 3 条，控制开销 |
 | `KB_DEDUP_ENABLED` | false | 默认关闭 |
 
 - 无 LLM：纯余弦阈值判定，确定性
-- 边界：相似度恰好等于阈值时不去重（严格 > 阈值才合并，避免边界抖动）
+- 边界：相似度恰好等于阈值时不拦截（严格 > 阈值才返回 409，避免边界抖动）
 - 去重检查失败（如检索异常）时降级为直接新增（不阻塞写入），记 WARNING 日志
 
 ### 3.3 新鲜度权重
@@ -139,7 +143,7 @@ final_score = rrf_score * (1 + α * freshness)
 
 | 端点 | 改动 |
 |---|---|
-| `POST /api/v1/memories` | 写入前走语义去重检查（KB_DEDUP_ENABLED 时）；返回体新增 `deduplicated: bool` 与 `merged_into: record_id\|null` |
+| `POST /api/v1/memories` | 写入前走语义去重检查（KB_DEDUP_ENABLED 时）；命中重复返回 409（`error=DUPLICATE`/`message`/`duplicate_of`/`similarity`），不写库；未命中正常写入返回 201 |
 | `POST /api/v1/search` | 检索结果走新鲜度权重 + 衰减降权（对应开关开启时）；命中记录异步更新 access_count/last_accessed |
 | `POST /api/v1/ask` | 同 search（ask 内部走检索） |
 
@@ -147,13 +151,13 @@ final_score = rrf_score * (1 + α * freshness)
 
 | 端点 | 方法 | 说明 |
 |---|---|---|
-| `/api/v1/governance/stats` | GET | 返回治理统计：总记录数、平均 access_count、超 90 天未命中数、去重候选数（>0.85 未合并）；只读无副作用 |
+| `/api/v1/governance/stats` | GET | 返回治理统计：总记录数、平均 access_count、超 90 天未命中数、去重候选数（>0.85 未拦截）；只读无副作用 |
 | `/api/v1/governance/decay` | POST | 手动触发全量衰减评分重算（dry_run=true 时只返回候选不写库）；用于维护命令 |
-| `/api/v1/governance/dedup` | POST | 手动扫描全库去重候选（dry_run=true 返回候选对，false 执行合并）；批量维护用 |
+| `/api/v1/governance/dedup` | POST | 手动扫描全库重复对（dry_run=true 返回候选对列表含相似度，false 返回拦截统计报告）；只读扫描不自动删除，供人工决策 |
 
 ### 4.3 MCP 协议
 
-- 现有 MCP `add_memory` 工具：内部复用 REST 写入路径，自动享受去重；工具描述补"开启去重时可能合并到已有记录"
+- 现有 MCP `add_memory` 工具：内部复用 REST 写入路径，自动享受去重；工具描述补"开启去重时重复内容返回 409 不写入，调用方可改用 update_memory"
 - 现有 MCP `search_memory` 工具：复用检索路径，自动享受新鲜度+衰减
 - 新增 MCP 工具 `get_governance_stats`：返回治理统计（供 agent 评估记忆健康度）
 - MCP 工具参数与 REST 对齐，不另设协议
@@ -163,8 +167,8 @@ final_score = rrf_score * (1 + α * freshness)
 | 节点 | 内容 | 门禁 |
 |---|---|---|
 | **N21** | spec 评审通过 + Record 元数据扩展（access_count/last_accessed）+ 衰减评分公式实现 + 检索命中异步更新计数 + 单元测试 | spec 需人工评审（本卡） |
-| **N22** | 语义去重（写入前相似度检查 + merge 更新路径）+ 新鲜度权重（检索重排）+ 新增 /governance/stats 端点 + 集成测试 | 标准 |
-| **N23** | 维护 CLI（`kb forget --stale --days 90 --dry-run` / `kb dedup --dry-run`）+ 日志审计闭环（每次合并/降权记日志）+ 智能层 consolidation（可选，本地 qwen3:4b 合并矛盾记忆） | 标准 |
+| **N22** | 语义去重（写入前相似度检查 + 409 拦截响应，DuplicateError→409）+ 新鲜度权重（检索重排）+ 新增 /governance/stats 端点 + 集成测试 | 标准 |
+| **N23** | 维护 CLI（`kb forget --stale --days 90 --dry-run` / `kb dedup --dry-run`）+ 日志审计闭环（每次 409 拦截/降权记日志）+ 智能层 consolidation（可选，本地 qwen3:4b 智能归并矛盾记忆） | 标准 |
 
 - N21 交付后衰减可独立开启验证；N22 交付后去重+新鲜度可独立开启；N23 交付后维护工具+智能层可用
 - 每节点走 TDD：先写验收测试→红→实现→绿→全量回归→提交
@@ -191,14 +195,14 @@ def test_chroma_metadata_skips_none():
 
 ### 6.2 集成测试（N22）
 ```python
-def test_dedup_above_threshold_merges():
-    # 写入两条相似度>0.92 的记录 → 第二条 merged_into 第一条，总记录数=1
+def test_dedup_above_threshold_returns_409():
+    # 写入两条相似度>0.92 的记录 → 第二条返回 409(error=DUPLICATE/duplicate_of/similarity)，不写库，总记录数=1
 
 def test_dedup_below_threshold_adds_new():
     # 相似度<0.92 → 新增，总记录数=2
 
-def test_dedup_preserves_created_at():
-    # merge 后 created_at 保留旧值，updated_at 更新
+def test_dedup_409_response_fields():
+    # 409 响应含 error="DUPLICATE"/message/duplicate_of(旧记录ID)/similarity(float)，字段与 TASK-0069 实现对齐
 
 def test_freshness_new_record_ranks_higher():
     # 两条相关度相同记录，新的排前面（freshness 权重生效）
@@ -238,7 +242,7 @@ def test_dedup_failure_degrades_to_add():
 
 | 风险 | 规避 |
 |---|---|
-| 去重误合并（语义相关但不同的信息被合并） | 阈值 0.92 偏高（只合并高度重复）；merge 保留旧 created_at 可追溯；提供 dry-run 扫描让人工审核候选 |
+| 去重误拦截（语义相关但不同的信息被 409 拦截） | 阈值 0.92 偏高（只拦截高度重复）；409 返回 duplicate_of 可追溯，调用方可改用 update_memory；提供 dry-run 扫描让人工审核候选 |
 | 衰减导致重要旧记忆被埋没 | 衰减只影响向量/RRF 排序，BM25 精确匹配不受影响；access_count 高频项获得 γ 加权对抗衰减；提供 governance/stats 让 agent 评估 |
 | 异步更新计数丢失 | 写入失败记 WARNING 不阻塞；计数是软信号，丢失不影响正确性 |
 | Chroma metadata 类型限制 | access_count 用 int（Chroma 支持），last_accessed 用 str（ISO）；None/空串走 _clean_metadata 过滤 |
