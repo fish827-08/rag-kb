@@ -19,3 +19,9 @@ key/
 *.key
 # 评估报告（本地参考，不入库）
 评估报告/
+# 本地敏感数据（2026-08-27：敏感信息只留本地不上 git）
+*.env
+.env.*
+credentials*
+secrets/
+!.env.example
