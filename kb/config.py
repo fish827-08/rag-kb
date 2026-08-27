@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     decay_enabled: bool = False                   # KB_DECAY_ENABLED：访问频率衰减开关，默认关（零行为变化）
     decay_lambda: float = 0.02                    # KB_DECAY_LAMBDA：衰减速率 λ（/天），半衰期≈35天
     decay_gamma: float = 0.3                      # KB_DECAY_GAMMA：高频访问加权系数 γ，access_count=10→约2.0倍
+    # ---- 记忆治理 A3（N22b 新鲜度权重，TASK-0070）----
+    freshness_enabled: bool = False               # KB_FRESHNESS_ENABLED：新鲜度权重开关，默认关（零行为变化）
+    freshness_beta: float = 0.05                  # KB_FRESHNESS_BETA：新鲜度衰减速率 β（/天），半衰期≈14天
+    freshness_alpha: float = 0.3                  # KB_FRESHNESS_ALPHA：新鲜度加权上限系数 α，boost范围[1,1.3]
     dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
     dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 

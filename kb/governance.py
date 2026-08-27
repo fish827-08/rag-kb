@@ -76,3 +76,60 @@ def days_since(last_accessed: str, created_at: str,
         return 0.0
     delta = (now - ref).total_seconds() / 86400.0
     return max(0.0, delta)
+
+
+def freshness_boost(days_since_updated: float,
+                    beta: float = 0.05,
+                    alpha: float = 0.3) -> float:
+    """计算新鲜度加权因子（A3 spec §3.3）。
+
+    recency = exp(-β * days_since_updated)
+    boost = 1 + α * recency
+
+    与衰减（§3.1）正交：衰减看 last_accessed（访问冷热），新鲜度看 updated_at
+    （内容新旧），两者独立可叠加（正交相乘）。
+
+    参数：
+        days_since_updated: 距上次更新的天数（>=0，用 updated_at）
+        beta: 新鲜度衰减速率 β（/天），默认 0.05（半衰期≈14天）
+        alpha: 新鲜度加权上限系数 α，默认 0.3（boost 范围 [1, 1.3]）
+
+    返回：
+        新鲜度加权因子（范围 [1, 1+α]，新记忆接近 1+α，旧记忆接近 1）。
+    """
+    if days_since_updated < 0:
+        days_since_updated = 0.0
+    recency = math.exp(-beta * days_since_updated)
+    return 1.0 + alpha * recency
+
+
+def compute_stats(records, now: datetime | None = None) -> dict:
+    """计算治理统计（A3 spec §4.2，TASK-0070）：纯函数，输入记录迭代器输出统计 dict。
+
+    返回：
+        total_count: 总记录数
+        avg_access_count: 平均 access_count（保留2位小数）
+        stale_90d_count: 超 90 天未命中数（last_accessed 为空时用 created_at）
+
+    access_count/last_accessed 用 getattr 兼容 TASK-0067 未合入（未合入时均为 0/""）。
+    """
+    if now is None:
+        now = datetime.now()
+    total = 0
+    access_sum = 0
+    stale_90d = 0
+    for rec in records:
+        total += 1
+        ac = getattr(rec, "access_count", 0) or 0
+        access_sum += ac
+        last_accessed = getattr(rec, "last_accessed", "") or ""
+        created_at = getattr(rec, "created_at", "") or ""
+        days = days_since(last_accessed, str(created_at), now)
+        if days > 90:
+            stale_90d += 1
+    avg_access = (access_sum / total) if total > 0 else 0.0
+    return {
+        "total_count": total,
+        "avg_access_count": round(avg_access, 2),
+        "stale_90d_count": stale_90d,
+    }

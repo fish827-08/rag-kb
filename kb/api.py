@@ -556,6 +556,29 @@ def create_app(settings: Settings | None = None,
         """前端只读配置（TASK-0021）：仅暴露看板需要的最小字段（monitor_autotimer）。"""
         return {"monitor_autotimer": kb.settings.monitor_autotimer}
 
+    @app.get("/api/v1/governance/stats")
+    def get_governance_stats() -> dict:
+        """治理统计（TASK-0070，A3 spec §4.2）：只读无副作用。
+
+        返回总记录数、平均 access_count、超 90 天未命中数；access_count/last_accessed
+        用 getattr 兼容 TASK-0067 未合入（未合入时均为 0/""，统计值为 0）。
+        """
+        from kb.governance import compute_stats
+        return compute_stats(kb.store.iter_all())
+
+    @app.get("/api/v1/governance/config")
+    def get_governance_config() -> dict:
+        """治理配置（TASK-0070）：GET 当前衰减+新鲜度配置，只读。"""
+        s = kb.settings
+        return {
+            "decay_enabled": getattr(s, "decay_enabled", False),
+            "decay_lambda": getattr(s, "decay_lambda", 0.02),
+            "decay_gamma": getattr(s, "decay_gamma", 0.3),
+            "freshness_enabled": getattr(s, "freshness_enabled", False),
+            "freshness_beta": getattr(s, "freshness_beta", 0.05),
+            "freshness_alpha": getattr(s, "freshness_alpha", 0.3),
+        }
+
     @app.get("/")
     def root() -> HTMLResponse:
         """根路径极简导航页（N19）：纯字符串 HTML，无模板依赖；样式与看板一致。"""
