@@ -23,6 +23,9 @@ from b3 import (check_summary_tags, cmd_add_with_rounds, cmd_resume,
                  get_quota, increment_rounds, render_rounds)
 from relation import (cmd_relation_add, cmd_relation_list,
                       cmd_relation_remove)
+from mount import (ROLES, TTL_DEFAULT, cmd_heartbeat, cmd_mount,
+                   cmd_mount_claim, cmd_mount_idle, cmd_mount_status,
+                   cmd_unmount)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -84,6 +87,34 @@ def build_parser() -> argparse.ArgumentParser:
                               help="缺省列全部 comm:* 频道")
     p_list_comm.add_argument("--limit", type=int, default=10,
                               help="最多列几条（默认 10）")
+
+    p_mount = sub.add_parser("mount", help="开始/刷新挂载会话（B5 挂载常驻）")
+    p_mount.add_argument("name")
+    p_mount.add_argument("--role", default="worker", choices=ROLES,
+                         help="角色：worker/designer/subcoordinator/parent")
+    p_mount.add_argument("--ttl", type=int, default=TTL_DEFAULT,
+                         help="空闲挂载 TTL 秒（默认 900，0=常驻）")
+
+    p_heartbeat = sub.add_parser("heartbeat", help="刷新挂载心跳")
+    p_heartbeat.add_argument("name")
+
+    p_unmount = sub.add_parser("unmount", help="退出挂载（exited）")
+    p_unmount.add_argument("name")
+    p_unmount.add_argument("--reason", default="", help="退出原因")
+
+    p_mount_status = sub.add_parser("mount-status", help="一行一 agent 挂载看板")
+    p_mount_status.add_argument("--role", choices=ROLES, default=None,
+                                help="按角色过滤")
+
+    p_mount_claim = sub.add_parser("mount-claim",
+                                   help="领卡登记主题（更新连续相关链）")
+    p_mount_claim.add_argument("name")
+    p_mount_claim.add_argument("--topic", required=True,
+                               help="任务主题（连续相关≤5 判定依据）")
+
+    p_mount_idle = sub.add_parser("mount-idle",
+                                  help="完成任务后转回空闲监听")
+    p_mount_idle.add_argument("name")
 
     p_watch = sub.add_parser("watch", help="终端看板（实时监控）")
     p_watch.add_argument("--interval", type=int, default=5,
@@ -189,6 +220,12 @@ _DISPATCH = {
     "verify": lambda a: cmd_verify(a.task_id, action=a.action, note=a.note,
                                    docs_done=a.docs_done),
     "new-worker": lambda a: cmd_new_worker(a.name),
+    "mount": lambda a: cmd_mount(a.name, role=a.role, ttl=a.ttl),
+    "heartbeat": lambda a: cmd_heartbeat(a.name),
+    "unmount": lambda a: cmd_unmount(a.name, reason=a.reason),
+    "mount-status": lambda a: cmd_mount_status(role=a.role),
+    "mount-claim": lambda a: cmd_mount_claim(a.name, topic=a.topic),
+    "mount-idle": lambda a: cmd_mount_idle(a.name),
     "register": lambda a: cmd_register(a.name, model=a.model, client=a.client),
     "report": lambda a: cmd_report(channel=a.channel, from_=a.from_,
                                    text=a.text),

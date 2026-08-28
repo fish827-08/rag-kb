@@ -22,6 +22,7 @@ def mock_request(monkeypatch):
     import cards
     import comm
     import feedback
+    import mount
     import registry
     import watch
 
@@ -38,7 +39,7 @@ def mock_request(monkeypatch):
                 return resp
         raise AssertionError(f"未预置的请求：{key}")
 
-    for mod in (cards, registry, comm, watch, feedback):
+    for mod in (cards, registry, comm, watch, feedback, mount):
         monkeypatch.setattr(mod, "_request", fake)
     holder = type("Mock", (), {})()
     holder.calls = calls
