@@ -283,6 +283,32 @@ worker 全部完成后，回协调者任务说"**核验**"。协调者会独立�
 - worker 不直接 git commit/推送——统一由协调者核验后提交
 - 测试纪律：先写验收测试（红）→ 实现（绿）→ 全量回归
 
+### 4.6 挂载常驻模式（B5，新增）
+
+让 worker/designer 完成任务后**挂载监听**（空闲 15 分钟自动停机、有新卡自动继续），子协调者**持续挂载**，父协调者**按需唤醒**：
+
+```powershell
+# 挂载（worker/designer 默认 TTL=900 即 15 分钟；子协调者 --ttl 0 常驻）
+venv\Scripts\python.exe orchestra\board.py mount worker-1 --role worker --ttl 900
+venv\Scripts\python.exe orchestra\board.py mount designer-1 --role designer --ttl 900
+venv\Scripts\python.exe orchestra\board.py mount subcoordinator --role subcoordinator --ttl 0
+
+# 心跳 / 退出 / 看板 / 失联检测
+venv\Scripts\python.exe orchestra\board.py heartbeat worker-1
+venv\Scripts\python.exe orchestra\board.py unmount worker-1 --reason 空闲超时
+venv\Scripts\python.exe orchestra\board.py mount-status            # 一行一 agent
+venv\Scripts\python.exe orchestra\board.py mount-check --threshold 300
+
+# 挂载循环内由 worker/designer 自行调用
+venv\Scripts\python.exe orchestra\board.py mount-claim worker-1 --topic kb-A3
+venv\Scripts\python.exe orchestra\board.py mount-idle worker-1
+```
+
+- **挂载循环**：worker/designer 挂载后自循环——查卡 → 有卡领卡干活回写 → `mount-idle`；无卡 `heartbeat`+sleep 60s；累计空闲满 TTL `unmount` 停机。
+- **连续相关≤5**：同"主题"卡连续做到第 5 张，写 summary 后 `unmount` 上下文重置（防上下文膨胀）。
+- 父协调者不挂载：用户唤醒后建"拆卡卡"（assignee=subcoordinator）派活，见 `orchestra/parent-coordinator-prompt.md`。
+- 完整协议见 `orchestra/protocol.md` §15 与 `orchestra/docs/superpowers/specs/2026-08-28-orchestra-mount-design.md`。
+
 ## 5. 配置参考
 
 复制 `.env.example` 为 `.env` 后按需填写（`.env` 不入库，密钥只放本机）：
