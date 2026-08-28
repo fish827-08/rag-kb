@@ -138,6 +138,7 @@ venv\Scripts\python.exe orchestra\board.py worktree clean TASK-NNNN  # 清理后
 - **并行卡零文件交集**：同批多卡分属不同子系统（如 kb/ 与 orchestra/）
 - **分支模式**：建卡时建对应分支 `git branch task/TASK-NNNN`，卡内"约束"注明 `分支 task/TASK-NNNN`
 - **复杂度配额标注**（B3 §14.3）：拆卡时按"改动文件数/子系统数/是否含设计决策"标注复杂度，卡内"约束"注明 `配额 simple/medium/complex`；未注明默认 medium；配额总上限 simple=3/medium=5/complex=8
+- **主题标注**（B5 挂载）：卡内"约束"注明 `主题 X`（供 worker/designer 挂载连续相关≤5 判定）
 
 ## B3 成本管控纪律（v1.6 新增，全文见 protocol.md §14）——**协调者与 worker 同样生效**
 

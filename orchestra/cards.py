@@ -241,11 +241,37 @@ def cmd_verify(task_id: str, action: str, note: str,
     print(f"{task_id} → {new_status}" + (f"（备注：{note}）" if note else ""))
 
 
-WORKER_INTRO = """你是 {name}，agent-orchestra 的执行者（worker）。
-请在当前任务中执行 skill：orchestra-worker，然后按其协议开始工作：
-查卡 → 认领 → 执行 → 回写 → 停止。若无待办任务，回复待命即可。"""
+WORKER_INTRO = """你是 {name}，agent-orchestra 的执行者（worker，挂载常驻模式）。
+请在当前任务中执行 skill：orchestra-worker，然后按其协议工作：
+1. board.py mount {name} --role worker --ttl 900 启动挂载；
+2. 进入挂载循环：查卡 → 有卡领卡干活回写 → mount-idle；无卡 heartbeat + sleep 60s；
+3. 空闲满 15 分钟自动 unmount 停机；连续同主题 ≥5 写 summary 后 unmount 上下文重置。
+完整协议见 orchestra/worker-prompt.md。"""
+
+DESIGNER_INTRO = """你是 {name}，agent-orchestra 的设计者（designer，挂载常驻模式）。
+职责：写设计书与验收测试草案，不写业务实现代码。挂载循环同 worker：
+board.py mount {name} --role designer --ttl 900 后查卡 → 有卡设计回写 → mount-idle。
+完整协议见 orchestra/designer-prompt.md。"""
+
+SUBCOORD_INTRO = """你是 {name}，agent-orchestra 的子协调者（subcoordinator，持续挂载常驻）。
+职责：拆卡、分发、监听、核验、仲裁、合并推送（确定性动作交机械臂 coordinator_loop.py）。
+board.py mount {name} --role subcoordinator --ttl 0 启动常驻（不超时）。
+完整协议见 orchestra/coordinator-prompt.md（先读文首"挂载常驻"节）。"""
+
+PARENT_INTRO = """你是 {name}，agent-orchestra 的父协调者（parent，不挂载、按需唤醒）。
+职责：面向用户接收高层目标 → 建"拆卡卡"(assignee=subcoordinator) 派活 → 终验汇报。
+完整协议见 orchestra/parent-coordinator-prompt.md。"""
+
+_AGENT_INTROS = {
+    "worker": WORKER_INTRO,
+    "designer": DESIGNER_INTRO,
+    "subcoordinator": SUBCOORD_INTRO,
+    "parent": PARENT_INTRO,
+}
 
 
-def cmd_new_worker(name: str) -> None:
-    """打印该 worker 的引导语（用户复制到新 TraeWork 任务）。"""
-    print(WORKER_INTRO.format(name=name))
+def cmd_new_worker(name: str, role: str = "worker") -> None:
+    """打印该角色的引导语（用户复制到新 AI 会话，默认 worker）。"""
+    if role not in _AGENT_INTROS:
+        raise ValueError(f"role 非法：{role!r}，可选 {', '.join(_AGENT_INTROS)}")
+    print(_AGENT_INTROS[role].format(name=name))

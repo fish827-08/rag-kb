@@ -66,8 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
                           action="store_true",
                           help="确认文档同步清单已完成（有清单时核验前置）")
 
-    p_new = sub.add_parser("new-worker", help="打印 worker 引导语")
+    p_new = sub.add_parser("new-worker", help="打印角色引导语（worker/designer/subcoordinator/parent）")
     p_new.add_argument("name")
+    p_new.add_argument("--role", default="worker", choices=ROLES,
+                       help="角色（默认 worker）")
 
     p_register = sub.add_parser("register", help="注册/刷新 worker 身份")
     p_register.add_argument("name")
@@ -224,7 +226,7 @@ _DISPATCH = {
     "show": lambda a: cmd_show(a.task_id),
     "verify": lambda a: cmd_verify(a.task_id, action=a.action, note=a.note,
                                    docs_done=a.docs_done),
-    "new-worker": lambda a: cmd_new_worker(a.name),
+    "new-worker": lambda a: cmd_new_worker(a.name, role=a.role),
     "mount": lambda a: cmd_mount(a.name, role=a.role, ttl=a.ttl),
     "heartbeat": lambda a: cmd_heartbeat(a.name),
     "unmount": lambda a: cmd_unmount(a.name, reason=a.reason),

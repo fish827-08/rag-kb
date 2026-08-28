@@ -227,6 +227,20 @@ class TestNewWorker:
         out = capsys.readouterr().out
         assert "worker-1" in out
         assert "orchestra-worker" in out
+        assert "mount" in out                     # 挂载常驻引导语
+
+    def test_new_worker_指定role输出对应引导语(self, capsys):
+        import board
+        board.cmd_new_worker("designer-1", role="designer")
+        out = capsys.readouterr().out
+        assert "designer-1" in out
+        assert "设计者" in out
+        assert "orchestra/designer-prompt.md" in out
+
+    def test_new_worker_非法role报错(self, capsys):
+        import board
+        with pytest.raises(ValueError):
+            board.cmd_new_worker("x", role="boss")
 
 
 class TestMain:
@@ -323,5 +337,35 @@ class TestMain:
             "items": [], "total": 0}
         board.main()
         assert "无已注册 worker" in capsys.readouterr().out
+
+
+class TestMountDispatch:
+    """挂载子命令分发（board.main 路由，B5）。"""
+
+    def test_main_mount_status分发(self, mock_request, monkeypatch, capsys):
+        import board
+        monkeypatch.setattr(sys, "argv", ["board.py", "mount-status"])
+        mock_request.responses["GET /memories?tag=mount_state&limit=1000"] = {
+            "items": [], "total": 0}
+        board.main()
+        assert "无挂载中的 agent" in capsys.readouterr().out
+
+    def test_main_mount分发(self, mock_request, monkeypatch, capsys):
+        import board
+        monkeypatch.setattr(sys, "argv",
+                            ["board.py", "mount", "worker-1", "--role", "worker"])
+        mock_request.responses["GET /memories?tag=mount_state&limit=1000"] = {
+            "items": [], "total": 0}
+        mock_request.responses["POST /memories"] = {"id": "m1"}
+        board.main()
+        assert "已挂载 worker-1" in capsys.readouterr().out
+
+    def test_main_mount_check分发(self, mock_request, monkeypatch, capsys):
+        import board
+        monkeypatch.setattr(sys, "argv", ["board.py", "mount-check"])
+        mock_request.responses["GET /memories?tag=mount_state&limit=1000"] = {
+            "items": [], "total": 0}
+        board.main()
+        assert "无失联 agent" in capsys.readouterr().out
 
 
