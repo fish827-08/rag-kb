@@ -67,6 +67,36 @@ def _truncate(text: str, n: int = 50) -> str:
     return text[:n] + "…" if len(text) > n else text
 
 
+# ---- N28 CLI 增强（A4 spec §2）：stats 纯函数 + 命令 ----
+
+def compute_type_distribution(records) -> dict[str, dict]:
+    """类型分布：{type: {"count": 条数, "pct": 百分比}}（N28 stats）。
+
+    空输入返回空 dict；百分比保留 1 位小数。
+    """
+    counts: dict[str, int] = {}
+    for r in records:
+        t = getattr(getattr(r, "type", None), "value", None) or str(
+            getattr(r, "type", "unknown"))
+        counts[t] = counts.get(t, 0) + 1
+    total = sum(counts.values())
+    if total == 0:
+        return {}
+    return {t: {"count": c, "pct": round(c * 100.0 / total, 1)}
+            for t, c in sorted(counts.items())}
+
+
+def compute_hot_records(records, top: int = 5) -> list[tuple]:
+    """访问热度 top N：[(record, access_count)] 按 access_count 降序（N28 stats）。
+
+    零计数记录排除（从未访问无热度意义）。
+    """
+    items = [(r, getattr(r, "access_count", 0) or 0) for r in records]
+    items = [(r, c) for r, c in items if c > 0]
+    items.sort(key=lambda x: x[1], reverse=True)
+    return items[:top]
+
+
 def resolve_device(settings: Settings, interactive: bool, input_fn=input) -> str:
     """优先级：settings.device 显式非空值 > runtime.json 已存选择 > 交互询问（cuda 可用时）
     > 默认 cpu。interactive=False 时不询问直接 cpu。"""
@@ -132,6 +162,104 @@ def search(query: str,
 def info():
     """运行信息。"""
     console.print(_service().stats())
+
+
+@app.command()
+def stats(
+    stale_days: int = typer.Option(90, "--stale-days", help="陈旧阈值天数"),
+    top: int = typer.Option(5, "--top", help="访问热度显示条数"),
+):
+    """记忆库统计：概览 / 类型分布 / 访问热度 / 陈旧分布（N28）。
+
+    用法：
+      kb stats                      # 默认 90 天陈旧阈值，热度 top 5
+      kb stats --stale-days 30 --top 10
+    """
+    svc = _service()
+    base = svc.stats()
+    records = list(svc.store.iter_all())
+
+    console.print(f"[bold]记忆库统计[/bold]　记录 {base['records']} 条 · "
+                  f"device={base['device']} · llm={base['llm']}")
+
+    # 类型分布
+    dist = compute_type_distribution(records)
+    if dist:
+        t1 = Table(title="类型分布")
+        t1.add_column("类型", style="cyan")
+        t1.add_column("条数", justify="right")
+        t1.add_column("占比", justify="right")
+        for t, d in dist.items():
+            t1.add_row(t, str(d["count"]), f"{d['pct']}%")
+        console.print(t1)
+    else:
+        console.print("[dim]类型分布：空库[/dim]")
+
+    # 访问热度 top N
+    hot = compute_hot_records(records, top=top)
+    if hot:
+        t2 = Table(title=f"访问热度 top {len(hot)}")
+        t2.add_column("内容摘要", style="white")
+        t2.add_column("命中次数", justify="right", style="yellow")
+        t2.add_column("最后命中", style="dim")
+        for r, c in hot:
+            t2.add_row(_truncate(r.content), str(c),
+                       r.last_accessed or "-")
+        console.print(t2)
+    else:
+        console.print("[dim]访问热度：暂无命中记录[/dim]")
+
+    # 陈旧分布
+    stale = find_stale_records(records, stale_days)
+    console.print(f"陈旧分布：超 {stale_days} 天未命中 "
+                  f"[red]{len(stale)}[/red] 条"
+                  + ("（kb forget --stale 可清理）" if stale else ""))
+
+
+@app.command()
+def ask(
+    question: str,
+    top_k: int = typer.Option(5, "--top-k", help="检索条数"),
+):
+    """终端 RAG 问答：检索 + 生成，直连 KBService.ask（N28）。
+
+    LLM 不可用时仍输出检索命中（标注"仅检索未生成"），退出码 1。
+    """
+    from kb.service import LLMDisabledError
+    svc = _service()
+    console.print("[dim]正在检索与生成…（首次调用需加载模型，请稍候）[/dim]")
+    try:
+        result = svc.ask(question)
+        console.print(f"\n[bold green]{result['answer']}[/bold green]\n")
+        if result.get("sources"):
+            t = Table(title=f"来源（{len(result['sources'])} 条 · "
+                            f"llm={result.get('llm', '-')}）")
+            t.add_column("ID", style="cyan", no_wrap=True)
+            t.add_column("分数", justify="right")
+            t.add_column("内容摘要", style="white")
+            for s in result["sources"]:
+                t.add_row(str(s["id"]), f"{s.get('score', 0):.4f}",
+                          _truncate(s.get("content", ""), 40))
+            console.print(t)
+    except LLMDisabledError:
+        # LLM 不可用：检索结果仍有价值，输出命中并给出配置指引
+        hits = svc.search(question, top_k=top_k)
+        console.print("[yellow]LLM 不可用（本地 Ollama 未响应且未配置云端 "
+                      "Key），以下为检索结果（仅检索未生成）[/yellow]")
+        console.print(f"配置指引：启动 Ollama（ollama serve + ollama pull "
+                      "qwen3:4b），或在 .env 配置 KB_DEEPSEEK_API_KEY 走云端")
+        if hits:
+            t = Table(title=f"检索命中（top {len(hits)}）")
+            t.add_column("ID", style="cyan", no_wrap=True)
+            t.add_column("分数", justify="right")
+            t.add_column("内容摘要", style="white")
+            for h in hits:
+                t.add_row(h["id"], f"{h['score']:.4f}",
+                          _truncate(h["content"], 40))
+            console.print(t)
+        else:
+            console.print("[dim]无检索结果[/dim]")
+        raise typer.Exit(code=1)
 
 
 @app.command()
