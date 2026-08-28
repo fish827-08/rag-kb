@@ -28,6 +28,27 @@ from kb.watcher import KBWatcher
 SCAN_MAX = 20000          # /logs 尾部向后扫描行数上限
 LOG_LIMIT_MAX = 1000      # /logs limit 上限
 EVENT_WINDOW_MAX = 10000  # /logs/events window 上限
+
+
+def exposure_warning(host: str, api_key: str) -> str | None:
+    """N29 启动安全警告：非回环监听且未启用鉴权时返回警告文本，否则 None。
+
+    判定口径（与 N19 鉴权中间件一致）：
+    - key 为空或全空白 → 视为未鉴权；
+    - host 为空串（默认 127.0.0.1）、localhost、::1 或 127.0.0.0/8 段 → 视为回环，本地零摩擦；
+    - 其余地址（0.0.0.0 / 内网 IP / 公网 IP）且无 key → 返回醒目警告。
+    """
+    if (api_key or "").strip():
+        return None
+    h = (host or "").strip().lower()
+    if h in ("", "localhost", "::1") or h.startswith("127."):
+        return None
+    return ("安全警告：服务监听 %s（非回环地址）且未设置 KB_API_KEY，"
+            "REST/MCP 端点将对网络完全开放（记忆读写/文档删除均可匿名调用）。"
+            "如确需对外监听，请设置 KB_API_KEY 启用鉴权，或改回 127.0.0.1 仅本机访问。"
+            % host)
+
+
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 # logging 缩写别名（大小写不敏感归一）：warn/err/fatal → 标准级别名
 _LOG_LEVEL_ALIASES = {"WARN": "WARNING", "ERR": "ERROR", "FATAL": "CRITICAL"}
@@ -377,6 +398,10 @@ def create_app(settings: Settings | None = None,
             serve_log.info("鉴权已启用（KB_API_KEY 已配置，要求 Bearer/X-API-Key）")
         else:
             serve_log.info("鉴权未启用（本地模式，KB_API_KEY 为空）")
+        # N29 启动安全警告：非回环监听 + 未鉴权 → warning 日志（终端醒目横幅由 serve 命令负责）
+        warn = exposure_warning(kb.settings.api_host, kb.settings.api_key)
+        if warn:
+            serve_log.warning(warn)
         wd = kb.settings.watch_dir
         if enable_watcher and str(wd) not in ("", "."):
             watcher = KBWatcher(kb, wd)

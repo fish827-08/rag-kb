@@ -1,4 +1,4 @@
-"""CLI 入口：add / search / info / serve / forget / dedup。"""
+"""CLI 入口：add / search / info / serve / mcp / forget / dedup。"""
 import json
 from datetime import datetime
 
@@ -266,12 +266,32 @@ def ask(
 def serve():
     """启动常驻 REST 服务（python -m kb serve）。"""
     import uvicorn
-    from kb.api import create_app
+    from kb.api import create_app, exposure_warning
     s = get_settings()
     # 终端交互式设备检测（显式配置/runtime.json/询问），结果注入 settings
     s.device = resolve_device(s, interactive=True)
+    # N29 启动安全警告：非回环监听 + 未鉴权 → 终端醒目横幅（日志侧由 lifespan 记 warning）
+    warn = exposure_warning(s.api_host, s.api_key)
+    if warn:
+        console.print(f"\n[bold red]{'!' * 68}[/bold red]")
+        console.print(f"[bold red]{warn}[/bold red]")
+        console.print(f"[bold red]{'!' * 68}[/bold red]\n")
     app = create_app(s, enable_watcher=True)
     uvicorn.run(app, host=s.api_host, port=s.api_port)
+
+
+@app.command(name="mcp")
+def mcp_stdio():
+    """以 stdio 模式运行 MCP 服务器（uvx / Claude Desktop 等客户端直接拉起，
+    工具集与 REST 常驻服务完全一致；HTTP 挂载仍用 serve）。"""
+    import anyio
+    from kb.mcp import create_mcp_server
+    from kb.service import KBService
+    s = get_settings()
+    # stdio 协议流上不可交互：设备跟随显式配置/runtime.json，否则 cpu
+    s.device = resolve_device(s, interactive=False)
+    svc = KBService(s)
+    anyio.run(create_mcp_server(svc).run_stdio_async)
 
 
 @app.command()

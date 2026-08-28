@@ -230,10 +230,16 @@ class TestRetrieverDecayApplication:
 class TestConfigDecay:
     """kb/config.py 衰减配置项（TASK-0068，A3 spec §7）。"""
 
-    def test_默认值(self):
-        """默认 decay_enabled=false, decay_lambda=0.02, decay_gamma=0.3（A3 spec §7）。"""
+    def test_默认值(self, monkeypatch):
+        """默认 decay_enabled=false, decay_lambda=0.02, decay_gamma=0.3（A3 spec §7）。
+
+        _env_file=None：跳过本地 .env（A3 实战验证期 .env 会开启 KB_DECAY_ENABLED=true，
+        污染"默认关闭零行为变化"断言——默认值指源码默认，非本机覆盖）。
+        """
         from kb.config import Settings
-        s = Settings()
+        for k in ("KB_DECAY_ENABLED", "KB_DECAY_LAMBDA", "KB_DECAY_GAMMA"):
+            monkeypatch.delenv(k, raising=False)
+        s = Settings(_env_file=None)
         assert s.decay_enabled is False
         assert s.decay_lambda == pytest.approx(0.02, abs=1e-9)
         assert s.decay_gamma == pytest.approx(0.3, abs=1e-9)
