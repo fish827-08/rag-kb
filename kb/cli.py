@@ -241,6 +241,81 @@ def dedup(
                   "请人工审核候选对后手动删除/合并。[/yellow]")
 
 
+@app.command("eval")
+def eval_cmd(
+    file: str = typer.Option("tests/eval_zh_50.jsonl", "--file",
+                             help="评测数据集路径（JSONL）"),
+    top_k: int = typer.Option(5, "--top-k", help="每条问题的检索条数"),
+    mode: str = typer.Option("hybrid", "--mode", help="hybrid/vector/keyword"),
+    rerank: bool = typer.Option(False, "--rerank",
+                                 help="临时开启交叉重排（对比指标收益）"),
+    sparse: bool = typer.Option(False, "--sparse",
+                                 help="临时开启稀疏第三路（对比指标收益）"),
+    json_out: str = typer.Option("", "--json", help="报告写入 JSON 文件路径"),
+):
+    """检索质量评测：Recall@1/@5 + MRR（独立临时库，不碰生产数据）。
+
+    用法：
+      kb eval                                # 双路基线
+      kb eval --sparse --rerank              # 三路 + 精排（量化收益）
+      kb eval --json report.json             # 报告落盘
+    评测完成即成功（退出码 0），指标基线值记入 A3.5 设计文档。
+    """
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from kb.eval import EvalDatasetError, load_dataset, run_eval
+
+    try:
+        dataset = load_dataset(file)
+    except EvalDatasetError as e:
+        console.print(f"[red]数据集加载失败: {e}[/red]")
+        raise typer.Exit(code=1)
+
+    # 独立临时库：评测进程专用 KB_DATA_DIR，不碰生产库
+    tmp_dir = tempfile.mkdtemp(prefix="kb_eval_")
+    settings = Settings(data_dir=Path(tmp_dir),
+                        rerank_enabled=rerank, sparse_enabled=sparse)
+    try:
+        svc = KBService(settings)
+        console.print(f"[blue]评测中：{len(dataset)} 条 × mode={mode} "
+                      f"top_k={top_k}（rerank={'on' if rerank else 'off'} "
+                      f"sparse={'on' if sparse else 'off'}）[/blue]")
+        report = run_eval(svc, dataset, top_k=top_k, mode=mode)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # 终端表格：总体 + 分难度
+    table = Table(title=f"kb eval 报告（n={report['count']} mode={mode}）")
+    table.add_column("分组", style="cyan")
+    table.add_column("Recall@1", justify="right")
+    table.add_column("Recall@5", justify="right")
+    table.add_column("MRR", justify="right")
+    table.add_column("条数", justify="right")
+    table.add_row("总体", f"{report['recall_at_1']:.3f}",
+                  f"{report['recall_at_5']:.3f}", f"{report['mrr']:.3f}",
+                  str(report["count"]))
+    for tag in ("keyword", "semantic", "distractor"):
+        sub = report["by_difficulty"].get(tag)
+        if sub:
+            table.add_row(tag, f"{sub['recall_at_1']:.3f}",
+                          f"{sub['recall_at_5']:.3f}", f"{sub['mrr']:.3f}",
+                          str(sub["count"]))
+    console.print(table)
+    console.print(f"平均检索延迟：{report['latency_ms_avg']:.1f} ms")
+    if report["misses"]:
+        miss_ids = ", ".join(str(m["qid"]) for m in report["misses"])
+        console.print(f"[yellow]未命中 qid：{miss_ids}[/yellow]")
+    else:
+        console.print("[green]全部命中[/green]")
+
+    if json_out:
+        Path(json_out).write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"报告已写入 {json_out}")
+
+
 def main() -> None:
     app()
 
