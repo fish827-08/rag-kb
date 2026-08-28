@@ -23,11 +23,13 @@ def rrf_fuse(vector_hits: list[tuple[str, float]],
 class HybridRetriever:
     """混合检索器；mode 支持 hybrid / vector / keyword。"""
 
-    def __init__(self, store, bm25: BM25Index, embedder: Embedder, settings=None):
+    def __init__(self, store, bm25: BM25Index, embedder: Embedder,
+                 settings=None, reranker=None):
         self.store = store
         self.bm25 = bm25
         self.embedder = embedder
         self.settings = settings  # TASK-0068：衰减配置（decay_enabled/lambda/gamma），None=不应用衰减
+        self.reranker = reranker  # N24：CrossEncoder 精排器（None=不精排）
 
     def search(self, query: str, top_k: int = 5, mode: str = "hybrid",
                type: str | None = None, tag: str | None = None) -> list[dict]:
@@ -50,7 +52,9 @@ class HybridRetriever:
         elif mode == "vector":
             fused = sorted(vector_hits, key=lambda x: x[1], reverse=True)[:candidate]
         else:  # keyword（BM25 不受衰减影响，A3 spec §3.1）
-            fused = sorted(keyword_hits, key=lambda x: x[1], reverse=True)[:top_k]
+            # N24：截断放宽到 candidate（非 rerank 路径最终仍截 top_k，零行为变化；
+            # rerank 开启时从完整候选池精排）
+            fused = sorted(keyword_hits, key=lambda x: x[1], reverse=True)[:candidate]
 
         # 治理排序应用点（TASK-0068 衰减 §3.1 + TASK-0070 新鲜度 §3.3）：仅 hybrid/vector 模式，BM25 不受影响
         # 默认全关零行为变化；衰减看 last_accessed（访问冷热），新鲜度看 updated_at（内容新旧），两者正交相乘
@@ -112,7 +116,28 @@ class HybridRetriever:
                 rescored.append((rid, final))
             fused = sorted(rescored, key=lambda x: x[1], reverse=True)
 
-        fused = fused[:top_k]
+        # N24 rerank 挂接（A3.5 spec §3.3）：治理重排后、截断前——精排最后
+        # （治理是软信号，CrossEncoder 是精排，精排结果即最终排序依据）。
+        # 默认关 / 未注入 reranker：直接截断（零行为变化）；异常由 reranker 内部降级。
+        rerank_on = (self.reranker is not None
+                     and self.settings is not None
+                     and getattr(self.settings, "rerank_enabled", False))
+        if rerank_on:
+            top_n = int(getattr(self.settings, "rerank_top_n", 20))
+            candidates = fused[:top_n]
+            recs_by_id = self.store.get_many([rid for rid, _ in candidates])
+            cands = [{"id": rid, "content": rec.content}
+                     for rid, _ in candidates
+                     if (rec := recs_by_id.get(rid)) is not None]
+            try:
+                reranked = self.reranker.rerank(query, cands, top_k=top_k)
+                fused = [(c["id"], c.get("rerank_score", 0.0)) for c in reranked]
+            except Exception:
+                # 防御兜底：reranker 实现异常时不中断检索，退回截断（Reranker
+                # 内部已降级，此处再兜一层保证主路径永远可达）
+                fused = fused[:top_k]
+        else:
+            fused = fused[:top_k]
 
         results = []
         # N27：批量取记录（消除循环内逐条 get 的 N+1）

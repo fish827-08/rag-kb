@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # ---- A3 智能层 consolidation（N23c 基础框架，TASK-0076）----
     consolidation_enabled: bool = False               # KB_CONSOLIDATION_ENABLED：智能归并总开关，默认关（零行为变化）
     consolidation_confidence_threshold: float = 0.6    # KB_CONSOLIDATION_CONFIDENCE_THRESHOLD：置信度门槛，低于强制 human
+    # ---- A3.5 检索质量（N24 reranker，2026-08-28 spec）----
+    rerank_enabled: bool = False                  # KB_RERANK_ENABLED：交叉重排开关，默认关（零行为变化）
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"  # KB_RERANK_MODEL：重排模型（~600MB fp16 显存）
+    rerank_top_n: int = 20                        # KB_RERANK_TOP_N：参与精排的融合候选数上限
     dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
     dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 

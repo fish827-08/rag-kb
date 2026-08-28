@@ -66,7 +66,9 @@ class KBService:
         if not self.bm25.load_corpus(self._bm25_cache, [r.id for r in all_records]):
             self.bm25.rebuild(all_records)
             self._persist_bm25()
-        self.retriever = HybridRetriever(self.store, self.bm25, self.embedder, settings=self.settings)
+        self.retriever = HybridRetriever(self.store, self.bm25, self.embedder,
+                                         settings=self.settings,
+                                         reranker=self._build_reranker())
         self.llm = llm or LLMClient(self.settings)
         # 云端客户端注入点：None=无独立云端客户端（真实云端由 self.llm 统一承担）
         self._cloud_client = None
@@ -80,6 +82,13 @@ class KBService:
             self.bm25.save_corpus(self._bm25_cache)
         except OSError as e:
             logging.getLogger("kb.service").warning("BM25 语料落盘失败: %s", e)
+
+    def _build_reranker(self):
+        """N24：rerank_enabled 时组装 Reranker（懒加载，实例化不加载模型）。"""
+        if getattr(self.settings, "rerank_enabled", False):
+            from kb.reranker import Reranker
+            return Reranker(self.settings.rerank_model, device=self.device)
+        return None
 
     # ---- 记忆 CRUD ----
     def add_memory(self, content: str, tags: list[str] | None = None,

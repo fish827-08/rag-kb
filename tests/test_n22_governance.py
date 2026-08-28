@@ -131,6 +131,10 @@ class _FakeStore:
     def get(self, rid):
         return self._records.get(rid)
 
+    def get_many(self, ids):
+        """mock 批量读取（N27），与 store.get_many 契约一致。"""
+        return {rid: r for rid in ids if (r := self._records.get(rid)) is not None}
+
     def increment_access(self, rid):
         """mock 命中计数（TASK-0067），空实现。"""
         pass
