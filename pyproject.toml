@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kb-memory"
+version = "1.0.2"
+description = "Local-first agent memory & knowledge service: hybrid retrieval + memory governance (decay / dedup / freshness), REST + MCP dual protocol, fully usable offline without an LLM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "fish827-08" }]
+keywords = ["mcp", "memory", "agent", "rag", "knowledge-base", "local-first"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    # 与 requirements.txt 同步（设计文档第 3 节）；torch 由 sentence-transformers 拉取默认版
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "mcp>=1.2",
+    "chromadb>=1.5",
+    "rank_bm25>=0.2.2",
+    "jieba>=0.42",
+    "sentence-transformers>=3.0",
+    "openai>=1.0",
+    "httpx>=0.27",
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+    "markitdown>=0.1",
+    "trafilatura>=1.8",
+    "watchdog>=4.0",
+    "langchain-text-splitters>=0.3",
+    "pydantic-settings>=2.0",
+    "typer>=0.12",
+    "rich>=13.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/fish827-08/rag-kb"
+Repository = "https://github.com/fish827-08/rag-kb"
+
+[project.scripts]
+kb = "kb.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["kb*"]

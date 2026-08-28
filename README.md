@@ -1,5 +1,7 @@
 # rag-kb — 本地 Agent 记忆服务 + 多 Agent 协作系统
 
+<!-- mcp-name: io.github.fish827-08/kb-memory -->
+
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [English](README_EN.md) | 中文
 

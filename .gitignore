@@ -25,3 +25,7 @@ key/
 credentials*
 secrets/
 !.env.example
+# Python 打包构建产物（pyproject.toml 引入，N30）
+dist/
+build/
+*.egg-info/
