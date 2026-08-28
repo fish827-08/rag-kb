@@ -11,6 +11,8 @@ from kb.ingest import (UnsupportedFormatError, WebFetchError, chunk_text,
 from kb.llm import LLMClient, LLMStatus
 from kb.models import Record, RecordType
 from kb.retriever import HybridRetriever
+from kb.sparse import SparseEmbedder as _SparseEmbedderClass
+from kb.sparse import SparseIndex
 from kb.storage import ChromaStore
 
 __all__ = ["KBService", "LLMDisabledError", "UnsupportedFormatError",
@@ -66,9 +68,13 @@ class KBService:
         if not self.bm25.load_corpus(self._bm25_cache, [r.id for r in all_records]):
             self.bm25.rebuild(all_records)
             self._persist_bm25()
+        # N25：稀疏第三路组装（sparse_enabled 且探测成功才启用，失败降级双路）
+        self.sparse_embedder, self.sparse_index = self._build_sparse(all_records)
         self.retriever = HybridRetriever(self.store, self.bm25, self.embedder,
                                          settings=self.settings,
-                                         reranker=self._build_reranker())
+                                         reranker=self._build_reranker(),
+                                         sparse_embedder=self.sparse_embedder,
+                                         sparse_index=self.sparse_index)
         self.llm = llm or LLMClient(self.settings)
         # 云端客户端注入点：None=无独立云端客户端（真实云端由 self.llm 统一承担）
         self._cloud_client = None
@@ -89,6 +95,67 @@ class KBService:
             from kb.reranker import Reranker
             return Reranker(self.settings.rerank_model, device=self.device)
         return None
+
+    # ---- N25 稀疏第三路（A3.5 spec §3.2/§3.4）----
+
+    def _build_sparse(self, all_records):
+        """sparse_enabled 时组装 (SparseEmbedder, SparseIndex)；失败降级 (None, None)。
+
+        探测失败（非 BGE-M3 族 / sparse_linear.pt 缺失 / 加载异常）记 WARNING，
+        稀疏路自动关闭（检索退回双路，行为等同 sparse_enabled=false）。
+        索引优先加载持久化（sparse_index.json，id 集合校验），漂移/缺失才全量 encode 重建。
+        """
+        import logging
+        if not getattr(self.settings, "sparse_enabled", False):
+            return None, None
+        try:
+            sparse_embedder = _SparseEmbedderClass(self.embedder,
+                                                   self.settings.embed_model)
+            sparse_embedder._ensure_loaded()  # 启动探测（含共享编码器加载）
+        except Exception as e:
+            logging.getLogger("kb.service").warning(
+                "稀疏第三路不可用，降级双路检索: %s", e)
+            return None, None
+        sparse_index = SparseIndex()
+        self._sparse_cache = self.settings.data_dir / "sparse_index.json"
+        valid_ids = [r.id for r in all_records]
+        if not sparse_index.load(self._sparse_cache, valid_ids):
+            vecs = sparse_embedder.encode([r.content for r in all_records])
+            sparse_index.rebuild(zip(valid_ids, vecs))
+            # 注意：此时 self.sparse_index 尚未赋值，直接落盘局部实例
+            try:
+                sparse_index.save(self._sparse_cache)
+            except OSError as e:
+                logging.getLogger("kb.service").warning(
+                    "稀疏索引落盘失败: %s", e)
+        return sparse_embedder, sparse_index
+
+    def _persist_sparse(self) -> None:
+        """稀疏索引落盘；失败记 WARNING 不阻塞主流程（同 BM25 模式）。"""
+        import logging
+        if self.sparse_index is None:
+            return
+        try:
+            self.sparse_index.save(self._sparse_cache)
+        except OSError as e:
+            logging.getLogger("kb.service").warning("稀疏索引落盘失败: %s", e)
+
+    def _sparse_add(self, records) -> None:
+        """写入路径维护：批量 encode 并入稀疏索引 + 落盘。"""
+        if self.sparse_embedder is None or not records:
+            return
+        vecs = self.sparse_embedder.encode([r.content for r in records])
+        for r, v in zip(records, vecs):
+            self.sparse_index.add(r.id, v)
+        self._persist_sparse()
+
+    def _sparse_remove(self, record_ids) -> None:
+        """删除路径维护：增量移出稀疏索引 + 落盘。"""
+        if self.sparse_index is None:
+            return
+        for rid in record_ids:
+            self.sparse_index.remove(rid)
+        self._persist_sparse()
 
     # ---- 记忆 CRUD ----
     def add_memory(self, content: str, tags: list[str] | None = None,
@@ -118,6 +185,7 @@ class KBService:
         self.store.add([record], [vec])
         self.bm25.add(record)
         self._persist_bm25()
+        self._sparse_add([record])
         return record
 
     def get_memory(self, record_id: str) -> Record | None:
@@ -151,6 +219,8 @@ class KBService:
         self.bm25.remove(record_id)
         self.bm25.add(record)
         self._persist_bm25()
+        self._sparse_remove([record_id])
+        self._sparse_add([record])
         return record
 
     def delete_memory(self, record_id: str) -> bool:
@@ -161,6 +231,7 @@ class KBService:
         self.store.delete([record_id])
         self.bm25.remove(record_id)
         self._persist_bm25()
+        self._sparse_remove([record_id])
         return True
 
     # ---- 文档摄取与管理 ----
@@ -186,6 +257,7 @@ class KBService:
         for r in records:
             self.bm25.add(r)
         self._persist_bm25()
+        self._sparse_add(records)
         return {"source": doc_source, "chunks": len(records)}
 
     def add_webpage(self, url: str) -> dict:
@@ -207,6 +279,7 @@ class KBService:
         for r in records:
             self.bm25.add(r)
         self._persist_bm25()
+        self._sparse_add(records)
         return {"source": url, "chunks": len(records)}
 
     def list_documents(self) -> list[dict]:
@@ -231,6 +304,7 @@ class KBService:
         for rid in ids:
             self.bm25.remove(rid)
         self._persist_bm25()
+        self._sparse_remove(ids)
         return n
 
     # ---- 检索与统计 ----

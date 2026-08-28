@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     rerank_enabled: bool = False                  # KB_RERANK_ENABLED：交叉重排开关，默认关（零行为变化）
     rerank_model: str = "BAAI/bge-reranker-v2-m3"  # KB_RERANK_MODEL：重排模型（~600MB fp16 显存）
     rerank_top_n: int = 20                        # KB_RERANK_TOP_N：参与精排的融合候选数上限
+    # ---- A3.5 检索质量（N25 稀疏向量，2026-08-28 spec）----
+    sparse_enabled: bool = False                  # KB_SPARSE_ENABLED：稀疏第三路开关，默认关（零行为变化）
     dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
     dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 

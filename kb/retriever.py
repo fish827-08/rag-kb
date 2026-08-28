@@ -8,12 +8,13 @@ from kb.embedder import Embedder
 RRF_K = 60
 
 
-def rrf_fuse(vector_hits: list[tuple[str, float]],
-             keyword_hits: list[tuple[str, float]],
-             top_k: int) -> list[tuple[str, float]]:
-    """score(d) = Σ 1/(RRF_K + rank_i(d))，rank 从 1 起；按融合分降序取 top_k。"""
+def rrf_fuse(*ranked_lists, top_k: int) -> list[tuple[str, float]]:
+    """score(d) = Σ 1/(RRF_K + rank_i(d))，rank 从 1 起；按融合分降序取 top_k。
+
+    N25：可变参数（2 路或 3 路，路数由稀疏开关决定），双路行为与原实现一致。
+    """
     scores: dict[str, float] = {}
-    for ranked in (vector_hits, keyword_hits):
+    for ranked in ranked_lists:
         for rank, (rid, _score) in enumerate(ranked, start=1):
             scores[rid] = scores.get(rid, 0.0) + 1 / (RRF_K + rank)
     ranked_fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
@@ -24,12 +25,15 @@ class HybridRetriever:
     """混合检索器；mode 支持 hybrid / vector / keyword。"""
 
     def __init__(self, store, bm25: BM25Index, embedder: Embedder,
-                 settings=None, reranker=None):
+                 settings=None, reranker=None,
+                 sparse_embedder=None, sparse_index=None):
         self.store = store
         self.bm25 = bm25
         self.embedder = embedder
         self.settings = settings  # TASK-0068：衰减配置（decay_enabled/lambda/gamma），None=不应用衰减
         self.reranker = reranker  # N24：CrossEncoder 精排器（None=不精排）
+        self.sparse_embedder = sparse_embedder  # N25：稀疏编码器（None=无稀疏路）
+        self.sparse_index = sparse_index        # N25：稀疏倒排索引（None=无稀疏路）
 
     def search(self, query: str, top_k: int = 5, mode: str = "hybrid",
                type: str | None = None, tag: str | None = None) -> list[dict]:
@@ -46,9 +50,27 @@ class HybridRetriever:
             keyword_hits = self.bm25.search(query, top_n=candidate)
         else:
             keyword_hits = []
+        # N25 稀疏第三路（A3.5 spec §3.3）：仅 hybrid 且 sparse_enabled 且组件
+        # 已注入时启用；SparseEmbedder 异常按不可用处理（双路兜底，不中断检索）
+        sparse_hits: list[tuple[str, float]] = []
+        sparse_on = (mode == "hybrid"
+                     and self.sparse_embedder is not None
+                     and self.sparse_index is not None
+                     and self.settings is not None
+                     and getattr(self.settings, "sparse_enabled", False))
+        if sparse_on:
+            try:
+                qvec = self.sparse_embedder.encode([query])[0]
+                sparse_hits = self.sparse_index.search(qvec, top_n=candidate)
+            except Exception:
+                sparse_hits = []
 
         if mode == "hybrid":
-            fused = rrf_fuse(vector_hits, keyword_hits, candidate)
+            if sparse_hits:
+                fused = rrf_fuse(vector_hits, keyword_hits, sparse_hits,
+                                 top_k=candidate)
+            else:
+                fused = rrf_fuse(vector_hits, keyword_hits, top_k=candidate)
         elif mode == "vector":
             fused = sorted(vector_hits, key=lambda x: x[1], reverse=True)[:candidate]
         else:  # keyword（BM25 不受衰减影响，A3 spec §3.1）
