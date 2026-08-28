@@ -3,7 +3,7 @@
 > **给你看的**：项目全貌、发展路线、当前进度，一页读完。树形结构，从根到叶。
 > AI 助手请读 AGENTS.md + PROJECT.md（含实施细节）；本文件是总线视角的人类入口。
 >
-> 最后更新：2026-08-27 ｜ 总线版本：v3（战略调整：B 线冻结维护，A 线为唯一开发主线）
+> 最后更新：2026-08-28 ｜ 总线版本：v3（战略调整：B 线冻结维护，A 线为唯一开发主线）
 
 ## 0. 项目愿景（一句话）
 
@@ -36,18 +36,19 @@ rag-kb 生产级本地多Agent体系
 │   │   ├── ✅ 敏感信息治理（git filter-repo 历史重写 + pre-push 钩子 + gitignore 扩充，2026-08-27）
 │   │   └── 🔲 MCP 官方 Registry / awesome-mcp-servers 提交（待用户操作）
 │   │
-│   ├── A3 记忆治理（遗忘/衰减/去重）N21-N23 … 🚧 下一个主力（唯一差异化机会）
-│   │   ├── 🔲 spec 立项（双层设计：无 LLM 规则 TTL+相似度去重 / 有 LLM 智能 consolidation）
-│   │   ├── 🔲 访问频率衰减（access_count/last_accessed 元数据 + 检索新鲜度权重）
-│   │   └── 🔲 语义去重（写入前相似度检索，超阈值更新而非新增）
+│   ├── A3 记忆治理（遗忘/衰减/去重）N21-N23 … ✅ 已交付（2026-08-28，TASK-0066~0076）
+│   │   ├── ✅ spec 立项（双层设计落地：规则层 TTL/相似度 + 智能层 consolidation 框架）
+│   │   ├── ✅ 访问频率衰减（λ=0.02）+ 新鲜度权重（β=0.05，上限 1.3×）——默认关，零行为变化
+│   │   └── ✅ 语义去重（阈值 0.92，409 拦截）+ kb forget/dedup CLI + 治理审计日志
 │   │
-│   ├── A3.5 检索质量 ………………………… 🔲 排队（评估报告第二优先级）
-│   │   ├── 🔲 reranker（bge-reranker-v2-m3，~600MB，6GB 显存可容纳）
-│   │   ├── 🔲 BGE-M3 稀疏向量能力启用（当前仅用稠密）
-│   │   ├── 🔲 最小评测基准（50-100 条中文 QA 对，检索质量可量化）
-│   │   └── 🔲 N+1 查询修复（retriever 批量 get）+ BM25 持久化
+│   ├── A3.5 检索质量 ………………………… ✅ 已交付（2026-08-28，N24-N27，分支 feature/a-line-remaining）
+│   │   ├── ✅ reranker（bge-reranker-v2-m3 交叉重排，KB_RERANK_ENABLED 默认关）
+│   │   ├── ✅ BGE-M3 稀疏向量第三路（sparse 头直载 + 倒排索引 + 三路 RRF，KB_SPARSE_ENABLED 默认关）
+│   │   ├── ✅ 最小评测基准（50 条中文 QA，kb eval：Recall@1/@5 + MRR + 分难度）
+│   │   └── ✅ N+1 查询修复（store.get_many 批量）+ BM25 语料持久化
 │   │
-│   └── A4 易用性（CLI 优先，Web UI 最后）…… 🔲 排队
+│   └── A4 易用性（CLI 优先）…………………… ✅ 已交付（2026-08-28，N28；Web UI 砍掉——评估报告定论）
+│       └── ✅ kb stats（类型分布/访问热度/陈旧分布）+ kb ask（终端 RAG 问答，LLM 缺席降级输出检索命中）
 │
 ├── 🤖 主线 B：orchestra 协作体系（❄️ 维护模式——2026-08-27 冻结新功能，作者自用脚手架）
 │   │
@@ -105,12 +106,13 @@ rag-kb 生产级本地多Agent体系
 ## 2. 当前进度（你在哪里）
 
 ```
-主线 A：A1 稳定性 —— 已收口（watcher 容错 + N17-N18 结构化日志全部交付）
+主线 A：A1 ✅ → A2 鉴权 ✅ → A2.5 生态合规 🚧（仅剩 MCP Registry 提交，待用户操作）
+        → A3 记忆治理 ✅ → A3.5 检索质量 ✅ → A4 易用性 ✅（CLI 交付，Web UI 砍掉）
+        —— A 线规划内节点全部完成，后续新需求先修订设计文档再立项
 主线 B：❄️ 维护模式（B1/B2/B3/B3+ 收口冻结，B4 取消）——2026-08-27 战略调整
-        A 线为唯一开发主线：A2.5 生态合规（LICENSE✅/GitHub迁移中）→ A3 记忆治理 → A3.5 检索质量
 ```
 
-**当前位置**（2026-08-27 战略调整后）：**A 线为唯一开发主线**——A2.5 生态合规进行中（LICENSE ✅，GitHub 迁移待 key）→ A3 记忆治理（下一主力）→ A3.5 检索质量。B 线 ❄️ 维护模式（B1/B2/B3/B3+ 全部收口冻结，B4 取消，仅修 bug）。TASK-0001~0065 已核验 63 张。协调者循环常驻自动核验运转中（B 线自用继续）；monitor 纯文本默认 off。战略依据：根目录《评估报告》双报告 + 用户决策。详见 coordinator-prompt.md"后续规划"。
+**当前位置**（2026-08-28）：**A 线规划内节点全部交付**——A3 治理（TASK-0066~0076）、A3.5 检索质量与 A4 CLI（分支 `feature/a-line-remaining`，N24-N28，全量回归 584 项绿）均已落地；A2.5 仅剩 MCP Registry 提交（待用户操作）。B 线 ❄️ 维护模式（B5 挂载常驻为例外在独立分支推进）。战略依据：根目录《评估报告》双报告 + 用户决策。详见 coordinator-prompt.md"后续规划"。
 
 ## 3. 优先级原则（为什么这么排）
 
@@ -157,6 +159,8 @@ rag-kb 生产级本地多Agent体系
 | B2 | `docs/superpowers/specs/2026-08-26-b2-feedback-design.md`（已收口，2026-08-26） |
 | B3 | `docs/superpowers/specs/2026-08-26-b3-cost-control-design.md`（实施中，5/6 落地） |
 | A2 | `docs/superpowers/specs/2026-08-26-p2-auth-design.md`（已交付，2026-08-27） |
+| A3.5 | `docs/superpowers/specs/2026-08-28-a35-retrieval-quality-design.md`（已交付，2026-08-28） |
+| A4 | `docs/superpowers/specs/2026-08-28-a4-cli-design.md`（已交付，2026-08-28；Web UI 砍掉） |
 | B4 | 待 B3 收口后立 spec（先文档后代码） |
 | 协调者接力 | `orchestra/coordinator-prompt.md`（唤醒提示词 + 接力状态节，协调者交接唯一入口） |
 | 项目状态/接力 | `PROJECT.md`（AI 接力入口） |

@@ -35,7 +35,7 @@
 | M4（N13-N16） | 文档摄取（pdf/docx/md/txt）、网页抓取、目录监听、README | ✅ 2026-08-24 |
 | v1.0.1 hotfix | top_k/mode/空内容校验 → 422、MCP 入口校验、SSE charset | ✅ 2026-08-24 |
 
-- 测试：**271 项全绿**（`tests/`，含鉴权 9 项 + monitor 47 项 + A3 治理 60+ 项）
+- 测试：**339 项全绿**（`tests/`；其中 A3.5+A4 新增 68 项：reranker/sparse/eval/perf/cli 五个测试文件，分支 `feature/a-line-remaining`）
 - 基准：混合检索 26ms、/ask 端到端 ~2s（本地 qwen3:4b）
 - tag：`node-01`~`node-16`、`v1.0.0`、`v1.0.1`（均已推 Gitee）
 - v1.0.2：JSON charset 已修复（TASK-0003/0038/0045 交付，含测试断言）
@@ -45,6 +45,14 @@
   - 规则层：访问频率衰减（λ=0.02）+ 语义去重（阈值 0.92，409 拦截）+ 新鲜度权重（β=0.05，上限 1.3×）——三者默认关，零行为变化
   - 维护面：`kb forget/dedup` CLI + `/api/v1/governance/stats|config` 端点 + 结构化审计日志（kb/audit.py）
   - 智能层：consolidation 基础框架（kb/consolidation.py + spec，置信度门槛 + human 兜底，默认关）
+- **A3.5 检索质量已交付**（2026-08-28，N24-N27，分支 `feature/a-line-remaining`，spec：`2026-08-28-a35-retrieval-quality-design.md`）：
+  - N24 交叉重排：kb/reranker.py（bge-reranker-v2-m3）+ 检索管道挂接，`KB_RERANK_ENABLED` 默认关
+  - N25 稀疏第三路：kb/sparse.py（BGE-M3 sparse 头直载 + 倒排索引）+ 三路 RRF，`KB_SPARSE_ENABLED` 默认关、失败降级双路
+  - N26 评测基准：kb/eval.py + 50 条中文 QA（tests/eval_zh_50.jsonl）+ `kb eval` CLI（Recall@1/@5 + MRR + 分难度）
+  - N27 性能：N+1 修复（store.get_many 批量）+ BM25 语料持久化
+- **A4 易用性已交付**（2026-08-28，N28，CLI 优先；**Web UI 砍掉**——评估报告定论，spec：`2026-08-28-a4-cli-design.md`）：
+  - `kb stats`：类型分布 / 访问热度 top / 陈旧分布（纯读）
+  - `kb ask`：终端 RAG 问答，LLM 缺席时降级输出检索命中（退出码 1）
 
 ### ② agent-orchestra — B1/B2/B3 收口后转入冻结维护（2026-08-28）
 
@@ -71,9 +79,9 @@
 
 | 主线 | 当前阶段 | 下一步 |
 |---|---|---|
-| **A：kb 记忆服务**（**唯一开发主线**，2026-08-27 战略调整） | A1+A2 交付；A2.5 生态合规进行中（LICENSE ✅ / GitHub 迁移待 key） | A3 记忆治理（遗忘/衰减/去重，唯一差异化）→ A3.5 检索质量（reranker/评测基准） |
-| **B：orchestra 协作**（❄️ 维护模式） | B1/B2/B3/B3+ 全部收口冻结；B4 取消 | 仅修 bug + 测试绿 + 文档同步；自用照常（协调者循环/看板/交流窗）；A 线任务继续用它协作开发 |
-| 支线 | — | 冻结（评估报告建议：不做 Web UI/多用户/商业化） |
+| **A：kb 记忆服务**（**唯一开发主线**，2026-08-27 战略调整） | **规划内节点全部交付**：A1/A2/A3 ✅，A3.5+A4 ✅（分支 `feature/a-line-remaining`，N24-N28，584 项全绿待合入）；A2.5 仅剩 MCP Registry 提交（待用户操作） | 新需求先修订设计文档再立项（AGENTS.md §6） |
+| **B：orchestra 协作**（❄️ 维护模式） | B1/B2/B3/B3+ 全部收口冻结；B4 取消；B5 挂载常驻例外推进（独立分支） | 仅修 bug + 测试绿 + 文档同步；自用照常（协调者循环/看板/交流窗）；A 线任务继续用它协作开发 |
+| 支线 | — | 冻结（评估报告建议：不做 Web UI/多用户/商业化；A4 Web UI 已正式砍掉） |
 
 - **战略调整（2026-08-27，依据《评估报告》双报告 + 用户决策）**：A 线 kb 为核心产品（"个人开发者的本地记忆 MCP server"），B 线 orchestra 冻结维护（自用脚手架）；远期若重启跨 Agent 方向，评估 A2A 协议兼容而非自建
 - **LICENSE Apache-2.0 已补**（评估报告 P0 最高优先级项，法律合规闭环）
@@ -88,9 +96,9 @@ rag-kb/
 ├── PROJECT.md           # 本文档（接力必读第 2 份）
 ├── ROADMAP.md           # 项目发展总线设计书（人类入口，树形路线+进度）
 ├── README.md            # kb 产品说明（快速开始/MCP 挂载/端点速查）
-├── kb/                  # ① kb 服务源码（8 模块，见设计文档 4.2）
-├── tests/               # kb 验收测试（65 项）
-├── orchestra/           # ② 协作系统（board.py + 协议 + skill + 24 项测试）
+├── kb/                  # ① kb 服务源码（见设计文档 4.2；含 reranker/sparse/eval 等 A3.5/A4 模块）
+├── tests/               # kb 验收测试（339 项，含 eval_zh_50.jsonl 评测数据集）
+├── orchestra/           # ② 协作系统（board.py + 协议 + skill + 245 项测试）
 │   └── docs/superpowers/  # orchestra 设计文档与实施计划
 ├── docs/superpowers/    # kb 设计文档（specs）与节点计划（plans）
 ├── kb_data/             # kb 运行数据（ChromaDB + runtime.json，gitignore）
@@ -105,8 +113,8 @@ rag-kb/
 python -m kb serve                    # 默认 127.0.0.1:8000
 
 # kb 测试 / orchestra 测试（venv 内）
-venv\Scripts\python.exe -m pytest tests/ -q            # 65 项
-venv\Scripts\python.exe -m pytest orchestra/tests/ -q  # 24 项
+venv\Scripts\python.exe -m pytest tests/ -q            # 339 项
+venv\Scripts\python.exe -m pytest orchestra/tests/ -q  # 245 项
 
 # orchestra 任务板（协调者工具）
 venv\Scripts\python.exe orchestra\board.py status        # 一行一卡看板

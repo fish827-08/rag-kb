@@ -25,9 +25,12 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 
 - **单进程常驻**：一个 `python -m kb serve` 同时提供 REST API 与 MCP 端点，无需额外组件
 - **混合检索**：BGE-M3 向量检索 + BM25 关键词检索，RRF 融合排序，中文分词友好
+  - 可选精排：`KB_RERANK_ENABLED=true` 启用 bge-reranker-v2-m3 交叉重排（默认关）
+  - 可选三路：`KB_SPARSE_ENABLED=true` 启用 BGE-M3 稀疏向量第三路（默认关，失败自动降级双路）
 - **记忆管理**：写入 / 更新 / 删除 / 列表，支持 namespace、tags、type 过滤
 - **知识入库**：本地文档（txt/md/pdf/docx 等）上传或路径导入，网页正文抓取入库
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
+- **CLI 工具**：`kb add/search/stats/ask/eval/forget/dedup`——终端直接完成写入、检索、统计与 RAG 问答
 - **隐私护栏**：敏感 namespace 强制本地回答不出网；`/ask` 智能路由（本地优先，难题可选云端）
 - **断网可用**：模型与数据全部落本地，无网络时存取与检索功能完整
 
@@ -145,6 +148,22 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask `
 | `KB_CHUNK_SIZE` / `KB_CHUNK_OVERLAP` | `500` / `100` | 文档切分参数 |
 | `KB_SENSITIVE_NAMESPACES` | 空 | 逗号分隔的敏感 namespace，命中强制本地回答不出网 |
 | `KB_API_KEY` | 空 | 空=不鉴权（本地回环零摩擦）；非空=启用 Bearer/X-API-Key 鉴权；orchestra 客户端自动带 `X-API-Key` 头 |
+| `KB_RERANK_ENABLED` / `KB_RERANK_MODEL` / `KB_RERANK_TOP_N` | `false` / `BAAI/bge-reranker-v2-m3` / `20` | 检索精排（A3.5）：融合候选送 CrossEncoder 重排，默认关 |
+| `KB_SPARSE_ENABLED` | `false` | 稀疏第三路（A3.5）：BGE-M3 稀疏向量 + 倒排索引参与 RRF 融合，默认关 |
+
+## CLI 速查（无需启动服务）
+
+```powershell
+python -m kb add "记忆内容" --tags 偏好      # 写入
+python -m kb search "查询词"                 # 混合检索
+python -m kb stats                            # 统计：类型分布 / 访问热度 / 陈旧分布
+python -m kb ask "问题"                       # 终端 RAG 问答（LLM 不可用时输出检索命中）
+python -m kb eval --file tests/eval_zh_50.jsonl   # 检索质量评测（Recall@1/@5 + MRR）
+python -m kb forget --stale --days 90         # 清理超期未命中记忆
+python -m kb dedup --threshold 0.92           # 语义去重
+```
+
+> `kb ask` 直连本地服务逻辑（不经 HTTP）；建议 `serve` 停止时使用，避免双进程写库竞争。
 
 ## agent-orchestra — 多 Agent 协作系统（实验）
 
@@ -163,9 +182,9 @@ venv\Scripts\python.exe orchestra\board.py new-worker worker-1
 
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
-               service / llm / ingest / watcher / api / mcp / cli）
-tests/         kb 验收测试（65 项）
-orchestra/     多 Agent 协作系统（board.py CLI + 协议三件套 + skill + 24 项测试）
+               service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
+tests/         kb 验收测试（339 项，含 eval_zh_50.jsonl 检索评测数据集）
+orchestra/     多 Agent 协作系统（board.py CLI + 协议三件套 + skill + 245 项测试）
 docs/          设计文档、节点计划、用户使用手册
 kb_data/       kb 运行数据（gitignore）
 _archive/      旧学习项目归档（仅保留历史，禁止参考）

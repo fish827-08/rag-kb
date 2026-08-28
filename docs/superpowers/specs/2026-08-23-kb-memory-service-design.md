@@ -340,5 +340,7 @@ Embedding 相关测试用真实小模型（如 `bge-small-zh-v1.5`，约 100MB�
 | M2 REST 服务 | api.py + 设备检测 + 错误处理 | memories CRUD / search / documents 列表与删除 / healthz 全部 curl 通过，断网启动正常（/documents 上传在 M4、/ask 在 M3 节点补齐） | ✅ 2026-08-23 完成（N7-N8，人工门禁通过） |
 | M3 MCP + LLM | mcp.py + llm.py 智能路由 + /ask | Claude Code 挂载后可写/读记忆；local/auto/cloud 三模式与降级链正确；路由/压缩/缓存全链路基准报告（11.2 节）产出 | ✅ 2026-08-24 完成（N9-N12 + stream hotfix；TraeWork MCP 挂载实测通过，人工门禁通过） |
 | M4 摄取增强 | 网页抓取 + watcher + 文档管理 + markitdown 全格式 | URL 入库、目录新增文件自动索引、按文档删除 | ✅ 2026-08-24 完成（N13-N16，人工终验通过，项目收口） |
+| P2 追加（A3.5 检索质量，N24-N27） | 交叉重排（reranker.py）+ BGE-M3 稀疏第三路（sparse.py，三路 RRF）+ 评测基准（eval.py + 50 条中文 QA）+ N+1 修复与 BM25 持久化；rerank/sparse 默认关 | spec 见 `2026-08-28-a35-retrieval-quality-design.md`（含真实基线指标） | ✅ 2026-08-28 完成（分支 `feature/a-line-remaining`，全量回归 584 项绿） |
+| P2 追加（A4 易用性，N28） | `kb stats`（类型分布/访问热度/陈旧分布）+ `kb ask`（终端 RAG 问答，LLM 缺席降级输出检索命中）；**Web UI 砍掉**（评估报告定论） | spec 见 `2026-08-28-a4-cli-design.md` | ✅ 2026-08-28 完成（分支 `feature/a-line-remaining`） |
 
-每个里程碑附带对应测试。全量回归 60 项全绿（2026-08-24，tests/ 全目录）。
+每个里程碑附带对应测试。全量回归 584 项全绿（2026-08-28：tests/ 339 + orchestra/tests/ 245，tests/ 全目录）。
