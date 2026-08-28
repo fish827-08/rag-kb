@@ -54,20 +54,32 @@ class KBService:
     """记忆服务核心；REST / MCP / CLI 共用。"""
 
     def __init__(self, settings: Settings | None = None, llm=None):
-        """组装各组件；启动时从 store.iter_all() 全量重建 BM25。
+        """组装各组件；BM25 启动优先加载持久化语料（N27），漂移/缺失才全量分词重建。
         llm 未注入时自建 LLMClient(settings)；注入时直接用（测试替身）。"""
         self.settings = settings or get_settings()
         self.device = self.settings.device or "cpu"
         self.embedder = Embedder(self.settings.embed_model, device=self.device)
         self.store = ChromaStore(self.settings.chroma_dir)
         self.bm25 = BM25Index()
-        self.bm25.rebuild(self.store.iter_all())
+        self._bm25_cache = self.settings.data_dir / "bm25_corpus.json"
+        all_records = list(self.store.iter_all())
+        if not self.bm25.load_corpus(self._bm25_cache, [r.id for r in all_records]):
+            self.bm25.rebuild(all_records)
+            self._persist_bm25()
         self.retriever = HybridRetriever(self.store, self.bm25, self.embedder, settings=self.settings)
         self.llm = llm or LLMClient(self.settings)
         # 云端客户端注入点：None=无独立云端客户端（真实云端由 self.llm 统一承担）
         self._cloud_client = None
         # /ask 答案缓存（LRU）：key=问题原文，条目含问题向量/答案/来源/后端
         self._cache: OrderedDict[str, dict] = OrderedDict()
+
+    def _persist_bm25(self) -> None:
+        """BM25 语料落盘；失败记 WARNING 不阻塞主流程（N27）。"""
+        import logging
+        try:
+            self.bm25.save_corpus(self._bm25_cache)
+        except OSError as e:
+            logging.getLogger("kb.service").warning("BM25 语料落盘失败: %s", e)
 
     # ---- 记忆 CRUD ----
     def add_memory(self, content: str, tags: list[str] | None = None,
@@ -96,6 +108,7 @@ class KBService:
         vec = self.embedder.embed_texts([content])[0]
         self.store.add([record], [vec])
         self.bm25.add(record)
+        self._persist_bm25()
         return record
 
     def get_memory(self, record_id: str) -> Record | None:
@@ -128,6 +141,7 @@ class KBService:
         self.store.add([record], [vec])
         self.bm25.remove(record_id)
         self.bm25.add(record)
+        self._persist_bm25()
         return record
 
     def delete_memory(self, record_id: str) -> bool:
@@ -137,6 +151,7 @@ class KBService:
             return False
         self.store.delete([record_id])
         self.bm25.remove(record_id)
+        self._persist_bm25()
         return True
 
     # ---- 文档摄取与管理 ----
@@ -161,6 +176,7 @@ class KBService:
         self.store.add(records, vecs)
         for r in records:
             self.bm25.add(r)
+        self._persist_bm25()
         return {"source": doc_source, "chunks": len(records)}
 
     def add_webpage(self, url: str) -> dict:
@@ -181,6 +197,7 @@ class KBService:
         self.store.add(records, vecs)
         for r in records:
             self.bm25.add(r)
+        self._persist_bm25()
         return {"source": url, "chunks": len(records)}
 
     def list_documents(self) -> list[dict]:
@@ -204,6 +221,7 @@ class KBService:
         n = self.store.delete_by_source(source)
         for rid in ids:
             self.bm25.remove(rid)
+        self._persist_bm25()
         return n
 
     # ---- 检索与统计 ----

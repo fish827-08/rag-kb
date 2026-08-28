@@ -14,6 +14,10 @@ class VectorStore(ABC):
     @abstractmethod
     def get(self, record_id: str) -> Record | None: ...
     @abstractmethod
+    def get_many(self, record_ids: list[str]) -> dict[str, Record]:
+        """批量读取（单次调用）；不存在的不在返回 dict 中（N27）。"""
+
+    @abstractmethod
     def delete(self, ids: list[str]) -> None: ...
     @abstractmethod
     def delete_by_source(self, source: str) -> int:
@@ -72,6 +76,19 @@ class ChromaStore(VectorStore):
         return Record.from_chroma(
             res["ids"][0], res["documents"][0], res["metadatas"][0] or {}
         )
+
+    def get_many(self, record_ids: list[str]) -> dict[str, Record]:
+        """批量读取（单次 Chroma get，N27 消除检索路径 N+1）。
+
+        不存在的 id 不在返回 dict 中；空列表直接返回空 dict。
+        """
+        if not record_ids:
+            return {}
+        res = self._col.get(ids=record_ids, include=["documents", "metadatas"])
+        return {
+            rid: Record.from_chroma(rid, doc, meta or {})
+            for rid, doc, meta in zip(res["ids"], res["documents"], res["metadatas"])
+        }
 
     def delete(self, ids: list[str]) -> None:
         """按 id 列表删除。"""

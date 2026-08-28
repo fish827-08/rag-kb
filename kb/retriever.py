@@ -68,8 +68,10 @@ class HybridRetriever:
                                   and getattr(self.settings, "audit_freshness_enabled", False))
             now = datetime.now()
             rescored = []
+            # N27：批量取记录（消除循环内逐条 get 的 N+1）
+            recs_by_id = self.store.get_many([rid for rid, _ in fused])
             for rid, score in fused:
-                rec = self.store.get(rid)
+                rec = recs_by_id.get(rid)
                 if rec is None:
                     continue
                 final = score
@@ -113,8 +115,10 @@ class HybridRetriever:
         fused = fused[:top_k]
 
         results = []
+        # N27：批量取记录（消除循环内逐条 get 的 N+1）
+        recs_by_id = self.store.get_many([rid for rid, _ in fused])
         for rid, score in fused:
-            rec = self.store.get(rid)
+            rec = recs_by_id.get(rid)
             if rec is None:
                 continue
             if type and rec.type.value != type:

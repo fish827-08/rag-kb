@@ -55,3 +55,34 @@ class BM25Index:
         scores = self._bm25.get_scores(query_tokens)
         ranked = sorted(zip(self._docs.keys(), scores), key=lambda x: x[1], reverse=True)
         return [(rid, float(score)) for rid, score in ranked[:top_n]]
+
+    # ---- 语料持久化（N27，A3.5 spec §3.4）----
+
+    def save_corpus(self, path) -> None:
+        """{record_id: tokens} 序列化 JSON 落盘（启动免全量 jieba 分词）。"""
+        import json
+        from pathlib import Path
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(self._docs, ensure_ascii=False),
+                        encoding="utf-8")
+
+    def load_corpus(self, path, valid_ids) -> bool:
+        """加载持久化语料；id 集合与库一致才生效，否则 False（调用方全量重建）。
+
+        文件缺失 / JSON 损坏 / id 集合漂移均返回 False（安全降级为重建）。
+        """
+        import json
+        from pathlib import Path
+        path = Path(path)
+        if not path.exists():
+            return False
+        try:
+            docs = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+            return False
+        if not isinstance(docs, dict) or set(docs.keys()) != set(valid_ids):
+            return False
+        self._docs = {rid: list(toks) for rid, toks in docs.items()}
+        self._rebuild_bm25()
+        return True
