@@ -180,3 +180,52 @@ def cmd_mount_idle(name: str) -> None:
     _request("PATCH", f"/memories/{card['id']}",
              {"content": json.dumps(data, ensure_ascii=False)})
     print(f"{name} 转空闲监听（idle_since={now}）")
+
+
+def _idle_seconds(last_heartbeat: str, now: str) -> int | None:
+    """心跳距今秒数；解析失败返回 None（视为失联候选）。"""
+    try:
+        dt_last = datetime.fromisoformat(last_heartbeat)
+        dt_now = datetime.fromisoformat(now)
+        return int((dt_now - dt_last).total_seconds())
+    except (ValueError, TypeError):
+        return None
+
+
+def stale_agents(cards: list[dict], now: str, threshold: int) -> list[dict]:
+    """从 mount_state 记录列表找失联 agent（非 exited 且心跳超阈值）。
+
+    返回 [{agent, role, last_heartbeat, idle_seconds}]（心跳解析失败视为失联，idle_seconds=None）。
+    纯函数，不调 HTTP（B5-4 机械臂心跳监测）。
+    """
+    stale = []
+    for card in cards:
+        try:
+            data = json.loads(card["content"])
+        except (ValueError, TypeError):
+            continue
+        if data.get("mount_status") == "exited":
+            continue
+        idle = _idle_seconds(data.get("last_heartbeat", ""), now)
+        if idle is None or idle > threshold:
+            stale.append({"agent": data.get("agent", "?"),
+                          "role": data.get("role", "?"),
+                          "last_heartbeat": data.get("last_heartbeat", "?"),
+                          "idle_seconds": idle})
+    return stale
+
+
+def cmd_mount_check(threshold: int = 300) -> None:
+    """机械臂/运维用：列出失联 agent（心跳超 threshold 秒）；无则打印明确提示。"""
+    if threshold < 1:
+        raise ValueError(f"threshold 须 ≥1，收到 {threshold}")
+    cards = _request("GET", f"/memories?tag={MOUNT_TAG}&limit=1000") \
+        .get("items", [])
+    now = _now_iso()
+    stale = stale_agents(cards, now, threshold)
+    if not stale:
+        print("无失联 agent")
+        return
+    for s in stale:
+        idle = s["idle_seconds"] if s["idle_seconds"] is not None else "?"
+        print(f"{s['agent']} {s['role']} 心跳{s['last_heartbeat']} 失联{idle}s")

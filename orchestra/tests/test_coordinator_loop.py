@@ -121,3 +121,38 @@ class TestBroadcastNewFbks:
         new = cl._broadcast_new_fbks(snapshot_path=snap)   # 重新 open
         assert [n[0] for n in new] == ["FBK-0001"]
         assert len(calls) == 1
+
+
+class TestCheckMountStale:
+    """_check_mount_stale：失联 agent 写 comm:dispatch 告警（B5-4）。"""
+
+    MOUNT_OUT = (
+        "worker-1 worker 心跳2026-08-28T20:00:00 失联360s\n"
+        "designer-1 designer 心跳2026-08-28T20:01:00 失联300s\n"
+    )
+
+    def test_失联agent逐条广播dispatch(self, monkeypatch):
+        import coordinator_loop as cl
+        calls = []
+        monkeypatch.setattr(cl, "_run", lambda cmd, **kw: (0, self.MOUNT_OUT))
+        monkeypatch.setattr(cl, "_comm_dispatch",
+                            lambda text: calls.append(text))
+        alerts = cl._check_mount_stale()
+        assert len(alerts) == 2
+        assert len(calls) == 2
+        assert "worker-1" in calls[0] and "360s" in calls[0]
+        assert "designer-1" in calls[1] and "300s" in calls[1]
+
+    def test_无失联不广播(self, monkeypatch):
+        import coordinator_loop as cl
+        calls = []
+        monkeypatch.setattr(cl, "_run", lambda cmd, **kw: (0, "无失联 agent"))
+        monkeypatch.setattr(cl, "_comm_dispatch",
+                            lambda text: calls.append(text))
+        assert cl._check_mount_stale() == []
+        assert calls == []
+
+    def test_命令失败返回空不崩溃(self, monkeypatch):
+        import coordinator_loop as cl
+        monkeypatch.setattr(cl, "_run", lambda cmd, **kw: (1, "连接失败"))
+        assert cl._check_mount_stale() == []

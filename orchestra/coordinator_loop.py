@@ -209,6 +209,35 @@ def _comm_system(text):
                   "--text", text])
 
 
+def _comm_dispatch(text):
+    """写 comm:dispatch 交流窗（≤300 字符，调度监测频道，B5-4）。"""
+    if len(text) > 300:
+        text = text[:297] + "..."
+    _run(BOARD + ["report", "--channel", "dispatch", "--from", "coordinator",
+                  "--text", text])
+
+
+def _check_mount_stale():
+    """挂载心跳监测（B5-4）：失联 agent 写 comm:dispatch 告警。
+
+    mount-check 输出行格式：<agent> <role> 心跳<iso> 失联<s>s
+    返回广播的告警消息列表（无失联/命令失败返回空列表）。
+    """
+    rc, out = _run(BOARD + ["mount-check", "--threshold", "300"])
+    if rc != 0:
+        return []
+    alerts = []
+    for line in out.splitlines():
+        m = re.match(r"(\S+)\s+(\S+)\s+心跳\S+\s+失联(\S+)", line)
+        if m:
+            agent, role, idle = m.groups()
+            alerts.append(f"挂载失联：{agent}({role}) 心跳超时 {idle}")
+    for msg in alerts:
+        _comm_dispatch(msg)
+        print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+    return alerts
+
+
 def _loop_once():
     """一轮自动核验。"""
     done, failed, raw = _parse_status()
@@ -245,6 +274,8 @@ def main():
             t = time.strftime("%H:%M:%S")
             # TASK-0061：每轮先检测新 open FBK 并广播（空转轮也检测）
             _broadcast_new_fbks()
+            # B5-4：挂载心跳监测，失联 agent 写 comm:dispatch 告警
+            _check_mount_stale()
             done, failed, raw = _parse_status()
             if not done and not failed:
                 # 空转时只打印一行心跳

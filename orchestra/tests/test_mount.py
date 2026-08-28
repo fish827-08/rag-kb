@@ -255,3 +255,76 @@ class TestMountIdle:
             "items": [], "total": 0}
         with pytest.raises(ValueError):
             mount.cmd_mount_idle("worker-1")
+
+
+class TestStaleAgents:
+    """stale_agents：失联判定纯函数（B5-4）。"""
+
+    NOW = "2026-08-28T20:06:00"
+
+    def _rec(self, agent="worker-1", role="worker", status="mounted",
+             hb="2026-08-28T20:00:00"):
+        return _card(json.dumps({
+            "agent": agent, "role": role, "mount_status": status,
+            "last_heartbeat": hb, "idle_since": "", "ttl": 900,
+            "topic_chain": [], "topic_streak": 0, "reset_reason": "",
+        }, ensure_ascii=False))
+
+    def test_心跳超阈值判定失联(self):
+        import mount
+        stale = mount.stale_agents([self._rec()], self.NOW, 300)
+        assert len(stale) == 1
+        assert stale[0]["agent"] == "worker-1"
+        assert stale[0]["idle_seconds"] == 360
+
+    def test_心跳在阈值内不失联(self):
+        import mount
+        stale = mount.stale_agents(
+            [self._rec(hb="2026-08-28T20:05:30")], self.NOW, 300)
+        assert stale == []
+
+    def test_exited排除(self):
+        import mount
+        stale = mount.stale_agents(
+            [self._rec(status="exited")], self.NOW, 300)
+        assert stale == []
+
+    def test_心跳解析失败视为失联(self):
+        import mount
+        stale = mount.stale_agents(
+            [self._rec(hb="坏时间")], self.NOW, 300)
+        assert len(stale) == 1
+        assert stale[0]["idle_seconds"] is None
+
+    def test_非JSON记录跳过(self):
+        import mount
+        stale = mount.stale_agents([_card("不是JSON")], self.NOW, 300)
+        assert stale == []
+
+
+class TestMountCheck:
+    """mount-check：列出失联 agent（B5-4）。"""
+
+    def test_mount_check列出失联(self, mock_request, monkeypatch, capsys):
+        import mount
+        monkeypatch.setattr(mount, "_now_iso", lambda: "2026-08-28T20:06:00")
+        mock_request.responses["GET /memories?tag=mount_state&limit=1000"] = {
+            "items": [_card(_mounted_json())], "total": 1}
+        mount.cmd_mount_check(threshold=300)
+        out = capsys.readouterr().out
+        assert "worker-1 worker" in out
+        assert "失联360s" in out
+
+    def test_mount_check无失联提示(self, mock_request, monkeypatch, capsys):
+        import mount
+        monkeypatch.setattr(mount, "_now_iso", lambda: "2026-08-28T20:00:30")
+        mock_request.responses["GET /memories?tag=mount_state&limit=1000"] = {
+            "items": [_card(_mounted_json())], "total": 1}
+        mount.cmd_mount_check(threshold=300)
+        assert "无失联 agent" in capsys.readouterr().out
+
+    def test_mount_check非法threshold报错(self, mock_request):
+        import mount
+        with pytest.raises(ValueError):
+            mount.cmd_mount_check(threshold=0)
+        assert not mock_request.calls

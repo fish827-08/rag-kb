@@ -24,8 +24,8 @@ from b3 import (check_summary_tags, cmd_add_with_rounds, cmd_resume,
 from relation import (cmd_relation_add, cmd_relation_list,
                       cmd_relation_remove)
 from mount import (ROLES, TTL_DEFAULT, cmd_heartbeat, cmd_mount,
-                   cmd_mount_claim, cmd_mount_idle, cmd_mount_status,
-                   cmd_unmount)
+                   cmd_mount_check, cmd_mount_claim, cmd_mount_idle,
+                   cmd_mount_status, cmd_unmount)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,6 +115,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_mount_idle = sub.add_parser("mount-idle",
                                   help="完成任务后转回空闲监听")
     p_mount_idle.add_argument("name")
+
+    p_mount_check = sub.add_parser("mount-check",
+                                   help="列出失联 agent（心跳超阈值，机械臂用）")
+    p_mount_check.add_argument("--threshold", type=int, default=300,
+                               help="心跳失联阈值秒（默认 300）")
 
     p_watch = sub.add_parser("watch", help="终端看板（实时监控）")
     p_watch.add_argument("--interval", type=int, default=5,
@@ -226,6 +231,7 @@ _DISPATCH = {
     "mount-status": lambda a: cmd_mount_status(role=a.role),
     "mount-claim": lambda a: cmd_mount_claim(a.name, topic=a.topic),
     "mount-idle": lambda a: cmd_mount_idle(a.name),
+    "mount-check": lambda a: cmd_mount_check(threshold=a.threshold),
     "register": lambda a: cmd_register(a.name, model=a.model, client=a.client),
     "report": lambda a: cmd_report(channel=a.channel, from_=a.from_,
                                    text=a.text),
