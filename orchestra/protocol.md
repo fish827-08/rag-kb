@@ -1,17 +1,18 @@
 # agent-orchestra 协议总纲
 
-版本：v1.6（2026-08-26，B3 成本管控）｜ v1.5（2026-08-26，skill 化双 skill 节 + 调度监测/designer 拆卡）｜ v1.4（2026-08-26，反馈节点）｜ v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
+版本：v1.7（2026-08-28，B5 挂载常驻：父/子协调者分层 + worker/designer 挂载监听）｜ v1.6（2026-08-26，B3 成本管控）｜ v1.5（2026-08-26，skill 化双 skill 节 + 调度监测/designer 拆卡）｜ v1.4（2026-08-26，反馈节点）｜ v1.3（2026-08-26，worktree 隔离）｜ v1.2（2026-08-26）｜ v1.1（2026-08-24）｜ 依据：docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md + 总线 ROADMAP.md B1 规划
 
 ## 1. 角色
 
-| 角色 | 载体 | 职责 |
-|---|---|---|
-| 用户 | 人 | 发起需求、开 worker 任务、终验 |
-| 协调者 | 一个 TraeWork 任务 | 分发、核验、打回、合并分支、重启服务、仲裁（v1.5 起不再拆卡，拆卡归设计者） |
-| 设计者 | 一个 TraeWork 任务 | 写设计书与验收测试草案、评审交付、**拆卡**（从 ROADMAP 待办拆细卡直接入 pending 池，见 §13）；**不写业务实现代码**（协议见 designer-prompt.md） |
-| worker | 其他 TraeWork 任务（任意模型） | 领卡、执行、回写 |
+| 角色 | 载体 | 挂载方式 | 职责 |
+|---|---|---|---|
+| 用户 | 人 | — | 发起需求、唤醒父协调者、终验 |
+| 父协调者 | 一个 AI 会话 | 不挂载（按需唤醒） | 面向用户接收高层目标 → 派活给子协调者 → 终验汇报（协议见 parent-coordinator-prompt.md） |
+| 子协调者 | 一个 AI 会话 | 持续挂载（常驻） | 拆卡、分发、监听、核验、仲裁、合并推送（确定性动作交机械臂；协议见 coordinator-prompt.md） |
+| 设计者 | 一个 AI 会话 | 挂载 15 分钟 | 写设计书与验收测试草案、评审交付；**不写业务实现代码**（协议见 designer-prompt.md） |
+| worker | 其他 AI 会话（任意模型） | 挂载 15 分钟 | 领卡、执行、回写（协议见 worker-prompt.md） |
 
-> 三角色编制（协调者→设计者→workers）2026-08-24 生效。设计者拆技术方案、定验收、拆细卡；协调者管核验/合并/重启/汇报与仲裁（v1.5 起拆卡由设计者承担，协调者不再拆卡）。
+> 四角色编制（父协调者→子协调者→设计者/workers）2026-08-28 生效（B5 挂载常驻，详见 §15）。子协调者拆技术方案、定验收、拆细卡；设计者写设计书与验收草案；worker 实现；父协调者面向用户、只派活与终验。
 
 ## 2. 任务卡
 
@@ -23,6 +24,8 @@ TASK-0003 pending worker-1 | 标题
 约束：…（≤200）
 验收：…（≤200）
 结果：…（≤1000，worker 回写）
+
+> "约束"字段可含 `分支 task/TASK-NNNN`、`配额 simple|medium|complex`、`主题 X`（供挂载连续相关≤5 判定，见 §15）。
 
 ## 3. 状态机
 
@@ -151,7 +154,7 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 | 裁决层 | 主协调者对话 AI（面向用户） | 深度核查、异常处置决策、合并冲突/测试失败仲裁、重启审批 | 人工唤醒 |
 
 - DispatchAgent 复用 `kb/monitor.py` 快照（`build_snapshot`）+ `_detect_anomalies` 纯函数；强制本地 qwen3:4b，不路由云端，不直接改任务板状态
-- 协调者循环不拆卡（卡池告急时由 DispatchAgent 播报，designer 补卡）
+- 协调者循环不拆卡（卡池告急时由 DispatchAgent 播报，子协调者补卡）
 
 ### 13.2 四条检测规则（`_detect_anomalies`）
 
@@ -164,12 +167,12 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 
 每条异常输出结构化 dict：`{type, task_id, detail}`；无异常返回空列表。纯函数不调 LLM/HTTP。
 
-### 13.3 designer 拆卡职责
+### 13.3 子协调者拆卡职责（v1.7 调整：拆卡自 designer 移交子协调者）
 
-- designer 职责从"预审"扩展为"预审 + 拆卡"：从 ROADMAP 待办（叶子节点）拆成可执行细卡，直接写入 pending 池（`board.py add`）
-- 拆卡粒度：一卡一任务、五字段齐、并行卡零文件交集（同 coordinator-prompt 拆卡原则）
+- 拆卡归子协调者：从 ROADMAP 待办（叶子节点）或父协调者委派需求，拆成可执行细卡，直接写入 pending 池（`board.py add`）
+- 拆卡粒度：一卡一任务、五字段齐、并行卡零文件交集（同 coordinator-prompt 拆卡原则）；卡内"约束"标注 `主题 X`（供 worker 挂载连续相关≤5 判定）
 - 安全兜底：拆出的卡靠 precheck 预审（§11）+ 协调者循环自动测试双保险；有问题走反馈卡 objection/risk
-- designer 仍不写业务实现代码；拆卡是设计职责的延伸
+- 设计者（designer）只写设计书与验收测试草案，不再拆卡；子协调者据设计书拆实现卡
 
 ## 14. 成本管控纪律（v1.6 新增，B3 第一批）
 
@@ -206,3 +209,13 @@ orchestra 包化分层（方案一），board.py 按职责拆分为多模块，�
 - **保留标签强制不压缩**：决策、参数、验收标准、阻塞点四类必须原样保留（阻塞点/决策的重要来源是 §11 反馈卡）
 - 摘要后校验：回读 summary 检查四类标签是否齐全，缺失则重生成（最多 1 次）
 - 中断恢复：agent 唤醒时先查 claimed 卡的 summary，从摘要续做（不依赖对话历史）
+
+## 15. 挂载常驻（v1.7 新增，B5）
+
+详见设计 `orchestra/docs/superpowers/specs/2026-08-28-orchestra-mount-design.md`。要点：
+
+- **挂载模型**：worker/designer 完成任务后进入挂载监听（自循环），空闲 15 分钟无新卡自动停机；有新卡即继续，做完回到监听。子协调者持续挂载（TTL=0），父协调者不挂载、按需唤醒。
+- **挂载循环**：`board.py mount <名> --role <角色> --ttl N` 启动 → 查卡 → 有卡 `mount-claim --topic X`→执行→回写→`mount-idle`；无卡 `heartbeat` + sleep(60s)；空闲满 TTL `unmount` 停机。
+- **连续相关≤5**：卡内"约束"的 `主题 X` 用于连续相关链计数；同主题连续达 5 强制上下文重置（写 summary → `unmount` → 重挂载）。
+- **父→子委派**：父协调者建"拆卡卡"（assignee=subcoordinator）→ 子协调者拆设计卡(designer)/实现卡(worker) → 核验 → 回写拆卡卡 done → 父协调者汇报。
+- **机械臂**：coordinator_loop.py 保留机械核验 + 新增挂载心跳监测（失联告警）。
