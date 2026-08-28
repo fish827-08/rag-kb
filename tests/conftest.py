@@ -22,6 +22,11 @@ def env_isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("KB_LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("KB_OLLAMA_BASE_URL", "http://127.0.0.1:1")
     monkeypatch.delenv("KB_LLM_MODEL", raising=False)
+    # 剥离本地 .env 的治理开关（A3 三件套默认全关；本地 .env 开启会污染
+    # 依赖"默认关闭零行为变化"的测试，如写入第二条记录被 dedup 409 拦截）
+    monkeypatch.setenv("KB_DECAY_ENABLED", "false")
+    monkeypatch.setenv("KB_DEDUP_ENABLED", "false")
+    monkeypatch.setenv("KB_FRESHNESS_ENABLED", "false")
     config.get_settings.cache_clear()
     yield tmp_path
     config.get_settings.cache_clear()
