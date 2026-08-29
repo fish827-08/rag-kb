@@ -94,6 +94,15 @@ cp skills/kb-memory/SKILL.md ~/.claude/skills/kb-memory/
 5. 版本不一致时以**仓库内 `skills/kb-memory/SKILL.md` 为准**（唯一事实来源），
    用户级目录只是它的副本，随时可重新覆盖。
 
+### 常见问题：装了却未生效（0 字节空文件）
+
+- **症状**：目录 `kb-memory\` 存在，但客户端不识别、`SKILL.md` 是 **0 字节**（或比仓库小）。
+- **原因**：安装脚本/复制被静默失败（典型：以受限权限运行时 `copy` 没写进去，但目录已创建），
+  旧版脚本只打 `[OK]` 不校验，造成"目录在、文件空"的假象。
+- **解决**：用**修复后的脚本重跑**（脚本现在会对比源/目标大小，失败打 `[FAIL]`），
+  或手动覆盖该文件后确认大小与 `skills\kb-memory\SKILL.md` 一致，再重启客户端。
+- **自查**（PowerShell）：`(Get-Item "%USERPROFILE%\.trae-cn\skills\kb-memory\SKILL.md").Length` 应大于 0。
+
 ## 环境要求（Requirements）
 
 - Python 3.10+ 虚拟环境（`.venv` 或 `venv`），依赖已装（`pip install -e .`）

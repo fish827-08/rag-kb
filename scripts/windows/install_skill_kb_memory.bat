@@ -19,6 +19,10 @@ REM   容错：只安装到「用户目录已存在」的客户端（例如没�
 REM   就不创建 .trae-cn\skills 空目录，直接跳过并提示），其余客户端
 REM   不受影响；本脚本不绑定启动脚本，也不会自动随服务启动执行。
 REM
+REM   安装自校验：复制后比对源/目标文件大小，源为空或复制失败都会
+REM   打印 [FAIL] 而不是假 [OK]（防止 0 字节空文件装完却不生效）；
+REM   装完目标文件大小应与仓库内 SKILL.md 一致。
+REM
 REM   注：各客户端用户级 skill 目录加载机制不同（TraeWork 自动发现；
 REM   Claude Code 需 >= 某版本；Cursor 逐步支持），装完若未自动生效，
 REM   重启对应客户端即可。最终兜底：直接复制粘贴 AGENT_PROMPT.md。
@@ -78,21 +82,54 @@ exit /b 0
 
 :do_install
 set "DST_DIR=%~1"
+set "DST_FILE=%DST_DIR%\SKILL.md"
+
+REM --- 1. 确保目标目录存在（失败即报错，不再带病继续） ---
 if not exist "%DST_DIR%" mkdir "%DST_DIR%" >nul 2>&1
-copy /Y "%SRC%" "%DST_DIR%\SKILL.md" >nul
-if errorlevel 1 (
-    echo [WARN] 安装失败（可能无权限）: %DST_DIR%
-    echo       请以管理员权限重试，或手动复制:
-    echo         copy /Y "%SRC%" "%DST_DIR%\SKILL.md"
-) else (
-    echo [OK] 已安装: %DST_DIR%\SKILL.md
+if not exist "%DST_DIR%" (
+    echo [FAIL] 无法创建目录: %DST_DIR%
+    echo       无权限或该用户目录不可写，请以管理员身份重试，或手动复制。
+    echo.
+    exit /b 0
 )
+
+REM --- 2. 源文件非空校验（防复制空内容/损坏文件） ---
+for %%F in ("%SRC%") do set "SRC_SIZE=%%~zF"
+if not defined SRC_SIZE set "SRC_SIZE=0"
+if "%SRC_SIZE%"=="0" (
+    echo [FAIL] 源文件为空 ^(0 字节^)，未安装: %SRC%
+    echo       请检查仓库内 skills\kb-memory\SKILL.md 是否完整。
+    echo.
+    exit /b 0
+)
+
+REM --- 3. 复制 ---
+copy /Y "%SRC%" "%DST_FILE%" >nul 2>&1
+if errorlevel 1 (
+    echo [FAIL] 复制失败: %DST_FILE%
+    echo       请以管理员身份重试，或手动复制:
+    echo         copy /Y "%SRC%" "%DST_FILE%"
+    echo.
+    exit /b 0
+)
+
+REM --- 4. 校验：目标存在、非空、大小与源一致（防 0 字节/静默失败） ---
+for %%F in ("%DST_FILE%") do set "DST_SIZE=%%~zF"
+if not defined DST_SIZE set "DST_SIZE=0"
+if not "%SRC_SIZE%"=="%DST_SIZE%" (
+    echo [FAIL] 校验失败: 目标 %DST_FILE% 大小 %DST_SIZE% 与源 %SRC_SIZE% 不一致
+    echo       安装未生效，请检查磁盘/权限后重试，或手动覆盖该文件。
+    echo.
+    exit /b 0
+)
+
+echo [OK] 已安装并校验通过: %DST_FILE%
 exit /b 0
 
 :finish
 echo.
-echo [DONE] kb-memory skill 安装完成。若客户端未自动识别，
-echo   请重启对应客户端；兜底方案：
+echo [DONE] kb-memory skill 安装完成。安装失败的客户端请按上面的 [FAIL] 提示处理；
+echo   成功后若客户端未自动识别，请重启对应客户端；兜底方案：
 echo     TraeWork/Claude 等：新会话粘贴 docs\AGENT_PROMPT.md 全文即可。
 pause
 endlocal
