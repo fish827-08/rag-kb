@@ -1,0 +1,32 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+chroma_db/
+kb_data/
+models/
+.idea/
+.pytest_cache/logs/
+logs/
+# orchestra worktree 隔离目录（TASK-0025）
+.worktrees/
+# orchestra 协调者循环临时快照（TASK-0061）
+.kb_tmp/
+# SSH 私钥与凭据（严禁入库，2026-08-27）
+key/
+*.pem
+*.key
+# 评估报告（本地参考，不入库）
+评估报告/
+# 本地敏感数据（2026-08-27：敏感信息只留本地不上 git）
+*.env
+.env.*
+credentials*
+secrets/
+!.env.example
+# Python 打包构建产物（pyproject.toml 引入，N30）
+dist/
+build/
+*.egg-info/
+*.pid

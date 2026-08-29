@@ -1,0 +1,640 @@
+"""监控 Agent（N18）：本地 qwen3 常驻汇总（TASK-0017）。
+
+TDD 红灯基准来自 0015 设计书第 6 节；仅 mock service/llm，不依赖真实
+KBService（线程启停用 FakeService 直测，不做慢速集成）。
+"""
+import logging
+from datetime import datetime, timedelta
+
+import pytest
+
+from kb.llm import LLMError
+from kb.config import Settings
+from kb.monitor import (MonitorAgent, _b3_parse_rounds, _detect_anomalies,
+                        _fallback_dispatch_text, _fallback_summary_text,
+                        build_anomaly_snapshot, build_messages, build_snapshot,
+                        maybe_open_dashboard, run_once_dispatch, run_once_summary)
+
+
+# ---- 测试替身 ----
+class FakeLLM:
+    """记录 chat 调用；result 可设返回或抛错；status 模拟 LLMClient（stats() 读取 .value）。"""
+
+    class _Status:
+        value = "local"
+
+    def __init__(self, result="已完成任务：xxx"):
+        self.result = result
+        self.error = None
+        self.calls = []
+        self.status = self._Status()
+
+    def chat(self, messages, max_tokens=None, prefer="auto"):
+        self.calls.append({"max_tokens": max_tokens, "prefer": prefer})
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _rec(content, tags=(), source=None, updated_at="2026-08-25T10:00:00"):
+    """构造假 Record（仅 monitor 用到 content/tags/source/updated_at）。"""
+
+    class _R:
+        pass
+
+    r = _R()
+    r.content = content
+    r.tags = list(tags)
+    r.source = source
+    r.updated_at = updated_at
+    return r
+
+
+class FakeService:
+    """按 tag 过滤的假 service；list_records 结果可控，add_memory 记入 added。"""
+
+    def __init__(self, records):
+        self.records = records
+        self.added = []
+        self.llm = FakeLLM()
+
+    def list_records(self, tag=None, limit=1000):
+        items = [r for r in self.records if tag is None or tag in r.tags]
+        return items[:limit], len(items)
+
+    def add_memory(self, content, tags=None, source=None, namespace="default"):
+        self.added.append({"content": content, "tags": tags, "source": source})
+
+
+# ---- TDD 红灯基准 ----
+def test_快照收集纯函数():
+    records = [
+        _rec("TASK-0001 pending worker-1 | 标题A", ["taskboard"]),
+        _rec("TASK-0002 claimed worker-2 | 标题B", ["taskboard"]),
+        _rec('{"worker":"worker-1","model":"GLM-5.3","status":"idle",'
+             '"last_seen":"t1"}', ["registry"]),
+        _rec("comm:done | x", ["comm:done"], source="worker-1"),
+    ]
+    svc = FakeService(records)
+    snap = build_snapshot(svc)
+    assert "【任务板】" in snap and "【worker】" in snap and "【交流窗】" in snap
+    assert "TASK-0001 pending worker-1 | 标题A" in snap
+    assert "worker-1 GLM-5.3 idle t1" in snap
+    assert "worker-1: comm:done | x" in snap
+
+
+def test_快照行数受限():
+    records = [_rec(f"TASK-{i:04d} pending worker-1 | 标题{i}",
+                    ["taskboard"]) for i in range(10)]
+    svc = FakeService(records)
+    snap = build_snapshot(svc)
+    # pending 上限 4 行 → 第 5 张卡（TASK-0004）不应出现，前 4 张保留
+    assert "TASK-0004 pending" not in snap
+    assert "TASK-0003 pending" in snap
+
+
+def test_提示词模板token预算():
+    big = "\n".join(f"TASK-{i:04d} pending worker-1 | 标题{i}" for i in range(8))
+    snap = f"【任务板】\n{big}\n【worker】\n{big}\n【交流窗】\n{big}"
+    msgs = build_messages(snap, "2026-08-25 10:00")
+    # 保守估算：1 中文字 ≈1.5 token；远低于 1500 硬上限
+    est = sum(len(m["content"]) for m in msgs) * 1.5
+    assert est < 1500
+
+
+def test_LLM调用_prefer_local_max_tokens():
+    svc = FakeService([])
+    agent = MonitorAgent(svc, max_tokens=300, monitor_llm="auto")
+    agent._run_once()
+    assert svc.llm.calls
+    assert svc.llm.calls[0]["prefer"] == "local"
+    assert svc.llm.calls[0]["max_tokens"] == 300
+
+
+def test_摘要写入comm_monitor():
+    svc = FakeService([])
+    svc.llm.result = "当前进行中任务：TASK-0002"
+    agent = MonitorAgent(svc, max_tokens=300, monitor_llm="auto")
+    agent._run_once()
+    assert svc.added, "应当写入 comm:monitor"
+    assert svc.added[0]["tags"] == ["comm:monitor"]
+    assert svc.added[0]["source"] == "kb-monitor"
+    assert "TASK-0002" in svc.added[0]["content"]
+
+
+def test_LLM不可用兜底(caplog):
+    """TASK-0059：LLM 失败时主摘要降级纯文本，仍写 comm:monitor（不再整轮跳过）。"""
+    svc = FakeService([])
+    svc.llm.error = LLMError("本地不可用")
+    agent = MonitorAgent(svc, max_tokens=300, monitor_llm="auto")
+    agent._run_once()  # 不崩溃
+    # LLM 失败降级纯文本，仍写 comm:monitor
+    monitor_recs = [a for a in svc.added if "comm:monitor" in (a["tags"] or [])]
+    assert len(monitor_recs) == 1
+    assert "纯文本降级" in monitor_recs[0]["content"]
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_interval非法回退():
+    svc = FakeService([])
+    assert MonitorAgent(svc, interval_minutes=0).interval == 10
+    assert MonitorAgent(svc, interval_minutes=3).interval == 3
+
+
+def test_看板自启动开关():
+    class S:
+        dashboard_autoopen = False
+        dashboard_url = "http://x"
+
+    calls = []
+    maybe_open_dashboard(S(), opener=lambda u: calls.append(u))
+    assert calls == []
+    S.dashboard_autoopen = True
+    maybe_open_dashboard(S(), opener=lambda u: calls.append(u))
+    assert calls == ["http://x"]
+
+
+# ---- TASK-0021：去常驻改按需——端点测试（mock llm，不依赖真实 LLM/Ollama）----
+def _make_client(env_isolated, monkeypatch,
+                 llm_result="当前协作正常：TASK-0016 完成，TASK-0021 进行中。",
+                 llm_error=None, monitor_llm="auto"):
+    """装配 app（monitor_enabled 默认 False 不启线程）并注入 FakeLLM 为 KBService.llm。
+
+    create_app() 末尾被 charset/请求日志中间件包装为 ASGI 函数（无 .state），
+    故不直接改 app.state；改经 KBService.__init__ 的 llm 注入点
+    （monkeypatch kb.service.LLMClient 为返回 FakeLLM 的工厂）。
+    monitor_llm（TASK-0065）：端点测试默认 auto（调 LLM），off 时全程纯文本不调 LLM。
+    """
+    from kb import config
+    config.get_settings.cache_clear()
+    monkeypatch.setenv("KB_MONITOR_LLM", monitor_llm)
+    fllm = FakeLLM(result=llm_result)
+    if llm_error is not None:
+        fllm.error = llm_error
+    monkeypatch.setattr("kb.service.LLMClient", lambda settings: fllm)
+    from kb.api import create_app
+    from fastapi.testclient import TestClient
+    return TestClient(create_app()), fllm
+
+
+def test_按需端点返回摘要与id(env_isolated, monkeypatch):
+    """POST /api/v1/monitor/summary：单轮跑通，返回 {summary, id}，且写 comm:monitor。"""
+    c, fllm = _make_client(env_isolated, monkeypatch)
+    with c:
+        r = c.post("/api/v1/monitor/summary")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["summary"]
+        assert data["id"]
+        assert fllm.calls[0]["prefer"] == "local"
+        # 摘要确实写入 comm:monitor（经 REST 校验，避免依赖 app.state）
+        lst = c.get("/api/v1/memories?tag=comm:monitor&limit=10")
+        assert lst.status_code == 200
+        items = lst.json()["items"]
+        assert any(it["id"] == data["id"] for it in items)
+
+
+def test_按需端点LLM不可用降级返回200(env_isolated, monkeypatch):
+    """TASK-0059：LLM 不可用时端点降级纯文本，返回 200（不再 502）。"""
+    from kb.llm import LLMError
+    c, _ = _make_client(env_isolated, monkeypatch, llm_error=LLMError("本地不可用"))
+    with c:
+        r = c.post("/api/v1/monitor/summary")
+    assert r.status_code == 200
+    assert "纯文本降级" in r.json()["summary"]
+
+
+def test_配置去常驻默认(env_isolated, monkeypatch):
+    """去常驻：monitor_enabled 默认 False（不启线程）；KB_MONITOR_AUTOTIMER 默认 0。
+
+    GET /api/v1/config 暴露 monitor_autotimer 供看板前端读取（>0 时前端定时调）。
+    """
+    from kb.config import Settings
+    s = Settings()
+    assert s.monitor_enabled is False
+    assert s.monitor_autotimer == 0
+    c, _ = _make_client(env_isolated, monkeypatch)
+    with c:
+        r = c.get("/api/v1/config")
+    assert r.status_code == 200
+    assert r.json() == {"monitor_autotimer": 0}
+
+
+# ---- TASK-0048：_detect_anomalies 异常检测纯函数 ----
+_NOW = datetime(2026, 8, 26, 12, 0, 0)
+
+
+def _task(task_id, status, minutes_ago=0):
+    """构造 snapshot tasks 条目（updated_at = NOW - minutes_ago）。"""
+    return {"task_id": task_id, "status": status,
+            "updated_at": (_NOW - timedelta(minutes=minutes_ago)).isoformat()}
+
+
+def _fbk(fbk_id, status, minutes_ago=0):
+    """构造 snapshot feedbacks 条目。"""
+    return {"fbk_id": fbk_id, "status": status,
+            "updated_at": (_NOW - timedelta(minutes=minutes_ago)).isoformat()}
+
+
+class TestDetectAnomalies:
+    """_detect_anomalies 四条规则：触发/不触发/边界（TASK-0048）。"""
+
+    # ① pending 数 < 2
+    def test_pending_low_触发_pending为1(self):
+        snap = {"tasks": [_task("TASK-0001", "pending")], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        types = [a["type"] for a in anomalies]
+        assert "pending_low" in types
+        a = [a for a in anomalies if a["type"] == "pending_low"][0]
+        assert a["task_id"] is None
+        assert "pending 数=1" in a["detail"]
+
+    def test_pending_low_不触发_pending为2(self):
+        snap = {"tasks": [_task("TASK-0001", "pending"), _task("TASK-0002", "pending")],
+                "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "pending_low" for a in anomalies)
+
+    # ② claimed 超 30 分钟
+    def test_claimed_stale_触发_31分钟(self):
+        snap = {"tasks": [_task("TASK-0001", "claimed", minutes_ago=31)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert any(a["type"] == "claimed_stale" and a["task_id"] == "TASK-0001"
+                   for a in anomalies)
+
+    def test_claimed_stale_不触发_29分钟(self):
+        snap = {"tasks": [_task("TASK-0001", "claimed", minutes_ago=29)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "claimed_stale" for a in anomalies)
+
+    def test_claimed_stale_边界恰好30分钟不触发(self):
+        snap = {"tasks": [_task("TASK-0001", "claimed", minutes_ago=30)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "claimed_stale" for a in anomalies)
+
+    # ③ done 超 5 分钟未核验
+    def test_done_unverified_触发_6分钟(self):
+        snap = {"tasks": [_task("TASK-0001", "done", minutes_ago=6)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert any(a["type"] == "done_unverified" and a["task_id"] == "TASK-0001"
+                   for a in anomalies)
+
+    def test_done_unverified_不触发_4分钟(self):
+        snap = {"tasks": [_task("TASK-0001", "done", minutes_ago=4)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "done_unverified" for a in anomalies)
+
+    def test_done_unverified_边界恰好5分钟不触发(self):
+        snap = {"tasks": [_task("TASK-0001", "done", minutes_ago=5)], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "done_unverified" for a in anomalies)
+
+    # ④ open FBK 超 10 分钟
+    def test_fbk_open_stale_触发_11分钟(self):
+        snap = {"tasks": [], "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=11)]}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert any(a["type"] == "fbk_open_stale" and a["task_id"] == "FBK-0001"
+                   for a in anomalies)
+
+    def test_fbk_open_stale_不触发_9分钟(self):
+        snap = {"tasks": [], "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=9)]}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "fbk_open_stale" for a in anomalies)
+
+    def test_fbk_open_stale_边界恰好10分钟不触发(self):
+        snap = {"tasks": [], "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=10)]}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "fbk_open_stale" for a in anomalies)
+
+    # 非 open 状态 FBK 不检测（accepted/rejected 不触发）
+    def test_fbk_non_open不检测(self):
+        snap = {"tasks": [], "feedbacks": [
+            _fbk("FBK-0001", "accepted", minutes_ago=60),
+            _fbk("FBK-0002", "rejected", minutes_ago=60),
+        ]}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "fbk_open_stale" for a in anomalies)
+
+    # 时间解析失败跳过不报错
+    def test_时间解析失败跳过不报错(self):
+        snap = {"tasks": [{"task_id": "TASK-0001", "status": "claimed",
+                            "updated_at": "非法时间"}], "feedbacks": []}
+        # 不抛异常，且该卡不被计为 stale（时间解析失败跳过）
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "claimed_stale" for a in anomalies)
+
+    # 空快照：仅 pending_low（pending=0<2），无其他异常
+    def test_空快照仅pending_low(self):
+        anomalies = _detect_anomalies({}, now=_NOW)
+        assert len(anomalies) == 1
+        assert anomalies[0]["type"] == "pending_low"
+
+    # 综合：四条规则同时触发
+    def test_综合四条规则同时触发(self):
+        snap = {
+            "tasks": [
+                _task("TASK-0001", "pending"),  # pending=1 < 2
+                _task("TASK-0002", "claimed", minutes_ago=45),  # >30
+                _task("TASK-0003", "done", minutes_ago=10),  # >5
+            ],
+            "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=20)],  # >10
+        }
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        types = sorted(a["type"] for a in anomalies)
+        assert types == sorted(["pending_low", "claimed_stale",
+                                "done_unverified", "fbk_open_stale"])
+
+    # ---- TASK-0058：B3 rounds 轮次告警（规则⑤）----
+    def test_rounds_exceeded_触发_达到上限(self):
+        snap = {
+            "tasks": [_task("TASK-0052", "claimed")],
+            "feedbacks": [],
+            "rounds": {"TASK-0052": {"total": 5, "complexity": "medium",
+                                       "quota": {"total": 5}}},
+        }
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert any(a["type"] == "rounds_exceeded" and a["task_id"] == "TASK-0052"
+                   for a in anomalies)
+
+    def test_rounds_exceeded_触发_超过上限(self):
+        snap = {
+            "tasks": [_task("TASK-0052", "claimed")],
+            "feedbacks": [],
+            "rounds": {"TASK-0052": {"total": 6, "complexity": "medium",
+                                       "quota": {"total": 5}}},
+        }
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert any(a["type"] == "rounds_exceeded" for a in anomalies)
+
+    def test_rounds_exceeded_不触发_未超限(self):
+        snap = {
+            "tasks": [_task("TASK-0052", "claimed")],
+            "feedbacks": [],
+            "rounds": {"TASK-0052": {"total": 4, "complexity": "medium",
+                                       "quota": {"total": 5}}},
+        }
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "rounds_exceeded" for a in anomalies)
+
+    def test_rounds_exceeded_不触发_非claimed(self):
+        """pending/done 卡即使 rounds 超限也不触发（只检测 claimed）。"""
+        snap = {
+            "tasks": [_task("TASK-0052", "pending"), _task("TASK-0053", "done")],
+            "feedbacks": [],
+            "rounds": {
+                "TASK-0052": {"total": 5, "complexity": "simple", "quota": {"total": 3}},
+                "TASK-0053": {"total": 8, "complexity": "complex", "quota": {"total": 8}},
+            },
+        }
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "rounds_exceeded" for a in anomalies)
+
+    def test_rounds_exceeded_不触发_无rounds记录(self):
+        snap = {"tasks": [_task("TASK-0052", "claimed")], "feedbacks": []}
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        assert all(a["type"] != "rounds_exceeded" for a in anomalies)
+
+    def test_rounds_exceeded_detail含轮次字段(self):
+        """告警 detail 含 'TASK-NNNN complexity第N轮/共M' 格式（comm:dispatch 播报字段）。"""
+        snap = {
+            "tasks": [_task("TASK-0052", "claimed")],
+            "feedbacks": [],
+            "rounds": {"TASK-0052": {"total": 5, "complexity": "medium",
+                                       "quota": {"total": 5}}},
+        }
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        a = [a for a in anomalies if a["type"] == "rounds_exceeded"][0]
+        assert "TASK-0052" in a["detail"]
+        assert "medium第5轮/共5" in a["detail"]
+        assert "轮次超限" in a["detail"]
+
+    def test_综合五条规则同时触发(self):
+        """TASK-0058 后五条规则可同时触发（含 rounds_exceeded）。"""
+        snap = {
+            "tasks": [
+                _task("TASK-0001", "pending"),  # pending=1 < 2
+                _task("TASK-0002", "claimed", minutes_ago=45),  # >30
+                _task("TASK-0003", "done", minutes_ago=10),  # >5
+                _task("TASK-0052", "claimed"),  # rounds 超限
+            ],
+            "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=20)],  # >10
+            "rounds": {"TASK-0052": {"total": 5, "complexity": "medium",
+                                       "quota": {"total": 5}}},
+        }
+        anomalies = _detect_anomalies(snap, now=_NOW)
+        types = sorted(a["type"] for a in anomalies)
+        assert types == sorted(["pending_low", "claimed_stale", "done_unverified",
+                                "fbk_open_stale", "rounds_exceeded"])
+
+
+# ---- TASK-0049：异常调度（comm:dispatch）----
+class TestDispatch:
+    """run_once_dispatch / build_anomaly_snapshot / run_once_summary 接入。"""
+
+    def test_有异常时写comm_dispatch(self):
+        # 空 taskboard → pending=0 < 2 → pending_low 触发
+        svc = FakeService([])
+        svc.llm.result = "待办告急：卡池 pending 数为 0"
+        run_once_dispatch(svc, max_tokens=300, monitor_llm="auto")
+        dispatch = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
+        assert len(dispatch) == 1
+        assert dispatch[0]["source"] == "kb-dispatch"
+        assert dispatch[0]["content"] == "待办告急：卡池 pending 数为 0"
+        # LLM 护栏：prefer=local / max_tokens=300
+        assert svc.llm.calls[-1]["prefer"] == "local"
+        assert svc.llm.calls[-1]["max_tokens"] == 300
+
+    def test_无异常不写comm_dispatch(self):
+        now = datetime.now().isoformat()
+        records = [
+            _rec("TASK-0001 pending worker-1 | 标题A", ["taskboard"], updated_at=now),
+            _rec("TASK-0002 pending worker-2 | 标题B", ["taskboard"], updated_at=now),
+        ]
+        svc = FakeService(records)
+        svc.llm.result = "不应被调用"
+        run_once_dispatch(svc, max_tokens=300)
+        assert not any("comm:dispatch" in (a["tags"] or []) for a in svc.added)
+        assert not svc.llm.calls  # 无异常不调 LLM（避免刷屏）
+
+    def test_LLM失败兜底不崩溃(self):
+        """TASK-0059：LLM 失败时 dispatch 降级纯文本，仍写 comm:dispatch（不再跳过）。"""
+        svc = FakeService([])  # pending_low 触发
+        svc.llm.error = LLMError("本地不可用")
+        run_once_dispatch(svc, max_tokens=300, monitor_llm="auto")
+        # LLM 失败降级纯文本，仍写 comm:dispatch
+        dispatch_recs = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
+        assert len(dispatch_recs) == 1
+        assert "纯文本降级" in dispatch_recs[0]["content"]
+
+    def test_run_once_summary接入_dispatch_enabled默认开(self):
+        svc = FakeService([])  # pending_low
+        svc.llm.result = "监控摘要"
+        run_once_summary(svc, max_tokens=300, monitor_llm="auto")  # dispatch_enabled 默认 True
+        tags_list = [tuple(a["tags"] or []) for a in svc.added]
+        assert ("comm:monitor",) in tags_list
+        assert ("comm:dispatch",) in tags_list
+
+    def test_dispatch_enabled_false不写(self):
+        svc = FakeService([])  # pending_low
+        svc.llm.result = "监控摘要"
+        run_once_summary(svc, max_tokens=300, dispatch_enabled=False, monitor_llm="auto")
+        tags_list = [tuple(a["tags"] or []) for a in svc.added]
+        assert ("comm:monitor",) in tags_list
+        assert ("comm:dispatch",) not in tags_list
+
+    def test_build_anomaly_snapshot收集(self):
+        now = datetime.now().isoformat()
+        rounds_content = ("ROUNDS TASK-0001 | precheck=1 milestone=1 review=0 total=2\n"
+                          "复杂度：medium\n配额：precheck=2 milestone=2 total=5")
+        records = [
+            _rec("TASK-0001 claimed worker-1 | 标题A", ["taskboard"], updated_at=now),
+            _rec("坏首行", ["taskboard"], updated_at=now),  # 解析失败跳过
+            _rec("FBK-0001 feedback TASK-0001 | objection precheck\n结果：open",
+                 ["feedback"], updated_at=now),
+            _rec("坏反馈首行", ["feedback"], updated_at=now),  # 跳过
+            _rec(rounds_content, ["rounds"], updated_at=now),  # TASK-0058 rounds 采集
+            _rec("ROUNDS 坏格式", ["rounds"], updated_at=now),  # 解析失败跳过
+        ]
+        svc = FakeService(records)
+        snap = build_anomaly_snapshot(svc)
+        assert len(snap["tasks"]) == 1
+        assert snap["tasks"][0]["task_id"] == "TASK-0001"
+        assert snap["tasks"][0]["status"] == "claimed"
+        assert len(snap["feedbacks"]) == 1
+        assert snap["feedbacks"][0]["fbk_id"] == "FBK-0001"
+        assert snap["feedbacks"][0]["status"] == "open"
+        # TASK-0058：rounds 采集（orchestra.b3 可 import 时解析，否则空 dict）
+        if _b3_parse_rounds is not None:
+            assert "TASK-0001" in snap["rounds"]
+            assert snap["rounds"]["TASK-0001"]["total"] == 2
+            assert snap["rounds"]["TASK-0001"]["complexity"] == "medium"
+        else:
+            assert snap["rounds"] == {}
+
+    def test_dispatch轮次告警含轮次字段(self, monkeypatch):
+        """TASK-0058 冒烟：rounds_exceeded 异常时，comm:dispatch 播报 LLM 输入含轮次字段。"""
+        # 确保 orchestra 及其内部模块可 import（b3.py 内部用 from cards import，需 orchestra/ 在 path）
+        import sys as _sys
+        from pathlib import Path as _Path
+        _repo_root = str(_Path(__file__).resolve().parent.parent)
+        _orchestra_dir = str(_Path(_repo_root) / "orchestra")
+        for _p in (_repo_root, _orchestra_dir):
+            if _p not in _sys.path:
+                _sys.path.insert(0, _p)
+        try:
+            from orchestra.b3 import parse_rounds as _pr
+        except ImportError:
+            pytest.skip("orchestra.b3 不可 import")
+        monkeypatch.setattr("kb.monitor._b3_parse_rounds", _pr)
+        now = datetime.now().isoformat()
+        rounds_content = ("ROUNDS TASK-0052 | precheck=2 milestone=2 review=1 total=5\n"
+                          "复杂度：medium\n配额：precheck=2 milestone=2 total=5")
+        records = [
+            _rec("TASK-0052 claimed worker-1 | 标题", ["taskboard"], updated_at=now),
+            _rec("TASK-0001 pending worker-2 | 待办", ["taskboard"], updated_at=now),
+            _rec("TASK-0002 pending worker-3 | 待办", ["taskboard"], updated_at=now),
+            _rec(rounds_content, ["rounds"], updated_at=now),
+        ]
+        svc = FakeService(records)
+        captured = {}
+
+        def fake_chat(messages, max_tokens=None, prefer="auto"):
+            captured["messages"] = messages
+            return "轮次超限告警：TASK-0052 medium第5轮/共5"
+        monkeypatch.setattr(svc.llm, "chat", fake_chat)
+        run_once_dispatch(svc, max_tokens=300, monitor_llm="auto")
+        # LLM 被调用，且 user content 含轮次字段（comm:dispatch 播报格式）
+        assert "messages" in captured
+        user_msg = captured["messages"][1]["content"]
+        assert "TASK-0052" in user_msg
+        assert "medium第5轮/共5" in user_msg
+        assert "rounds_exceeded" in user_msg
+        # comm:dispatch 记录已写入
+        dispatch = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
+        assert len(dispatch) == 1
+
+    def test_dispatch独立执行_主摘要失败时仍播报(self):
+        """TASK-0059：主摘要 LLM 失败时，dispatch 仍独立执行（不再整轮短路）。"""
+        svc = FakeService([])  # pending_low 触发
+        svc.llm.error = LLMError("本地不可用")
+        run_once_summary(svc, max_tokens=300, dispatch_enabled=True, monitor_llm="auto")
+        # 主摘要降级 + dispatch 降级，两条都写
+        tags_list = [tuple(a["tags"] or []) for a in svc.added]
+        assert ("comm:monitor",) in tags_list
+        assert ("comm:dispatch",) in tags_list
+        # 都是降级纯文本
+        for a in svc.added:
+            assert "纯文本降级" in a["content"]
+
+
+# ---- TASK-0059：降级纯文本纯函数 ----
+def test_fallback_summary_text纯函数():
+    """TASK-0059：_fallback_summary_text 从快照解析任务板各状态卡数。"""
+    snapshot = ("【任务板】\nTASK-0001 pending worker-1 | 标题A\n"
+                "TASK-0002 claimed worker-2 | 标题B\n"
+                "TASK-0003 done worker-1 | 标题C\n"
+                "TASK-0004 verified worker-2 | 标题D\n"
+                "【反馈】\n无")
+    text = _fallback_summary_text(snapshot, "2026-08-26 12:00")
+    assert "待办1" in text
+    assert "进行中1" in text
+    assert "已完成1" in text
+    assert "已核验1" in text
+    assert "纯文本降级" in text
+
+
+def test_fallback_dispatch_text纯函数():
+    """TASK-0059：_fallback_dispatch_text 异常列表模板渲染。"""
+    anomalies = [
+        {"type": "pending_low", "task_id": None, "detail": "卡池 pending 数=0 < 2"},
+        {"type": "rounds_exceeded", "task_id": "TASK-0052",
+         "detail": "TASK-0052 medium第5轮/共5，轮次超限"},
+    ]
+    text = _fallback_dispatch_text(anomalies, "2026-08-26 12:00")
+    assert "共2条" in text
+    assert "[pending_low]" in text
+    assert "[rounds_exceeded]" in text
+    assert "TASK-0052" in text
+    assert "纯文本降级" in text
+
+
+# ---- TASK-0065：monitor_llm 纯文本模式配置化 ----
+def test_config_monitor_llm默认值off():
+    """TASK-0065：monitor_llm 默认 off（全程纯文本不调 LLM，零成本/不抢 GPU）。"""
+    assert Settings().monitor_llm == "off"
+
+
+def test_off模式主摘要不调LLM():
+    """TASK-0065：monitor_llm=off 时 run_once_summary 全程纯文本，不发任何 LLM 请求。"""
+    svc = FakeService([])  # 空 taskboard → pending_low 异常，dispatch 也会执行
+    svc.llm.result = "不应被调用"
+    run_once_summary(svc, max_tokens=300, dispatch_enabled=True, monitor_llm="off")
+    # off 模式：主摘要 + dispatch 都不调 LLM
+    assert svc.llm.calls == []
+    # 但仍写 comm:monitor（纯文本降级）和 comm:dispatch（纯文本降级）
+    tags_list = [tuple(a["tags"] or []) for a in svc.added]
+    assert ("comm:monitor",) in tags_list
+    assert ("comm:dispatch",) in tags_list
+    for a in svc.added:
+        assert "纯文本降级" in a["content"]
+
+
+def test_auto模式主摘要调LLM():
+    """TASK-0065：monitor_llm=auto 时 run_once_summary 调 LLM（现有行为不变）。"""
+    svc = FakeService([])
+    svc.llm.result = "监控摘要"
+    run_once_summary(svc, max_tokens=300, dispatch_enabled=False, monitor_llm="auto")
+    assert len(svc.llm.calls) >= 1
+    assert svc.llm.calls[-1]["prefer"] == "local"
+
+
+def test_off模式dispatch不调LLM():
+    """TASK-0065：monitor_llm=off 时 run_once_dispatch 全程纯文本，不发 LLM 请求。"""
+    svc = FakeService([])  # pending_low 触发
+    svc.llm.result = "不应被调用"
+    run_once_dispatch(svc, max_tokens=300, monitor_llm="off")
+    assert svc.llm.calls == []
+    # 仍写 comm:dispatch（纯文本降级）
+    dispatch = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
+    assert len(dispatch) == 1
+    assert "纯文本降级" in dispatch[0]["content"]

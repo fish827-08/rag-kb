@@ -1,0 +1,29 @@
+# Docker 构建上下文排除（镜像仅含 kb 服务本体，减小体积）
+.git/
+.worktrees/
+venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+.env.*
+!.env.example
+kb_data/
+data/
+models/
+logs/
+chroma_db/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.idea/
+# 协作系统（orchestra）不进容器：kb 服务无依赖，排除减体积
+orchestra/
+# 测试 / 文档 / 评估报告
+tests/
+docs/
+评估报告/
+key/
+*.pem
+*.key

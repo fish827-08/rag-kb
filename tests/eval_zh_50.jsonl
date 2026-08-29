@@ -1,0 +1,50 @@
+{"qid": 1, "question": "kb 服务的默认监听地址是什么？", "corpus": "kb 服务默认监听 127.0.0.1:8000，可通过 KB_API_HOST 与 KB_API_PORT 环境变量覆盖。", "tags": ["eval", "keyword", "kb"]}
+{"qid": 2, "question": "kb 项目默认的本地大语言模型是哪一个？", "corpus": "kb 项目默认使用 qwen3:4b 作为本地大语言模型，实测占用 3.2GB 显存，生成速度约 80.2 tok/s。", "tags": ["eval", "keyword", "kb"]}
+{"qid": 3, "question": "kb 用什么数据库做向量持久化？", "corpus": "kb 使用 ChromaDB 做本地向量持久化，数据落在本地目录，断网可完整运行。", "tags": ["eval", "keyword", "kb"]}
+{"qid": 4, "question": "kb 混合检索用什么方法融合两路结果？", "corpus": "kb 的混合检索使用 RRF 倒数排名融合，合并向量路与关键词路的结果，融合常数 K 取 60。", "tags": ["eval", "keyword", "kb"]}
+{"qid": 5, "question": "BM25 索引的分词用的是什么库？", "corpus": "kb 的 BM25 索引使用 jieba 的 cut_for_search 搜索引擎模式分词，以提升中文关键词召回。", "tags": ["eval", "keyword", "kb"]}
+{"qid": 6, "question": "kb 默认的嵌入模型是哪个？", "corpus": "kb 默认使用 BAAI/bge-m3 作为嵌入模型，fp16 下约占 1.1GB 显存。", "tags": ["eval", "keyword", "kb"]}
+{"qid": 7, "question": "中国最长的河流是哪条？", "corpus": "中国最长的河流是长江，全长约 6300 公里，发源于青藏高原唐古拉山脉。", "tags": ["eval", "keyword", "trivia"]}
+{"qid": 8, "question": "光在真空中的传播速度大约是多少？", "corpus": "光在真空中的传播速度约为每秒 30 万公里，精确值是 299792458 米每秒。", "tags": ["eval", "keyword", "trivia"]}
+{"qid": 9, "question": "万有引力定律是谁提出的？", "corpus": "万有引力定律由英国物理学家艾萨克·牛顿于 1687 年在《自然哲学的数学原理》中提出。", "tags": ["eval", "keyword", "trivia"]}
+{"qid": 10, "question": "水的化学式是什么？", "corpus": "水的化学式是 H2O，每个分子由两个氢原子和一个氧原子组成。", "tags": ["eval", "keyword", "trivia"]}
+{"qid": 11, "question": "地球绕太阳公转一圈需要多久？", "corpus": "地球绕太阳公转一圈约需 365.25 天，这就是一个回归年的长度。", "tags": ["eval", "keyword", "trivia"]}
+{"qid": 12, "question": "世界上最高的山峰是哪座？", "corpus": "世界最高峰是珠穆朗玛峰，海拔约 8848.86 米，位于中国与尼泊尔边界。", "tags": ["eval", "keyword", "trivia"]}
+{"qid": 13, "question": "泽兰市的市花是什么？", "corpus": "泽兰市的市花是蓝鸢尾，每年四月举办鸢尾花节。", "tags": ["eval", "keyword", "fiction"]}
+{"qid": 14, "question": "星尘航空的航班代码前缀是什么？", "corpus": "星尘航空的航班代码前缀是 SD，成立于 2009 年，总部在临港市。", "tags": ["eval", "keyword", "fiction"]}
+{"qid": 15, "question": "维克多·兰发明了什么装置？", "corpus": "维克多·兰在 1983 年发明了潮汐整流器，可将潮汐动能直接转换为直流电。", "tags": ["eval", "keyword", "fiction"]}
+{"qid": 16, "question": "北岭矿业开采的矿石主要出口到哪国？", "corpus": "北岭矿业开采的稀土矿石主要出口到韩国，年出口量约 40 万吨。", "tags": ["eval", "keyword", "fiction"]}
+{"qid": 17, "question": "《灰塔编年史》的作者是谁？", "corpus": "《灰塔编年史》的作者是作家林德昭，全书共七卷，讲述灰塔王国的兴衰。", "tags": ["eval", "keyword", "fiction"]}
+{"qid": 18, "question": "这台记忆服务装好后默认开在哪个端口？", "corpus": "kb 服务默认监听 127.0.0.1:8000，主机与端口都可通过环境变量覆盖。", "tags": ["eval", "semantic", "kb"]}
+{"qid": 19, "question": "把网线拔了这套系统还能正常用吗？", "corpus": "kb 是本地优先设计：模型缓存与向量数据库都在本地目录，断网可完整运行。", "tags": ["eval", "semantic", "kb"]}
+{"qid": 20, "question": "自然语言记忆和文档内容是怎么一起被搜出来的？", "corpus": "kb 的混合检索先分别执行向量近邻检索与 BM25 关键词检索，再用 RRF 融合两路排名得到最终结果。", "tags": ["eval", "semantic", "kb"]}
+{"qid": 21, "question": "什么样的问题会被送到云端大模型去处理？", "corpus": "/ask 智能路由先由本地模型判断问题复杂度，难题且云端可用时发 DeepSeek 云端生成，简单问题本地直答。", "tags": ["eval", "semantic", "kb"]}
+{"qid": 22, "question": "显卡装不下的时候有什么降级办法？", "corpus": "显存不足时可设置 KB_DEVICE=cpu 强制使用 CPU，或将本地模型切换为更小的 qwen3:1.7b。", "tags": ["eval", "semantic", "kb"]}
+{"qid": 23, "question": "哪条中国江河的长度排全国第一？", "corpus": "长江是中国第一长河，全长约 6300 公里，发源于青藏高原。", "tags": ["eval", "semantic", "trivia"]}
+{"qid": 24, "question": "谁统一解释了苹果落地和行星运行背后的规律？", "corpus": "牛顿在 1687 年提出万有引力定律，统一解释了地面物体下落与天体运行的力学原因。", "tags": ["eval", "semantic", "trivia"]}
+{"qid": 25, "question": "太阳系里哪颗行星离太阳最近？", "corpus": "水星是距离太阳最近的行星，公转周期约 88 天。", "tags": ["eval", "semantic", "trivia"]}
+{"qid": 26, "question": "人呼吸时吸进肺里供细胞用的气体是什么？", "corpus": "人体呼吸时吸入氧气，由血液输送到全身细胞进行有氧代谢。", "tags": ["eval", "semantic", "trivia"]}
+{"qid": 27, "question": "一年三百六十五天这个周期是怎么来的？", "corpus": "地球绕太阳公转一圈约需 365.25 天，这就是一年长度的来源。", "tags": ["eval", "semantic", "trivia"]}
+{"qid": 28, "question": "喜马拉雅山脉的主峰叫什么名字？", "corpus": "珠穆朗玛峰是喜马拉雅山脉的主峰，海拔约 8848.86 米，为世界最高峰。", "tags": ["eval", "semantic", "trivia"]}
+{"qid": 29, "question": "雨后天空的彩色光带一般说包含哪几种颜色？", "corpus": "彩虹通常被描述为红橙黄绿蓝靛紫七种颜色，实际是连续光谱。", "tags": ["eval", "semantic", "trivia"]}
+{"qid": 30, "question": "那座虚构城市每年四月举办什么节？", "corpus": "泽兰市每年四月举办鸢尾花节，蓝鸢尾是该市市花。", "tags": ["eval", "semantic", "fiction"]}
+{"qid": 31, "question": "那位 1983 年搞出发明的工程师做了什么？", "corpus": "维克多·兰于 1983 年发明潮汐整流器，把潮汐动能直接转换为直流电。", "tags": ["eval", "semantic", "fiction"]}
+{"qid": 32, "question": "那家总部在临港的航空公司是哪一年成立的？", "corpus": "星尘航空成立于 2009 年，总部位于临港市，航班代码前缀 SD。", "tags": ["eval", "semantic", "fiction"]}
+{"qid": 33, "question": "那本讲灰塔王国兴衰的书一共有几卷？", "corpus": "《灰塔编年史》全书共七卷，讲述灰塔王国的兴衰，作者是林德昭。", "tags": ["eval", "semantic", "fiction"]}
+{"qid": 34, "question": "那家开矿的公司最大的买家在哪个国家？", "corpus": "北岭矿业的稀土矿石主要销往韩国，年出口量约 40 万吨。", "tags": ["eval", "semantic", "fiction"]}
+{"qid": 35, "question": "kb 里 RRF 融合的常数 K 取的多少？", "corpus": "kb 的 RRF 融合常数 K 取 60，排名从 1 起算。", "tags": ["eval", "distractor", "kb"]}
+{"qid": 36, "question": "RRF 这种融合方法的全称是什么？", "corpus": "RRF 全称 Reciprocal Rank Fusion（倒数排名融合），广泛用于向量与关键词多路检索结果的合并。", "tags": ["eval", "distractor", "kb"]}
+{"qid": 37, "question": "qwen3:4b 关闭思考后的实测生成速度是多少？", "corpus": "qwen3:4b 关闭思考模式后实测生成速度为 80.2 tok/s，占用 3.2GB 显存。", "tags": ["eval", "distractor", "kb"]}
+{"qid": 38, "question": "qwen3:1.7b 关闭思考后的实测生成速度是多少？", "corpus": "qwen3:1.7b 关闭思考模式后实测生成速度为 101.4 tok/s，占用约 1.8GB 显存。", "tags": ["eval", "distractor", "kb"]}
+{"qid": 39, "question": "长江大约有多长？", "corpus": "长江全长约 6300 公里，是中国第一长河。", "tags": ["eval", "distractor", "trivia"]}
+{"qid": 40, "question": "黄河大约有多长？", "corpus": "黄河全长约 5464 公里，是中国第二长河。", "tags": ["eval", "distractor", "trivia"]}
+{"qid": 41, "question": "珠穆朗玛峰的海拔高度是多少？", "corpus": "珠穆朗玛峰海拔约 8848.86 米，为世界最高峰。", "tags": ["eval", "distractor", "trivia"]}
+{"qid": 42, "question": "乔戈里峰的海拔高度是多少？", "corpus": "乔戈里峰（K2）海拔 8611 米，是世界第二高峰。", "tags": ["eval", "distractor", "trivia"]}
+{"qid": 43, "question": "蓝鸢尾是哪个城市的市花？", "corpus": "蓝鸢尾是泽兰市的市花，该市每年四月举办鸢尾花节。", "tags": ["eval", "distractor", "fiction"]}
+{"qid": 44, "question": "白山茶是哪个城市的市花？", "corpus": "白山茶是宁溪市的市花，该市每年一月举办山茶花会。", "tags": ["eval", "distractor", "fiction"]}
+{"qid": 45, "question": "星尘航空的航班代码前缀是什么？", "corpus": "星尘航空的航班代码前缀是 SD。", "tags": ["eval", "distractor", "fiction"]}
+{"qid": 46, "question": "晨风航空的航班代码前缀是什么？", "corpus": "晨风航空的航班代码前缀是 CW，成立于 2015 年。", "tags": ["eval", "distractor", "fiction"]}
+{"qid": 47, "question": "北岭矿业的矿石卖到哪个国家？", "corpus": "北岭矿业的稀土矿石主要出口到韩国。", "tags": ["eval", "distractor", "fiction"]}
+{"qid": 48, "question": "西山矿业的矿石卖到哪个国家？", "corpus": "西山矿业的锂矿石主要出口到日本，年出口量约 25 万吨。", "tags": ["eval", "distractor", "fiction"]}
+{"qid": 49, "question": "潮汐整流器是谁发明的？", "corpus": "潮汐整流器由维克多·兰于 1983 年发明。", "tags": ["eval", "distractor", "fiction"]}
+{"qid": 50, "question": "相位稳流器是谁发明的？", "corpus": "相位稳流器由玛莎·陈于 1991 年发明，用于稳定交流电网相位。", "tags": ["eval", "distractor", "fiction"]}

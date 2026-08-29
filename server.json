@@ -1,0 +1,62 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.fish827-08/kb-memory",
+  "title": "kb — Local Memory & Knowledge Service",
+  "description": "Local-first agent memory service: hybrid retrieval (vector + BM25/RRF) with memory governance (decay, semantic dedup, freshness weighting). Single process, works fully offline without any LLM. Store memories and documents via REST or MCP, search them from Claude Code, Cursor or any MCP client.",
+  "version": "1.0.2",
+  "websiteUrl": "https://github.com/fish827-08/rag-kb",
+  "repository": {
+    "url": "https://github.com/fish827-08/rag-kb",
+    "source": "github"
+  },
+  "license": "Apache-2.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "kb-memory",
+      "version": "1.0.2",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeHint": "uvx",
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "KB_DATA_DIR",
+          "description": "Data directory for the ChromaDB store and runtime files (defaults to ./kb_data)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "KB_DEVICE",
+          "description": "Empty = auto-detect; set 'cpu' or 'cuda' to override",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "KB_EMBED_MODEL",
+          "description": "Embedding model (default BAAI/bge-m3; lightweight option BAAI/bge-small-zh-v1.5)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "KB_LLM_MODE",
+          "description": "local | auto | cloud — RAG answering mode; memory write/search works without any LLM",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "KB_API_KEY",
+          "description": "API key for the REST service auth (empty = no auth, localhost only)",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
