@@ -51,8 +51,9 @@ class Settings(BaseSettings):
     dispatch_enabled: bool = True                # KB_DISPATCH_ENABLED：监控单轮后异常调度（comm:dispatch），默认开（TASK-0049）
     monitor_llm: str = "off"                     # KB_MONITOR_LLM：监控摘要模式 off=全程纯文本不调LLM(默认零成本/不抢GPU) / auto=LLM可用摘要化不可用降级(TASK-0065)
     # ---- 记忆治理 A3（N21b 衰减评分公式模块，TASK-0068；N22a 语义去重服务层，TASK-0069）----
-    # ---- Agent 身份隔离与存取审计（A 节点 spec：2026-08-29）----
+    # ---- Agent 身份隔离与存取审计（A 节点 spec：2026-08-29；v2 2026-08-30）----
     access_audit_enabled: bool = True             # KB_ACCESS_AUDIT_ENABLED：Agent 存取审计开关（access-audit.log）
+    lang: str = "auto"                            # KB_LANG：消息语言 zh/en/auto（auto=检测系统 locale；B4 节点）
     decay_enabled: bool = False                   # KB_DECAY_ENABLED：访问频率衰减开关，默认关（零行为变化）
     decay_lambda: float = 0.02                    # KB_DECAY_LAMBDA：衰减速率 λ（/天），半衰期≈35天
     decay_gamma: float = 0.3                      # KB_DECAY_GAMMA：高频访问加权系数 γ，access_count=10→约2.0倍

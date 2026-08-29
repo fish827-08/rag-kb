@@ -115,9 +115,9 @@ _ACCESS_SNIPPET = 50
 _ACCESS_DIR = "agent-audit"
 # 文件名非法字符清理白名单：仅保留字母数字、中文、_、-、·、.、空格（其余替换为 _）
 _SAFE_RE = re.compile(r"[^\w\u4e00-\u9fff.\-· ]")
-# 三段分隔符：client__project_task.log（project 可空）
+# 两段分隔符：client__project.log（project 可空→default）
 _SEP = "__"
-_access_loggers: dict[tuple[str, str, str], logging.Logger] = {}
+_access_loggers: dict[tuple[str, str], logging.Logger] = {}
 
 
 def _clean_name(s: str | None) -> str:
@@ -128,39 +128,34 @@ def _clean_name(s: str | None) -> str:
     return s.strip("_") or "unknown"
 
 
-def _agent_file_name(client: str, project: str, agent_id: str) -> str:
-    """生成按 Agent 分类的审计文件名。
+def _agent_file_name(client: str, project: str) -> str:
+    """生成按 (client, project) 分类的审计文件名。
 
-    有项目名：<客户端>__<项目>__<任务名>.log；无项目名：<客户端>__<任务名>.log。
-    三段均以 `__` 分隔（project 与 agent 间也是 `__`），保证解析无歧义
-    （agent 名本身允许含 `_`/`-`，如 worker-1、task_a）。清理路径非法字符→_、
-    折叠连续下划线，避免跨目录注入；后续任务更名只需重命名该文件（文件内不重复记录身份）。
-    English: Build the per-agent audit file name: <client>__<project>__<agent>.log when a project is
-    given, else <client>__<agent>.log. All segments join with `__` for unambiguous parsing
-    (agent names may keep `_`/`-`, e.g. worker-1, task_a). Sanitizes path-illegal characters to
-    prevent directory injection; renaming a task = renaming the file (identity is not duplicated inside)."""
+    v2（2026-08-30）：<客户端>__<项目>.log；project 为空 → <客户端>__default.log。
+    身份（client/project）由文件名承载，行内不重复记录——项目更名=改连接声明的 project，
+    重命名对应文件即可。清理路径非法字符→_、折叠连续下划线，避免跨目录注入。
+    English: Build the per-(client, project) audit file name: <client>__<project>.log, or
+    <client>__default.log when project is empty. Identity lives in the file name only;
+    renaming a project = renaming the file. Sanitizes path-illegal characters to prevent
+    directory injection."""
     client_c = _clean_name(client)
-    agent_c = _clean_name(agent_id)
-    project_c = _clean_name(project) if project else ""
-    if project_c and project_c != "unknown":
-        return f"{client_c}{_SEP}{project_c}{_SEP}{agent_c}.log"
-    return f"{client_c}{_SEP}{agent_c}.log"
+    if not client_c or client_c == "unknown":
+        client_c = "default"
+    project_c = _clean_name(project) if project else "default"
+    if not project_c or project_c == "unknown":
+        project_c = "default"
+    return f"{client_c}{_SEP}{project_c}.log"
 
 
 def parse_agent_file_name(filename: str) -> dict:
-    """从审计文件名解析 (client, project, agent)；轮转后缀（.log.2026-08-29）自动剥离。
+    """从审计文件名解析 (client, project)；轮转后缀（.log.YYYY-MM-DD）自动剥离。
 
-    文件名规则：<client>__<agent>.log
-                或 <client>__<project>_<agent>.log（有项目名时）
-    无项目名时 agent 是 `__` 后的整段；有项目名时 `_agent` 以单下划线接在项目名后。
-    为消除歧义（agent 名本身可能含单下划线），采用：整段 rest 直接作为 agent 候选，
-    再从**尾部**按最后一个 `_` 分离 project 与 agent——但 agent 名含 `_` 时无解。
-    因此约定：agent 任务名尽量不含 `_`；本项目解析采用「rest 整段即 agent，
-    若 rest 含 `_` 且其前缀在已有 project 列表中则按 project_agent 拆」——
-    实际简化为：新增 project 后统一用三段式，旧两段式文件（无 project）rest 整段为 agent。
-    英文: Parse (client, project, agent) from an audit file name; rotation suffixes are stripped.
-    Naming: <client>__<agent>.log, or <client>__<project>_<agent>.log when a project exists.
-    For backward compatibility, a two-segment name keeps the whole rest as the agent."""
+    v2 文件名规则：<client>__<project>.log（两段式）。project 段 "default" 表示默认桶。
+    兼容旧三段式 <client>__<project>__<agent>.log 与两段式 <client>__<agent>.log
+    （旧数据零迁移；解析只返回 client/project，agent 保留供旧查询展示）。
+    English: Parse (client, project) from an audit file name; rotation suffixes are stripped.
+    v2 naming: <client>__<project>.log (two segments); "default" project = default bucket.
+    Old three-segment and two-segment agent-based names are still parsed for zero-migration reads."""
     name = Path(filename).name
     for suffix in (".log",):
         if name.endswith(suffix):
@@ -173,21 +168,17 @@ def parse_agent_file_name(filename: str) -> dict:
     stem = parts[0] if parts else base
     segs = stem.split(_SEP)
     client = segs[0] if len(segs) > 0 else "unknown"
-    agent = segs[1] if len(segs) > 1 else "unknown"
-    project = ""
-    # 三段式（client__project_agent 中 project 段由 `__` 分隔，仅当确实存在第三个 `__` 段）
-    if len(segs) >= 3:
-        project = segs[1]
-        agent = segs[-1]
+    project = segs[1] if len(segs) > 1 else "default"
+    agent = segs[-1] if len(segs) > 2 else ""
     return {"client": client, "project": project, "agent": agent}
 
 
-def _get_access_logger(client: str, project: str, agent_id: str,
+def _get_access_logger(client: str, project: str,
                        log_dir: Path | None = None) -> logging.Logger:
-    """按 (client, project, agent_id) 取独立存取审计 logger（懒建，按天轮转 30 天）。
+    """按 (client, project) 取独立存取审计 logger（懒建，按天轮转 30 天）。
 
-    English: Get the per-(client, project, agent_id) access-audit logger (lazy, daily rotation, 30 backups)."""
-    key = (client or "default", project or "", agent_id or "default")
+    English: Get the per-(client, project) access-audit logger (lazy, daily rotation, 30 backups)."""
+    key = (client or "default", project or "")
     if key in _access_loggers:
         return _access_loggers[key]
     if log_dir is None:
@@ -197,14 +188,14 @@ def _get_access_logger(client: str, project: str, agent_id: str,
     agent_dir = log_dir / _ACCESS_DIR
     agent_dir.mkdir(parents=True, exist_ok=True)
 
-    logger = logging.getLogger(f"kb.audit.access.{key[0]}__{key[2]}")
+    logger = logging.getLogger(f"kb.audit.access.{key[0]}__{key[1] or 'default'}")
     logger.setLevel(logging.INFO)
     logger.propagate = False  # 不向上传播到 "kb"，避免混入 kb.log
     for h in list(logger.handlers):
         logger.removeHandler(h)
         h.close()
     handler = TimedRotatingFileHandler(
-        agent_dir / _agent_file_name(client, project, agent_id), when="midnight",
+        agent_dir / _agent_file_name(client, project), when="midnight",
         backupCount=30, encoding="utf-8-sig")  # 带 BOM：Windows 记事本/旧 GBK 工具可直接查看中文
     handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
@@ -264,8 +255,7 @@ def log_access_event(agent_id: str, action: str, record_id: str | None = None,
         if hits is not None:
             event["hits"] = hits
         line = json.dumps(event, ensure_ascii=False)
-        _get_access_logger(client or "default", project or "", agent_id,
-                           log_dir).info(line)
+        _get_access_logger(client or "default", project or "", log_dir).info(line)
     except Exception as exc:
         # 审计失败不阻塞主流程，记 WARNING 到 kb logger
         kb_logger = logging.getLogger("kb")

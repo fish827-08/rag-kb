@@ -42,19 +42,22 @@ class HybridRetriever:
 
     def search(self, query: str, top_k: int = 5, mode: str = "hybrid",
                type: str | None = None, tag: str | None = None,
-               agent_id: str = "default") -> list[dict]:
+               agent_id: str = "default",
+               client: str = "default",
+               project: str = "") -> list[dict]:
         """mode: hybrid/vector/keyword；每路取 3*top_k 候选；
         type/tag 过滤在融合后进行（过滤后不足 top_k 属正常）；
-        agent_id 隔离（A 节点 spec 2.3）：memory 记录仅返回归属该 Agent 的，
-        doc_chunk/web_chunk（共享知识库）不受隔离；
+        (client, project) 隔离（v2 spec 2.3）：memory 记录仅返回归属该
+        client+project 的，doc_chunk/web_chunk（共享知识库）不受隔离；
+        agent_id 仅作兼容冗余不参与过滤；
         输出 [{id, content, score, type, source, tags, created_at, agent_id}]，
         score 为融合分。
         English: mode: hybrid/vector/keyword; each route takes 3*top_k candidates;
-        type/tag filtering happens after fusion (fewer than top_k after filtering is normal);
-        agent_id isolation (A-node spec 2.3): memory records only return those owned by the
-        calling agent, while doc_chunk/web_chunk (shared knowledge base) are not isolated;
-        output is [{id, content, score, type, source, tags, created_at, agent_id}],
-        score being the fused score."""
+        type/tag filtering happens after fusion; (client, project) isolation (v2 spec 2.3):
+        memory records only return those owned by the matching client+project, while
+        doc_chunk/web_chunk (shared knowledge base) are not isolated; agent_id is a
+        compatibility redundancy and does not filter; output is
+        [{id, content, score, type, source, tags, created_at, agent_id}]."""
         candidate = 3 * top_k
         if mode in ("hybrid", "vector"):
             vec = self.embedder.embed_query(query)
@@ -187,9 +190,10 @@ class HybridRetriever:
                 continue
             if tag and tag not in rec.tags:
                 continue
-            # A 节点 agent_id 隔离：个人记忆（memory）只返回归属调用方的；
-            # 共享知识（doc_chunk/web_chunk）对所有 Agent 可见
-            if rec.type == RecordType.MEMORY and rec.agent_id != agent_id:
+            # v2 (client, project) 隔离：个人记忆（memory）只返回归属该
+            # client+project 的；共享知识（doc_chunk/web_chunk）对所有客户端可见
+            if rec.type == RecordType.MEMORY and (
+                    rec.client != client or (rec.project or "") != (project or "")):
                 continue
             results.append({
                 "id": rec.id,

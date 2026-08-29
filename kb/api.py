@@ -702,17 +702,22 @@ def create_app(settings: Settings | None = None,
                            "（Ollama）或 KB_LLM_API_KEY 启用云端（任意 OpenAI 兼容服务商）"})
 
     @app.get("/api/v1/audit")
-    def audit(agent: str, action: str | None = None,
+    def audit(client: str | None = None, project: str | None = None,
+              agent: str | None = None,
+              action: str | None = None,
               days: int | None = None, limit: int = 100) -> dict:
-        """用户查询 Agent 存取审计（A 节点 spec 2.5）：读 access-audit.log，
-        按 agent 过滤，可选 action/days/limit。返回 {"items": [...], "total": N}。
-        English: Query the Agent access audit (A-node spec 2.5): reads access-audit.log, filters by
-        agent, optionally by action/days/limit. Returns {"items": [...], "total": N}."""
-        if not agent or not agent.strip():
+        """用户查询存取审计（v2 spec 2.5）：按 (client, project) 过滤分文件
+        agent-audit，可选 action/days/limit。返回 {"items": [...], "total": N}。
+        agent 为兼容参数（旧三段式文件名回溯）。
+        English: Query the access audit (v2 spec 2.5): filters the per-(client, project) files under
+        agent-audit, optionally by action/days/limit. Returns {"items": [...], "total": N}.
+        agent is kept for backward compatibility with old three-segment file names."""
+        if not client and not agent:
             raise HTTPException(status_code=422, detail={
-                "error": "INVALID_ARGUMENT", "message": "agent 参数必填"})
+                "error": "INVALID_ARGUMENT", "message": "client 或 agent 参数至少提供一个"})
         items = kb.query_access_audit(
-            agent=agent, action=action, days=days, limit=limit)
+            client=client, project=project, agent=agent,
+            action=action, days=days, limit=limit)
         return {"items": items, "total": len(items)}
 
     @app.get("/api/v1/healthz")
