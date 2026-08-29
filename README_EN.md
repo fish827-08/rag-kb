@@ -4,6 +4,7 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
+[![Glama MCP score](https://glama.ai/mcp/servers/fish827-08/rag-kb/badges/score.svg)](https://glama.ai/mcp/servers/fish827-08/rag-kb)
 
 **kb** is a local-first, completely free memory & knowledge service for AI agents.
 One resident process (`python -m kb serve`) exposes both **REST** and **MCP** protocols,
