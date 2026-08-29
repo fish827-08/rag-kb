@@ -50,7 +50,7 @@ def _get_audit_logger(log_dir: Path | None = None) -> logging.Logger:
         log_dir / "governance-audit.log",
         when="midnight",
         backupCount=30,
-        encoding="utf-8",
+        encoding="utf-8-sig",  # 带 BOM：Windows 记事本/旧 GBK 工具可直接打开查看中文
     )
     # 纯 JSON 行格式：直接输出 message（已是 JSON 字符串）
     handler.setFormatter(logging.Formatter("%(message)s"))
@@ -205,7 +205,7 @@ def _get_access_logger(client: str, project: str, agent_id: str,
         h.close()
     handler = TimedRotatingFileHandler(
         agent_dir / _agent_file_name(client, project, agent_id), when="midnight",
-        backupCount=30, encoding="utf-8")
+        backupCount=30, encoding="utf-8-sig")  # 带 BOM：Windows 记事本/旧 GBK 工具可直接查看中文
     handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
     _access_loggers[key] = logger

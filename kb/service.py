@@ -522,7 +522,7 @@ class KBService:
                     continue  # 任务名不匹配，跳过整个文件
                 client_c = ident["client"]
                 project_c = ident.get("project") or ""
-                with open(f, encoding="utf-8") as fh:
+                with open(f, encoding="utf-8-sig") as fh:
                     for line in fh:
                         line = line.strip()
                         if not line:
