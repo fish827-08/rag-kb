@@ -195,6 +195,40 @@ They multiply orthogonally, independent switches, **only affect `hybrid`/`vector
 - **Freshness weight** (`KB_FRESHNESS_ENABLED`): looks at `updated_at` — just-updated records boosted up to 1+α× (default α=0.3, i.e. 1.3×), decaying exponentially (half-life ≈14d, β=0.05). Params: `KB_FRESHNESS_BETA` / `KB_FRESHNESS_ALPHA`
 - **Access decay** (`KB_DECAY_ENABLED`): looks at `last_accessed`/`access_count` — long-unread demoted (half-life ≈35d, λ=0.02), high-frequency boosted (γ=0.3, access_count=10 → ~2.0×). Params: `KB_DECAY_LAMBDA` / `KB_DECAY_GAMMA`
 
+#### 3.5.2a How to verify the forgetting mechanism (no need to wait for the half-life)
+
+The default decay half-life is ≈35 days — you can't realistically wait that long to accept it. Two complementary
+paths give the closest-to-real verification (2026-08-30 v2):
+
+**① Clock-injected logic verification (seconds — proves the mechanism is correct)**
+
+The decay time base is injectable: `kb.models.decay_factor(..., now=<datetime>)` accepts a "future day"
+directly, so tests/scripts can fast-forward to day 35:
+
+```python
+from datetime import datetime, timedelta
+from kb.models import decay_factor
+created = "2026-01-01T00:00:00"
+later = datetime.fromisoformat(created) + timedelta(days=35)
+f = decay_factor("", created, 0, now=later)   # λ=0.02 → exp(-0.02*35)≈0.497
+assert abs(f - 0.4966) < 0.01
+```
+
+Covered by `tests/test_agent_isolation.py::test_decay时钟注入`.
+
+**② Accelerated real run (2-3 days — proves end-to-end effectiveness)**
+
+Temporarily shorten the half-life without changing correctness:
+- Option A (half-life ≈1.4d): in `.env` set `KB_DECAY_ENABLED=true`, `KB_DECAY_LAMBDA=0.5`; run 2-3 real
+  days of writes+searches and observe: score demotion with days since access, high-frequency boost,
+  `kb forget --stale` retrieving expected records, `decay_applied` events in `governance-audit.log`.
+- Option B (same-day visible): `KB_DECAY_LAMBDA=3` (half-life ≈hours) + several memories with different
+  access frequencies; decay shows up in ranking and governance stats within hours.
+
+Metrics: ① importance drops over time; ② access_count boost works; ③ stale candidates & audit events correct;
+④ behavior returns to baseline after restoring default λ. The two paths together = logic correctness (seconds)
++ real-run evidence (short cycle) — no 35-day wait.
+
 #### 3.5.3 Governance endpoints (read-only)
 
 ```powershell
@@ -326,8 +360,8 @@ Copy `.env.example` to `.env` and fill as needed (`.env` isn't committed; keys s
 | Performance tuning | `KB_DEVICE=cuda/cpu`; `KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` |
 | LAN/multi-agent auth | `KB_API_KEY=<≥32 random chars>` enables Bearer/X-API-Key auth (see 5.1) |
 | Memory governance | `KB_DEDUP_ENABLED` / `KB_DECAY_ENABLED` / `KB_FRESHNESS_ENABLED`, all default off (see 3.5) |
-| Multi-agent identity isolation | every write/read/update/delete/search/ask carries `agent_id` (default `default`): `memory` visible only to its owning agent; doc/web shared knowledge visible to all (see 5.3) |
-| Agent access audit | `KB_ACCESS_AUDIT_ENABLED` (default on): every access writes a JSON line to `logs/access-audit.log`; query via REST `GET /api/v1/audit?agent=<identity>` or `kb audit <identity>` (see 5.3) |
+| Multi-client/project isolation | isolation key = `(client, project)`: `memory` visible only to this client+project; doc/web shared knowledge visible to all; agents do NOT self-report identity (see 5.3) |
+| Access audit | `KB_ACCESS_AUDIT_ENABLED` (default on): every access writes a JSON line to `logs/agent-audit/<client>__<project>.log`; query via REST `GET /api/v1/audit?client=<name>[&project=<name>]` or `kb audit --client <name>` (see 5.3) |
 
 Full key list: [`.env.example`](../.env.example).
 
@@ -338,36 +372,40 @@ Full key list: [`.env.example`](../.env.example).
 - **Fallback**: the plain-text prompt in `docs/AGENT_PROMPT.md` — paste it into any agent to connect;
   no skill mechanism required. Both sources stay in sync.
 
-### 5.3 Agent identity isolation & access audit (A-node)
+### 5.3 Memory isolation & access audit (v2: client + project, 2026-08-30)
 
-**Identity isolation** (multi-agent coworkers never cross-read each other's memories):
+**Identity isolation** (multiple clients/projects never cross-read each other's memories):
 
-- Every operation carries `agent_id` (use your task name, e.g. `TASK-0076` / `worker-1` — avoid vague
-  codes); MCP/CLI/REST all support it
-- **Source client (`client`)**: MCP auto-detects it from the handshake clientInfo (TraeWork / Claude
-  Code / Cursor) when omitted; REST/CLI pass it explicitly; recorded on writes and in the audit
-- **Identity field regulation (A-node)**: MCP and REST both validate `agent_id`/`client`/`project`
-  formats — `agent_id`/`project`: letters/digits/CJK/underscore/hyphen, 1-64 chars; **on MCP `agent_id`
-  is mandatory and cannot be placeholders like `default`/`unknown`** (audit would be untraceable);
-  `client` additionally allows spaces and dots (e.g. `Claude Code`) and auto-detects when omitted;
-  invalid values are rejected (REST 422 / MCP `INVALID_ARGUMENT`) — agents can no longer pass arbitrary strings
-- **Personal memory (`memory`) is strictly isolated**: retrieval only returns what you wrote; reading/updating/deleting another agent's memory is rejected (REST 404 / MCP `FORBIDDEN`)
-- **Shared knowledge (doc/web chunks) is visible to all**: documents/web pages ingested by any agent are searchable by every agent (RAG Q&A is unaffected)
-- Old records without `agent_id`/`client` are treated as `default` — zero migration
+- **Isolation key = `(client, project)` — identity comes from the environment, agents do NOT self-report**:
+  - `client` (source client): MCP auto-detects it from the handshake clientInfo (TraeWork / Claude
+    Code / Cursor — framework-level, cannot be spoofed); REST defaults to `HTTP`; CLI defaults to `CLI`
+  - `project` (project/task bucket): MCP declares it in the connection config; CLI auto-takes the
+    current directory name; REST passes it explicitly. **Omitted = this client's default bucket**
+  - No `agent_id` parameter anymore — the record primary key is generated server-side (uuid);
+    agents do not (and should not) self-report identity
+- **Identity field regulation (v2)**: MCP and REST validate `client`/`project` formats — `project`:
+  letters/digits/CJK/underscore/hyphen, 1-64 chars; `client` additionally allows spaces and dots
+  (e.g. `Claude Code`); invalid values are rejected (REST 422 / MCP `INVALID_ARGUMENT`)
+- **Personal memory (`memory`) is strictly isolated by (client, project)**: retrieval only returns this
+  client+project's memories; reading/updating/deleting another (client, project)'s memory is rejected
+  (REST 404 / MCP `FORBIDDEN`)
+- **Shared knowledge (doc/web chunks) is visible to all**: documents/web pages ingested by any client
+  are searchable by every client (RAG Q&A is unaffected)
+- Old records without `project`/`client` fall back to the default bucket/`default` — zero migration
 
 **Access audit** (who stored/read what, from which client/project):
 
-- **Per-agent files**: each write/search/read/update/delete/ask/ingest writes a JSON line to
-  `logs/agent-audit/<client>__<project>__<task>.log` (without a project: `<client>__<task>.log`,
-  e.g. `TraeWork__kb__TASK-0076.log`, `Claude Code__worker-1.log`) — one file per agent instead of
-  one shared log; renaming a task = renaming its file
+- **Per-(client, project) files**: each write/search/read/update/delete/ask/ingest writes a JSON line to
+  `logs/agent-audit/<client>__<project>.log` (no project → `<client>__default.log`,
+  e.g. `TraeWork__kb.log`, `Claude Code__default.log`) — one file per (client, project) instead of a
+  shared log; changing the project = changing the declared connection project
 - Line JSON: `{"timestamp","action","type","record_id","namespace","content 前50-char snippet","query 前50-char snippet","hits"}`
-  (client/agent/project live in the file name, not repeated per line; the query layer re-derives them)
+  (client/project live in the file name, not repeated per line; the query layer re-derives them)
 - Sensitive red line: content/query store only the first 50 chars; full text never hits the log
 - Human query entry points:
   ```powershell
-  curl -X GET "http://127.0.0.1:8000/api/v1/audit?agent=TASK-0076&action=write&days=7&limit=100"
-  kb audit TASK-0076 --action write --days 7 --limit 100
+  curl -X GET "http://127.0.0.1:8000/api/v1/audit?client=TraeWork&project=kb&action=write&days=7&limit=100"
+  kb audit --client TraeWork --project kb --action write --days 7 --limit 100
   ```
 
 ### 5.1 API Key auth (N19)
