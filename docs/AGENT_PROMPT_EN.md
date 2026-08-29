@@ -30,6 +30,9 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
 1. **MCP (preferred)**: if the current environment has kb's MCP server configured, use the MCP tools directly.
 2. **HTTP (fallback when MCP unavailable)**: when MCP tools don't exist, fail to connect, or time out, use the REST endpoints (same address); after a successful call, prefer MCP again.
 3. Before starting, confirm the service is up: `GET http://127.0.0.1:8000/api/v1/healthz` returning 200 means it is healthy.
+   - **If a proxy is set, use `curl --noproxy "*"`** (`HTTP_PROXY`/`HTTPS_PROXY` may forward even localhost requests,
+     failing the connection and making you wrongly think the service is down); in PowerShell use `Invoke-RestMethod`
+     (connects to localhost directly, bypassing the proxy by default).
 
 ### 3. MCP tools (8, all accept `agent_id` / `client`)
 
@@ -112,13 +115,17 @@ Within the above, during the session proactively identify and write the followin
 
 Do NOT write: small talk, temporary computation, or implementation details directly obtainable from code/docs (unless needed across sessions).
 
+**Telling the user**: when a memory is written/updated, mention it to the user in one light sentence (e.g., "Got it — saved your preference").
+**Do NOT show** tool names, record IDs, JSON, hit details, etc.; duplicate check hits or misses are handled quietly either way.
+
 **When to retrieve**: at task start, when answering involves past decisions/preferences, or on cross-session handoff — run `search_memory` proactively; don't wait to be asked.
 
 **Retrieval tip**: phrase the `search_memory` query in natural language describing the "semantics" you're after (e.g., "用户的主题偏好"), not just keywords; hybrid retrieval does semantic matching — then `read_memory` for full text.
 
 ### 6. Notes
 
-- When the service is down (healthz fails): don't fabricate results — tell the user to start kb first (`python -m kb serve`).
+- When the service is down (healthz fails): first rule out a **proxy** blocking localhost (retry with `curl --noproxy "*"`
+  or `Invoke-RestMethod`); only tell the user to start kb (`python -m kb serve`) once it is truly down — don't fabricate results.
 - If auth is enabled (`KB_API_KEY` non-empty), every HTTP request needs `Authorization: Bearer <key>`.
 - `namespace` is HTTP-only (MCP tools don't take it); namespaces matching the sensitive config force local answers for `ask` (no egress).
 - After `add_document`/`add_webpage`, content is searchable via `search_memory`/`ask_kb`; unsupported formats return `UNSUPPORTED_FORMAT`.

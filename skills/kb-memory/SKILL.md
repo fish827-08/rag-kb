@@ -21,7 +21,9 @@ description: kb 本地记忆与知识服务接入规约：MCP 8 工具 + agent_i
 
 1. **MCP（首选）**：环境配置了 kb 的 MCP 服务器则直接用 MCP 工具。
 2. **HTTP（MCP 不可用时兜底）**：REST 端点（同地址），成功调用后优先回 MCP。
-3. 接入前确认服务在跑：`GET http://127.0.0.1:8000/api/v1/healthz` 返回 200。
+3. 接入前确认服务在跑：请求 `GET http://127.0.0.1:8000/api/v1/healthz` 返回 200。
+   - **有代理时用 `curl --noproxy "*"`**（`HTTP_PROXY`/`HTTPS_PROXY` 会把 localhost 请求也转发导致连接失败，
+     误判服务未启动）；PowerShell 可用 `Invoke-RestMethod`（默认不走代理直连本机）。
 
 ## 3. 身份规约（重要，服务端强制校验）
 
@@ -65,6 +67,9 @@ description: kb 本地记忆与知识服务接入规约：MCP 8 工具 + agent_i
 
 不写：纯寒暄、临时计算、可由代码/文档直接查到的实现细节。
 
+**对用户提示**：写入/更新记忆成功时，只向用户轻提一句（如"已记住你的偏好"），
+**不要展示**工具名、记录 ID、JSON、检索命中详情等操作细节；查重未命中与命中同理静默处理。
+
 ## 6. 检索与查询
 
 - **检索时机**：任务开始、回答涉及历史决策/偏好、跨会话接力时，先 `search_memory` 主动召回。
@@ -87,7 +92,8 @@ description: kb 本地记忆与知识服务接入规约：MCP 8 工具 + agent_i
 
 ## 8. 注意事项
 
-- 服务未启动（healthz 失败）：不臆造结果，提示先 `python -m kb serve`。
+- 服务未启动（healthz 失败）：先确认是否因**代理**拦截 localhost（改用 `curl --noproxy "*"` /
+  `Invoke-RestMethod` 重试），确认真的未启动才提示 `python -m kb serve`；不臆造结果。
 - 服务启用鉴权（`KB_API_KEY` 非空）：所有 HTTP 请求带 `Authorization: Bearer <key>`。
 - `namespace` 仅 HTTP 端点支持（MCP 工具不含）；命中敏感 namespace 时 `ask` 强制本地不出网。
 - `add_document`/`add_webpage` 入库后即可被检索；格式不支持返回 `UNSUPPORTED_FORMAT`。

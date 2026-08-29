@@ -31,6 +31,8 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 1. **MCP（首选）**：如果当前环境配置了 kb 的 MCP 服务器，直接用 MCP 工具。
 2. **HTTP（MCP 不可用时兜底）**：当 MCP 工具不存在、调用报连接失败或超时时，改用 REST 端点（地址同上）；成功调用后优先回 MCP。
 3. 接入前先确认服务在跑：请求 `GET http://127.0.0.1:8000/api/v1/healthz`，返回 200 即正常。
+   - **有代理时用 `curl --noproxy "*"`**（`HTTP_PROXY`/`HTTPS_PROXY` 会把 localhost 请求也转发导致连接失败，
+     误判服务未启动）；PowerShell 可用 `Invoke-RestMethod`（默认不走代理直连本机）。
 
 ### 三、MCP 工具（8 个，均支持 agent_id / client）
 
@@ -109,6 +111,9 @@ curl -X GET "http://127.0.0.1:8000/api/v1/audit?agent=worker-1&limit=20"
 
 不写：纯寒暄、临时计算过程、可由代码/文档直接查到的实现细节（除非需跨会话记忆）。
 
+**对用户提示**：写入/更新记忆成功时，只向用户轻提一句（如"已记住你的偏好"），
+**不要展示**工具名、记录 ID、JSON、检索命中详情等操作细节；查重未命中与命中同理静默处理。
+
 **检索时机**：任务开始、回答涉及历史决策/偏好、跨会话接力时，先 `search_memory` 主动召回，不要等被问到。
 
 **检索技巧**：`search_memory` 的 query 用自然语言描述你想找的"语义"（如"用户的主题偏好"），
@@ -116,7 +121,8 @@ curl -X GET "http://127.0.0.1:8000/api/v1/audit?agent=worker-1&limit=20"
 
 ### 六、注意
 
-- 服务未启动时（healthz 失败）：不要臆造结果，提示需要先启动 kb 服务（`python -m kb serve`）。
+- 服务未启动时（healthz 失败）：先确认是否因**代理**拦截 localhost（改用 `curl --noproxy "*"` /
+  `Invoke-RestMethod` 重试），确认真的未启动才提示启动 kb 服务（`python -m kb serve`）；不要臆造结果。
 - 若服务启用了鉴权（`KB_API_KEY` 非空），所有 HTTP 请求需带 `Authorization: Bearer <key>`。
 - `namespace` 仅 HTTP 端点支持（MCP 工具不含该参数）；命中敏感配置的 namespace 时，`ask` 强制本地回答不出网。
 - `add_document`/`add_webpage` 入库后可被 `search_memory`/`ask_kb` 检索到；文件格式不支持会返回 `UNSUPPORTED_FORMAT`。
