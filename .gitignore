@@ -29,3 +29,4 @@ secrets/
 dist/
 build/
 *.egg-info/
+*.pid
