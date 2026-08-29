@@ -1,0 +1,21 @@
+[Unit]
+Description=kb — local-first Agent memory & knowledge service
+Documentation=https://github.com/fish827-08/rag-kb
+After=network.target
+
+[Service]
+Type=simple
+# __USER__ is filled by install_kb_service.sh with the invoking user
+# (user-level units installed with --user omit the User= line)
+User=__USER__
+WorkingDirectory=__REPO__
+Environment=HF_ENDPOINT=https://hf-mirror.com
+Environment=KB_DEVICE=auto
+Environment=KB_LLM_MODE=auto
+ExecStart=__PYTHON__ -m kb serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
