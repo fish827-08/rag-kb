@@ -317,15 +317,24 @@ venv\Scripts\python.exe orchestra\board.py mount-idle worker-1
 
 | 场景 | 配置 |
 |---|---|
-| 只要记忆/检索（无问答） | 零配置，开箱即用 |
-| 本地 RAG 问答 | 装 Ollama 并 `ollama pull` 模型（默认找 `qwen3:4b`）；设 `KB_LLM_MODE=local` |
-| 云端问答降级 | `.env` 填 `KB_DEEPSEEK_API_KEY`；`KB_LLM_MODE=auto`（默认，本地优先） |
+| 只要记忆/检索（无问答） | 零配置，开箱即用（`KB_LLM_MODE=off` 默认，不加载不调用 LLM） |
+| 本地 RAG 问答 | 装 Ollama 并 `ollama pull` 一个适合自己电脑的模型（按显存自选，无预设）；`.env` 设 `KB_LLM_MODE=local` + `KB_LLM_MODEL=<ollama list 实际名>` |
+| 云端问答降级 | `.env` 填 `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL`（**任意 OpenAI 兼容服务商**，通用三键，不绑定 DeepSeek）；`KB_LLM_MODE=auto`（本地优先，云端降级） |
 | 隐私隔离 | `KB_SENSITIVE_NAMESPACES=私人笔记` 等逗号分隔，命中强制本地回答不出网 |
 | 性能调优 | `KB_DEVICE=cuda/cpu`；`KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` 切分参数 |
 | 局域网/多 Agent 访问鉴权 | `KB_API_KEY=<≥32随机字符>` 启用 Bearer/X-API-Key 鉴权（见 5.1） |
 | 记忆治理 | `KB_DEDUP_ENABLED`（去重）/ `KB_DECAY_ENABLED`（衰减）/ `KB_FRESHNESS_ENABLED`（新鲜度），均默认关（见 3.5） |
+| 多 Agent 身份隔离 | 所有写/读/改/删/检索/问答带 `agent_id`（默认 `default`）：memory 只对归属 Agent 可见，doc/web 共享知识全可见（见 5.3） |
+| Agent 存取审计 | `KB_ACCESS_AUDIT_ENABLED`（默认开）：每次存取写 `logs/access-audit.log` JSON 行；查询：REST `GET /api/v1/audit?agent=<身份>` 或 `kb audit <身份>`（见 5.3） |
 
 完整键名见 [`.env.example`](../.env.example)。
+
+### Agent 接入（客户端无关）
+
+- **推荐**：用 `skills/kb-memory/SKILL.md`（Anthropic 开格式 skill，客户端无关），
+  支持 skill 的客户端会自动触发；多客户端一键安装见 [scripts/README.md](../scripts/README.md)。
+- **兜底**：`docs/AGENT_PROMPT.md` 纯文本提示词，复制粘贴给任意 Agent 即接入，
+  不依赖 skill 机制。两处内容一致，同步更新。
 
 ### 5.1 API Key 鉴权（N19）
 
@@ -365,6 +374,35 @@ MCP 配置带 key 示例（本机自用，**勿提交入库**）：
 ```
 
 仓库内 `.mcp.json` 模板保持无 key（JSON 不支持注释，说明落本手册）；健康探针 `GET /api/v1/healthz` 永远无需 key。
+
+### 5.3 Agent 身份隔离与存取审计（A 节点）
+
+**身份隔离**（多 Agent 协作时各自记忆不串）：
+
+- 每个操作都带 `agent_id`（推荐用任务名，如 `TASK-0076`、`worker-1`，避免看不出是谁的代号），MCP/CLI/REST 均支持
+- **来源客户端（client）**：MCP 不传时自动从握手 clientInfo 识别（TraeWork / Claude Code / Cursor）；REST/CLI 显式传 `client`；写入与审计都会记录
+- **身份字段规约（A 节点）**：MCP 与 REST 都会校验 `agent_id`/`client`/`project` 格式——
+  - `agent_id`/`project`：仅字母/数字/中文/下划线/连字符，1~64 字符；**MCP 下 `agent_id` 必填且不能用 `default`/`unknown` 等占位**（否则审计看不出是谁）
+  - `client`：额外允许空格与点（如 `Claude Code`）；不传时自动识别
+  - 非法值直接拒绝：REST 返回 422，MCP 返回 `INVALID_ARGUMENT`——AI 不能再随意传任意字符串
+- **个人记忆（memory）强制隔离**：检索只搜得到自己写的，读/改/删别人的记忆被拒（REST 404 / MCP `FORBIDDEN`）
+- **共享知识（doc/web chunk）全可见**：任何 Agent 入库的文档/网页，所有 Agent 都能检索（RAG 问答不受隔离影响）
+- 旧数据（无 agent_id/client）自动视为 `default`，无需迁移
+
+**存取审计**（谁在哪个客户端/项目下存了什么/读了什么）：
+
+- **按 Agent 分文件**：每次 write/search/read/update/delete/ask/ingest 记一条 JSON 到
+  `logs/agent-audit/<客户端名>__<项目名>__<任务名>.log`（无项目则 `<客户端名>__<任务名>.log`，
+  如 `TraeWork__kb__TASK-0076.log`、`Claude Code__worker-1.log`）——每个 Agent 独立文件，
+  不再全部写一起；任务更名只需重命名对应文件
+- 行内 JSON：`{"timestamp","action","type","record_id","namespace","content 前50摘要","query 前50摘要","hits"}`
+  （client/agent/project 由文件名承载，行内不重复记录；查询侧自动解析补回）
+- 敏感红线：内容/查询只记前 50 字符摘要，全文不落日志
+- 用户查询入口：
+  ```powershell
+  curl -X GET "http://127.0.0.1:8000/api/v1/audit?agent=TASK-0076&action=write&days=7&limit=100"
+  kb audit TASK-0076 --action write --days 7 --limit 100
+  ```
 
 ## 6. 维护命令（forget / dedup）
 
@@ -411,16 +449,30 @@ python -m kb dedup --threshold 0.90 --dry-run
 
 **Q：Ollama 报错 / /ask 返回 503？**
 ① 确认 Ollama 已从**开始菜单/托盘**正常启动（不要从 AI 沙箱终端拉起，会数据库读写
-失败）；② `ollama list` 确认模型名与配置一致（默认 `qwen3:4b`），不一致改 `.env` 的
-`KB_LLM_MODEL` 或 `ollama cp` 改名；③ 不配 LLM 也不影响记忆存取与检索。
+失败）；② `ollama list` 确认模型名已拉取并写入 `.env` 的 `KB_LLM_MODEL`（模型无预设，
+按自己显存选，如 qwen3:4b / qwen3:1.7b，不一致可 `ollama cp` 改名）；③ 云端 LLM 检查
+`KB_LLM_API_KEY` 与 `KB_LLM_BASE_URL` 是否填对（任意 OpenAI 兼容服务商均可，见第 5 节
+配置参考）；④ 不配 LLM 也不影响记忆存取与检索（`KB_LLM_MODE=off` 默认）。
 
 **Q：PowerShell 里 curl/Invoke-RestMethod 中文乱码？**
 已知问题（JSON 响应缺 charset，v1.0.2 候选修复）：用 `curl.exe` 代替 `curl` 别名，
 或用 Python 客户端，或在 PowerShell 7 中 `$OutputEncoding = [Text.Encoding]::UTF8`。
 
+**Q：调用 MCP（stdio/SSE）时终端中文乱码？**
+kb 已在启动时强制 UTF-8 编解码并把 Windows 控制台切到 65001，服务端字节本身无乱码。
+若仍出现，通常是**调用侧**编码问题，按调用方式排查：
+- **PowerShell 调 REST/SSE**：用 `curl.exe`（不要用 `curl` 别名）、`Invoke-RestMethod` 加
+  `-ContentType "application/json; charset=utf-8"`，或先 `chcp 65001`；
+- **PowerShell 管道喂 MCP stdio**（`echo … | python -m kb mcp`）：先设
+  `$OutputEncoding = [Text.Encoding]::UTF8; [Console]::OutputEncoding = [Text.Encoding]::UTF8`
+  再执行，否则管道里的中文会按 GBK 传成乱码；
+- **cmd 窗口**：先 `chcp 65001` 再运行，并确保用 Windows Terminal 等支持 UTF-8 的终端；
+- **MCP 客户端（TraeWork/Claude Code/Cursor）**：客户端侧按协议 UTF-8 解码，一般无乱码；
+  若客户端配置里允许指定编码，确保为 UTF-8。
+
 **Q：断网能用吗？**
 能。模型与数据全部落本地，记忆写入/检索/本地问答断网完整可用（这是验收标准之一）。
-仅云端降级（DeepSeek）需要网络。
+仅云端降级需要网络。
 
 **Q：数据存在哪？怎么备份？**
 全部在 `kb_data/` 目录（ChromaDB + 运行时状态）。备份 = 复制该目录；恢复 = 覆盖回去。

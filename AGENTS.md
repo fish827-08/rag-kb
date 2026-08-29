@@ -23,6 +23,7 @@
 | `orchestra/protocol.md` + `worker-prompt.md` + `coordinator-prompt.md` | ✅ 有效 | orchestra 协作协议三件套（v1.1：任务分支/重启管控/交流窗） |
 | `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` | ✅ 有效 | orchestra v2 迭代计划（总线 B1 P0 载体；V2-0 修复卡保留，其余节点按总线 B1.1-B1.7 编号演进） |
 | `README.md` | ✅ 有效 | 项目说明（N16 按新定位重写：快速开始 / MCP 挂载 / 端点速查） |
+| `docs/AGENT_PROMPT.md` / `AGENT_PROMPT_EN.md` | ✅ 有效 | 通用 Agent 接入提示词（客户端无关；另封装为 `skills/kb-memory/SKILL.md`，安装见 scripts/README.md） |
 | `.mcp.json` | ✅ 有效 | 项目级 MCP 挂载配置（Claude Code 等在本目录启动即连 kb 服务） |
 | `_archive/`（含旧 `README.md`、旧 `ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`、`data/`） | ❌ 已归档（2026-08-23/24） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写**（注意：归档内旧 ROADMAP.md 与根目录新 ROADMAP.md 无关） |
 
@@ -35,7 +36,7 @@
 - 用户机器：**6GB 显存 + 16GB 内存，Windows**。
 - 本地 LLM 默认 `qwen3:4b`（2026-08-23 基准定型：实测 3.2GB 显存 @num_ctx 4096、80.2 tok/s、RAG 基准 4 项全过）；低配选项 `qwen3:1.7b`（~1.8GB、101.4 tok/s）。**两模型禁止同时加载**（合计 + embedding 超 6GB），路由/压缩/回答统一用当前配置的单个模型。
 - 显存预算：BGE-M3 fp16（约 1.1GB）+ `qwen3:4b`（3.2GB）= 4.3GB，可共存（已实测验证）；OOM 时 `KB_DEVICE=cpu` 或切 `qwen3:1.7b`。
-- `/ask` 智能路由（设计文档第 7 节）：本地守门（复杂度路由 / 上下文压缩 / 简单问题直答 / 隐私隔离 / 离线兜底），难题发云 `deepseek-v4-flash`；`KB_LLM_MODE=local|auto|cloud`，默认 auto。护栏参数硬编码默认值：`think:false`、`temperature 0.2`、`num_ctx 4096`、`max_tokens 800`、检索上下文 ≤2000 token 截断、强约束 system prompt。
+- `/ask` 智能路由（设计文档第 7 节）：默认 `KB_LLM_MODE=off`（不加载/不调用 LLM，纯本地零成本）；`local|auto|cloud` 为可选项——本地守门（复杂度路由 / 上下文压缩 / 简单问题直答 / 隐私隔离 / 离线兜底），云端为**任意 OpenAI 兼容服务商**（`KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` 通用三键，不绑定 DeepSeek）。护栏参数硬编码默认值：`think:false`、`temperature 0.2`、`num_ctx 4096`、`max_tokens 800`、检索上下文 ≤2000 token 截断、强约束 system prompt。
 - **禁止**建议 7B 及以上本地模型；**禁止**引入需要额外常驻服务的组件（Qdrant、独立向量库服务等）。
 
 ## 4. 开发约定

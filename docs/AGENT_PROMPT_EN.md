@@ -4,6 +4,11 @@
 > (TraeWork / Claude Code / Cursor / self-built agent, etc.) and that agent
 > will be connected to the kb memory & knowledge service. The text is plain
 > text and depends on no framework.
+>
+> **Packaged as a client-agnostic skill**: the same spec also lives at
+> `skills/kb-memory/SKILL.md` (Anthropic Skills open format) for skill-capable
+> clients to auto-trigger; see `scripts/README.md` for per-client install
+> commands. Ultimate fallback: paste this prompt — no skill mechanism needed.
 
 ---
 
@@ -26,43 +31,67 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
 2. **HTTP (fallback when MCP unavailable)**: when MCP tools don't exist, fail to connect, or time out, use the REST endpoints (same address); after a successful call, prefer MCP again.
 3. Before starting, confirm the service is up: `GET http://127.0.0.1:8000/api/v1/healthz` returning 200 means it is healthy.
 
-### 3. MCP tools (8)
+### 3. MCP tools (8, all accept `agent_id` / `client`)
+
+> **Identity contract (important)**:
+> - `agent_id`: states "who you are" — **MUST be your task name** (e.g. `TASK-0076`, `worker-1`);
+>   it cannot be omitted or set to placeholders like `default`/`unknown` (the server enforces this and
+>   rejects it with `INVALID_ARGUMENT`). Each agent sticks to one task name and never mixes.
+> - `client`: source client — usually omit it; the server auto-detects it from the MCP clientInfo
+>   handshake (TraeWork / Claude Code / Cursor...). If passed, it must be a valid client name
+>   (letters/digits/CJK/underscore/hyphen/space/dot, ≤64 chars).
+> - `project` (optional): project name, used only to bucket audit files.
+> - Memories (`memory`) are **only visible to their owning agent** — `search_memory` returns only
+>   what you wrote; reading/updating/deleting another agent's memory is rejected (`FORBIDDEN`).
+>   Shared knowledge (document/web chunks) is visible to **all** agents.
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `write_memory` | `content: str`, `tags?: list[str]` | Write a short memory; returns `{id}` |
-| `search_memory` | `query: str`, `top_k?: int=5` | Hybrid retrieval (vector + keyword fusion); returns hits `{id, content, score, type, source}` |
-| `read_memory` | `record_id: str` | Read a single memory's full content by ID |
-| `update_memory` | `record_id: str`, `content: str` | Update memory content (auto re-embed) |
-| `delete_memory` | `record_id: str` | Delete a single memory |
-| `add_document` | `path: str` | Import a local document (PDF/DOCX/MD/TXT/Office), chunked into the store |
-| `add_webpage` | `url: str` | Fetch a web page's body and chunk it into the store |
-| `ask_kb` | `question: str` | RAG Q&A over the knowledge base; returns `{answer, sources}`; returns `LLM_DISABLED` when no LLM is configured |
+| `write_memory` | `content: str`, `agent_id: str` (required), `tags?: list[str]`, `client?: str`, `project?: str` | Write a short memory (owned by agent_id); returns `{id}` |
+| `search_memory` | `query: str`, `agent_id: str` (required), `top_k?: int=5`, `client?: str`, `project?: str` | Hybrid retrieval; `memory` only returns those owned by this agent_id, doc/web shared; returns hits `{id, content, score, type, source}` |
+| `read_memory` | `record_id: str`, `agent_id: str` (required), `client?: str`, `project?: str` | Read a single memory's full content by ID; another agent's memory → `FORBIDDEN` |
+| `update_memory` | `record_id: str`, `content: str`, `agent_id: str` (required), `client?: str`, `project?: str` | Update memory content (auto re-embed); non-owner → `FORBIDDEN` |
+| `delete_memory` | `record_id: str`, `agent_id: str` (required), `client?: str`, `project?: str` | Delete a single memory; non-owner → `FORBIDDEN` |
+| `add_document` | `path: str`, `agent_id: str` (required), `client?: str`, `project?: str` | Import a local document (PDF/DOCX/MD/TXT/Office), chunked into the store (shared; ownership audit-only) |
+| `add_webpage` | `url: str`, `agent_id: str` (required), `client?: str`, `project?: str` | Fetch a web page's body and chunk it into the store (shared; ownership audit-only) |
+| `ask_kb` | `question: str`, `agent_id: str` (required), `client?: str`, `project?: str` | RAG Q&A; returns `{answer, sources}`; returns `LLM_DISABLED` when no LLM is configured |
 
-> Note: MCP tools only expose the parameters above (`write_memory` has no `namespace`/`source`); finer params like `namespace` are HTTP-only (see §4).
+> Access audit: every write/search/read/update/delete/ask/ingest writes a JSON line to
+> `logs/agent-audit/<client>__<project>__<task>.log` (one file per agent; the line records the action
+> and content snippet only — identity lives in the file name; renaming a task = renaming its file).
+> A human can query what an agent stored/read via `GET /api/v1/audit?agent=<task name>` or the CLI
+> `kb audit <task name>`.
+
+> Note: MCP tools only expose the parameters above; finer params like `namespace` are HTTP-only (see §4).
 
 ### 4. HTTP fallback endpoints (when MCP is unavailable)
 
+> Identity contract same as MCP: pass `agent_id` (**use your task name**) and optional `client`;
+> `memory` is strictly isolated, doc/web shared; both travel in write/read/update/delete/search/ask requests.
+
 - Health check: `GET /api/v1/healthz`
-- Write memory: `POST /api/v1/memories`, JSON `{"content": "…", "tags": ["偏好"], "source": "…", "namespace": "…"}`
-- Read one: `GET /api/v1/memories/{id}`
-- Update: `PATCH /api/v1/memories/{id}`, `{"content": "…"}`
-- Delete: `DELETE /api/v1/memories/{id}`
+- Write memory: `POST /api/v1/memories`, JSON `{"content": "…", "tags": ["偏好"], "source": "…", "namespace": "…", "agent_id": "TASK-0076", "client": "TraeWork"}`
+- Read one: `GET /api/v1/memories/{id}?agent_id=TASK-0076` (another agent's memory → 404)
+- Update: `PATCH /api/v1/memories/{id}?agent_id=TASK-0076`, `{"content": "…"}` (non-owner → 404)
+- Delete: `DELETE /api/v1/memories/{id}?agent_id=TASK-0076` (non-owner → 404)
 - List: `GET /api/v1/memories?type=&tag=&q=&limit=`
-- Hybrid search: `POST /api/v1/search`, `{"query": "…", "top_k": 5, "mode": "hybrid"}` (mode: hybrid/vector/keyword)
-- Document ingestion: `POST /api/v1/documents` (multipart `file` or JSON `{"path": "本地路径"}`)
+- Hybrid search: `POST /api/v1/search`, `{"query": "…", "top_k": 5, "mode": "hybrid", "agent_id": "TASK-0076"}` (mode: hybrid/vector/keyword; `memory` only returns those owned by this agent_id)
+- Document ingestion: `POST /api/v1/documents` (multipart `file` or JSON `{"path": "本地路径", "agent_id": "TASK-0076"}`)
 - Web ingestion: `POST /api/v1/ingest/web`, `{"url": "…"}`
-- RAG Q&A: `POST /api/v1/ask`, `{"question": "…"}`
+- RAG Q&A: `POST /api/v1/ask`, `{"question": "…", "agent_id": "TASK-0076"}`
+- **Access-audit query**: `GET /api/v1/audit?agent=TASK-0076&action=write&days=7&limit=100` (what an agent stored/read)
 
 curl examples (PowerShell):
 
 ```powershell
-# write
-curl -X POST http://127.0.0.1:8000/api/v1/memories -H "Content-Type: application/json" -d '{"content": "用户偏好深色主题", "tags": ["偏好"]}'
-# search
-curl -X POST http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/json" -d '{"query": "用户界面偏好", "top_k": 5}'
+# write (with agent identity)
+curl -X POST http://127.0.0.1:8000/api/v1/memories -H "Content-Type: application/json" -d '{"content": "用户偏好深色主题", "tags": ["偏好"], "agent_id": "worker-1"}'
+# search (only your own memory + all shared knowledge)
+curl -X POST http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/json" -d '{"query": "用户界面偏好", "top_k": 5, "agent_id": "worker-1"}'
 # ask
-curl -X POST http://127.0.0.1:8000/api/v1/ask -H "Content-Type: application/json" -d '{"question": "用户喜欢什么主题？"}'
+curl -X POST http://127.0.0.1:8000/api/v1/ask -H "Content-Type: application/json" -d '{"question": "用户喜欢什么主题？", "agent_id": "worker-1"}'
+# query an agent's access audit
+curl -X GET "http://127.0.0.1:8000/api/v1/audit?agent=worker-1&limit=20"
 ```
 
 ### 5. Memory-writing rules (what to write)

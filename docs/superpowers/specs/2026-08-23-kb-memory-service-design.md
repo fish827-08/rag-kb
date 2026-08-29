@@ -18,7 +18,7 @@
 | P0 | 文档导入 | PDF / TXT / MD / DOCX 切分入库 |
 | P0 | 混合检索 | 向量语义 + BM25 关键词（jieba 分词），RRF 融合 |
 | P0 | REST + MCP 双协议 | REST 通用接入；MCP 供 Claude Code / Cursor 挂载 |
-| P0 | LLM 分层接入 | 优先本地 Ollama（OpenAI 兼容），降级云 API（DeepSeek）；均不可用时 LLM 禁用，存取检索不受影响 |
+| P0 | LLM 分层接入 | 默认 `off` 完全不加载；可选本地 Ollama（OpenAI 兼容）或任意 OpenAI 兼容云端 API（通用三键，不绑定厂商）；均不可用时 LLM 禁用，存取检索不受影响 |
 | P0 | 硬件自适应 | 检测独立显卡 → 首次运行交互询问是否 GPU 加速，选择持久化；否则 CPU |
 | P1 | 网页抓取入库 | URL → 正文提取 → 入库 |
 | P1 | 目录监听 | watchdog 监听目录，新增/修改文件自动索引，文件删除同步清理 |
@@ -169,7 +169,7 @@ query ──┬─ 向量路：embed → Chroma top-N（N = 3 × top_k）
 
 ### 7.1 架构：本地守门，云端外援
 
-`/ask` 采用智能路由——本地模型先判断问题复杂度与内容敏感度：简单问题本地直接答，复杂问题压缩上下文后发云端，敏感内容强制本地。
+`/ask` 采用智能路由（仅 `KB_LLM_MODE=auto` 启用，`off` 默认时 `/ask` 返回 503 不进入路由）——本地模型先判断问题复杂度与内容敏感度：简单问题本地直接答，复杂问题压缩上下文后发云端，敏感内容强制本地。
 
 ```
 问题 → 混合检索（无 LLM 成本）
@@ -224,10 +224,11 @@ RAG 护栏配置（关思考 / temp 0.2 / num_ctx 4096 / 强约束 prompt）下�
 ### 7.4 接入与降级链
 
 1. 启动探测 Ollama（`GET localhost:11434/v1/models`，超时 2s）→ 判定本地可用
-2. 配置了 `DEEPSEEK_API_KEY`（模型 `deepseek-v4-flash`）→ 判定云端可用
-3. `KB_LLM_MODE = local | auto | cloud`（默认 `auto`）：
+2. 配置了 `KB_LLM_API_KEY`（通用 OpenAI 兼容键，附 `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL`，默认 DeepSeek 端点与模型）→ 判定云端可用
+3. `KB_LLM_MODE = off | local | auto | cloud`（默认 `off`）：
+   - `off`（默认）：完全不加载/不调用 LLM，零显存、零成本、纯离线；记忆存取与检索完整可用
    - `local`：全部本地答
-   - `auto`：智能路由（推荐）
+   - `auto`：智能路由（推荐，配好本地与/或云端后启用）
    - `cloud`：全部云端，本地仅做压缩与隐私隔离
 4. 本地不可用且无 Key → LLM 禁用，`/ask` 返回 503 附配置指引；存取与检索不受影响
 
@@ -319,7 +320,7 @@ Embedding 相关测试用真实小模型（如 `bge-small-zh-v1.5`，约 100MB�
 | 3 | 一次性下载 BGE-M3 模型 | ✅ 已缓存（4.25GB，位于 `~/.cache/huggingface/hub`）。新环境重装时：设置 `HF_ENDPOINT=https://hf-mirror.com` 后首次启动自动下载 |
 | 4 | 安装 Ollama for Windows | ✅ 已完成（2026-08-23）：v0.32.15 安装，11434 端口正常。官网慢时用 GitHub Releases + 加速代理下载（可用前缀按序尝试 `gh-proxy.com` / `ghproxy.net` / `ghfast.top` / `ghproxy.cn`，旧域名 ghproxy.com 已停服），或 `winget install --id=Ollama.Ollama -e` |
 | 5 | 拉取本地模型 | ✅ 已完成（2026-08-23）：`qwen3:1.7b` 与 `qwen3:4b` 均已拉取并改名，基准见 7.2 节。模型目录已迁移至 **`D:\ollama_models`**（用户级环境变量 `OLLAMA_MODELS` 已设置）。国内直连慢时从魔搭拉取：`ollama pull modelscope.cn/Qwen/Qwen3-4B-GGUF` 后 `ollama cp` 改短名 |
-| 6 | DeepSeek API Key | ⬜ 待办：从 https://platform.deepseek.com 注册获取，写入 `.env` 的 `DEEPSEEK_API_KEY`，作为云降级备份 |
+| 6 | 云端 LLM API Key（可选） | ⬜ 待办：任选一家 OpenAI 兼容服务（DeepSeek / OpenAI / 通义 / 硅基流动等）注册获取，写入 `.env` 的 `KB_LLM_API_KEY`（配 `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL`），作为云降级；不配则 keep `KB_LLM_MODE=off`（默认，完全本地离线） |
 | 7 | 验证 GPU 可用 | ✅ 已完成（2026-08-23）：`torch.cuda.is_available()=True`，CUDA GPU 矩阵乘法测试通过 |
 
 其中 2、3 是 GPU 加速与首次启动的关键路径，其余可与开发并行。

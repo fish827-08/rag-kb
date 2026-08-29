@@ -319,15 +319,56 @@ Copy `.env.example` to `.env` and fill as needed (`.env` isn't committed; keys s
 
 | Scenario | Config |
 |---|---|
-| Memory/retrieval only (no Q&A) | zero config, works out of the box |
-| Local RAG Q&A | install Ollama + `ollama pull` model (default `qwen3:4b`); set `KB_LLM_MODE=local` |
-| Cloud Q&A fallback | `.env` → `KB_DEEPSEEK_API_KEY`; `KB_LLM_MODE=auto` (default, local-first) |
+| Memory/retrieval only (no Q&A) | zero config, works out of the box (`KB_LLM_MODE=off` default — LLM never loaded/called) |
+| Local RAG Q&A | install Ollama + `ollama pull` a model fitting your machine (no preset — pick by VRAM); `.env` → `KB_LLM_MODE=local` + `KB_LLM_MODEL=<actual `ollama list` name>` |
+| Cloud Q&A fallback | `.env` → `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` (**any OpenAI-compatible provider**, three generic keys, not tied to DeepSeek); `KB_LLM_MODE=auto` (local-first, cloud fallback) |
 | Privacy isolation | `KB_SENSITIVE_NAMESPACES=私人笔记` (comma-separated); matched → local-only answers, no egress |
 | Performance tuning | `KB_DEVICE=cuda/cpu`; `KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` |
 | LAN/multi-agent auth | `KB_API_KEY=<≥32 random chars>` enables Bearer/X-API-Key auth (see 5.1) |
 | Memory governance | `KB_DEDUP_ENABLED` / `KB_DECAY_ENABLED` / `KB_FRESHNESS_ENABLED`, all default off (see 3.5) |
+| Multi-agent identity isolation | every write/read/update/delete/search/ask carries `agent_id` (default `default`): `memory` visible only to its owning agent; doc/web shared knowledge visible to all (see 5.3) |
+| Agent access audit | `KB_ACCESS_AUDIT_ENABLED` (default on): every access writes a JSON line to `logs/access-audit.log`; query via REST `GET /api/v1/audit?agent=<identity>` or `kb audit <identity>` (see 5.3) |
 
 Full key list: [`.env.example`](../.env.example).
+
+### Agent onboarding (client-agnostic)
+
+- **Recommended**: use `skills/kb-memory/SKILL.md` (Anthropic open-format skill, client-agnostic);
+  skill-capable clients auto-trigger it; multi-client one-click install: [scripts/README.md](../scripts/README.md).
+- **Fallback**: the plain-text prompt in `docs/AGENT_PROMPT.md` — paste it into any agent to connect;
+  no skill mechanism required. Both sources stay in sync.
+
+### 5.3 Agent identity isolation & access audit (A-node)
+
+**Identity isolation** (multi-agent coworkers never cross-read each other's memories):
+
+- Every operation carries `agent_id` (use your task name, e.g. `TASK-0076` / `worker-1` — avoid vague
+  codes); MCP/CLI/REST all support it
+- **Source client (`client`)**: MCP auto-detects it from the handshake clientInfo (TraeWork / Claude
+  Code / Cursor) when omitted; REST/CLI pass it explicitly; recorded on writes and in the audit
+- **Identity field regulation (A-node)**: MCP and REST both validate `agent_id`/`client`/`project`
+  formats — `agent_id`/`project`: letters/digits/CJK/underscore/hyphen, 1-64 chars; **on MCP `agent_id`
+  is mandatory and cannot be placeholders like `default`/`unknown`** (audit would be untraceable);
+  `client` additionally allows spaces and dots (e.g. `Claude Code`) and auto-detects when omitted;
+  invalid values are rejected (REST 422 / MCP `INVALID_ARGUMENT`) — agents can no longer pass arbitrary strings
+- **Personal memory (`memory`) is strictly isolated**: retrieval only returns what you wrote; reading/updating/deleting another agent's memory is rejected (REST 404 / MCP `FORBIDDEN`)
+- **Shared knowledge (doc/web chunks) is visible to all**: documents/web pages ingested by any agent are searchable by every agent (RAG Q&A is unaffected)
+- Old records without `agent_id`/`client` are treated as `default` — zero migration
+
+**Access audit** (who stored/read what, from which client/project):
+
+- **Per-agent files**: each write/search/read/update/delete/ask/ingest writes a JSON line to
+  `logs/agent-audit/<client>__<project>__<task>.log` (without a project: `<client>__<task>.log`,
+  e.g. `TraeWork__kb__TASK-0076.log`, `Claude Code__worker-1.log`) — one file per agent instead of
+  one shared log; renaming a task = renaming its file
+- Line JSON: `{"timestamp","action","type","record_id","namespace","content 前50-char snippet","query 前50-char snippet","hits"}`
+  (client/agent/project live in the file name, not repeated per line; the query layer re-derives them)
+- Sensitive red line: content/query store only the first 50 chars; full text never hits the log
+- Human query entry points:
+  ```powershell
+  curl -X GET "http://127.0.0.1:8000/api/v1/audit?agent=TASK-0076&action=write&days=7&limit=100"
+  kb audit TASK-0076 --action write --days 7 --limit 100
+  ```
 
 ### 5.1 API Key auth (N19)
 
@@ -410,13 +451,13 @@ Service isn't up. Check: is the terminal still open, is the port occupied (`nets
 ① confirm kb serve is running; ② refresh/reconnect in the client MCP panel (old connection dies after service restart); ③ TraeWork must be desktop + local runtime env; ④ make sure you're in Agent mode.
 
 **Q: Ollama error / /ask returns 503?**
-① confirm Ollama was started from **Start menu/tray** (not from an AI sandbox terminal — that causes DB read/write failure); ② `ollama list` matches the configured model (default `qwen3:4b`); if not, change `.env` `KB_LLM_MODEL` or `ollama cp` rename; ③ memory access & retrieval work fine without any LLM.
+① confirm Ollama was started from **Start menu/tray** (not from an AI sandbox terminal — that causes DB read/write failure); ② `ollama list` shows a model pulled and set as `.env` `KB_LLM_MODEL` (no preset — pick by your VRAM, e.g. qwen3:4b / qwen3:1.7b, rename with `ollama cp` if needed); ③ for cloud LLM check `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` (any OpenAI-compatible provider, see §5); ④ memory access & retrieval work fine without any LLM (`KB_LLM_MODE=off` default).
 
 **Q: Chinese mojibake in PowerShell curl/Invoke-RestMethod?**
 Known issue (JSON response lacks charset; v1.0.2 candidate fix): use `curl.exe` instead of the `curl` alias, or a Python client, or in PowerShell 7 set `$OutputEncoding = [Text.Encoding]::UTF8`.
 
 **Q: Does it work offline?**
-Yes. Models & data are all local; memory write/retrieval/local Q&A fully work offline (an acceptance criterion). Only cloud fallback (DeepSeek) needs network.
+Yes. Models & data are all local; memory write/retrieval/local Q&A fully work offline (an acceptance criterion). Only cloud fallback needs network.
 
 **Q: Where is the data, how to back up?**
 All in `kb_data/` (ChromaDB + runtime state). Backup = copy that directory; restore = copy it back.

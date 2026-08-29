@@ -99,10 +99,11 @@ rag-kb/
 ├── ROADMAP.md           # 项目发展总线设计书（人类入口，树形路线+进度）
 ├── README.md            # kb 产品说明（快速开始/MCP 挂载/端点速查）
 ├── kb/                  # ① kb 服务源码（见设计文档 4.2；含 reranker/sparse/eval 等 A3.5/A4 模块）
-├── tests/               # kb 验收测试（339 项，含 eval_zh_50.jsonl 评测数据集）
+├── tests/               # kb 验收测试（367 项，含 eval_zh_50.jsonl 评测数据集）
 ├── orchestra/           # ② 协作系统（board.py + 协议 + skill + 245 项测试）
 │   └── docs/superpowers/  # orchestra 设计文档与实施计划
 ├── docs/superpowers/    # kb 设计文档（specs）与节点计划（plans）
+├── skills/kb-memory/    # kb 接入规约 skill（Anthropic 开格式、客户端无关；AGENT_PROMPT 的可触发封装，安装见 scripts/README.md）
 ├── kb_data/             # kb 运行数据（ChromaDB + runtime.json，gitignore）
 ├── _archive/            # 旧学习项目归档（禁参考其架构）
 └── .mcp.json            # 项目级 MCP 挂载（Claude Code/TraeWork 直连 kb）

@@ -4,6 +4,12 @@
 > 该 Agent 即可接入 kb 记忆与知识服务。文本是纯文本，不依赖任何框架。
 >
 > English: [AGENT_PROMPT_EN.md](AGENT_PROMPT_EN.md)
+>
+> **已封装为 skill（客户端无关）**：同一份规约以 Anthropic Skills 开格式存在
+> `skills/kb-memory/SKILL.md`，支持 skill 机制的客户端（TraeWork / Claude Code / Cursor /
+> 自建 Agent）在读写记忆/RAG 问答/审计查询等场景会自动触发，无需手动粘贴本提示词。
+> 各客户端的安装方式见 [scripts/README.md](../scripts/README.md)（一键脚本多目标安装）。
+> **最终兜底**：任何客户端直接复制粘贴本提示词即可，不依赖 skill 机制。
 
 ---
 
@@ -26,43 +32,63 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 2. **HTTP（MCP 不可用时兜底）**：当 MCP 工具不存在、调用报连接失败或超时时，改用 REST 端点（地址同上）；成功调用后优先回 MCP。
 3. 接入前先确认服务在跑：请求 `GET http://127.0.0.1:8000/api/v1/healthz`，返回 200 即正常。
 
-### 三、MCP 工具（8 个）
+### 三、MCP 工具（8 个，均支持 agent_id / client）
+
+> 身份约定同样写进 MCP 工具 schema：`agent_id` 为 **required（必填）**，无默认值——
+> 客户端工具调用若不传 agent_id 会在参数校验层直接被拒（SDK 校验），不再出现
+> "schema 说默认 default、服务端却拒绝"的矛盾。<br>
+> - `agent_id`：**必填**，用你所在任务的名字（如 `TASK-0076`、`worker-1`）；
+>   禁 `default`/`unknown` 等占位（服务端拒绝）。
+> - `client`：通常不用传——服务端自动从 MCP 握手 clientInfo 识别（TraeWork / Claude Code /
+>   Cursor 等）；如显式传，须为合法客户端名（字母/数字/中文/下划线/连字符/空格/点，≤64）。
+> - `project`（可选）：项目名，仅用于审计文件归类。
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `write_memory` | `content: str`, `tags?: list[str]` | 写入一条记忆短文本，返回 `{id}` |
-| `search_memory` | `query: str`, `top_k?: int=5` | 混合检索（向量+关键词融合），返回命中列表 `{id, content, score, type, source}` |
-| `read_memory` | `record_id: str` | 按 ID 读单条记忆完整内容 |
-| `update_memory` | `record_id: str`, `content: str` | 更新记忆内容（自动重新嵌入） |
-| `delete_memory` | `record_id: str` | 删除单条记忆 |
-| `add_document` | `path: str` | 导入本地文档（PDF/DOCX/MD/TXT/Office），切分入库 |
-| `add_webpage` | `url: str` | 抓取网页正文切分入库 |
-| `ask_kb` | `question: str` | 基于知识库的 RAG 问答，返回 `{answer, sources}`；未配 LLM 时返回 `LLM_DISABLED` |
+| `write_memory` | `content: str`, `agent_id: str`（必填）, `tags?: list[str]`, `client?: str`, `project?: str` | 写入一条记忆短文本（归属 agent_id），返回 `{id}` |
+| `search_memory` | `query: str`, `agent_id: str`（必填）, `top_k?: int=5`, `client?: str`, `project?: str` | 混合检索（向量+关键词融合）；memory 仅返回归属该 agent_id 的，doc/web 共享；返回命中列表 `{id, content, score, type, source}` |
+| `read_memory` | `record_id: str`, `agent_id: str`（必填）, `client?: str`, `project?: str` | 按 ID 读单条记忆完整内容；他人 memory 返回 `FORBIDDEN` |
+| `update_memory` | `record_id: str`, `content: str`, `agent_id: str`（必填）, `client?: str`, `project?: str` | 更新记忆内容（自动重新嵌入）；非归属返回 `FORBIDDEN` |
+| `delete_memory` | `record_id: str`, `agent_id: str`（必填）, `client?: str`, `project?: str` | 删除单条记忆；非归属返回 `FORBIDDEN` |
+| `add_document` | `path: str`, `agent_id: str`（必填）, `client?: str`, `project?: str` | 导入本地文档（PDF/DOCX/MD/TXT/Office），切分入库（共享知识，归属仅审计） |
+| `add_webpage` | `url: str`, `agent_id: str`（必填）, `client?: str`, `project?: str` | 抓取网页正文切分入库（共享知识，归属仅审计） |
+| `ask_kb` | `question: str`, `agent_id: str`（必填）, `client?: str`, `project?: str` | 基于知识库的 RAG 问答，返回 `{answer, sources}`；未配 LLM 时返回 `LLM_DISABLED` |
+
+> 存取审计：每次 write/search/read/update/delete/ask/ingest 都会在服务端
+> `logs/agent-audit/<客户端>__<项目>__<任务名>.log` 记录一条 JSON（按 Agent 分文件，行内只记
+> 操作与内容摘要，身份由文件名承载；任务更名=重命名文件）。用户可用
+> `GET /api/v1/audit?agent=<任务名>` 或 CLI `kb audit <任务名>` 查询某个 Agent 存过/读过什么。
 
 > 注：MCP 工具仅暴露上表参数（`write_memory` 无 `namespace`/`source`）；`namespace` 等更细参数仅 HTTP 端点支持（见第四节）。
 
 ### 四、HTTP 兜底端点（MCP 不可用时用）
 
+> 身份约定同 MCP：带 `agent_id`（**用任务名**）标明身份，带 `client`（可选）标明来源客户端；
+> memory 强制隔离、doc/web 共享；`agent_id`/`client` 在写/读/改/删/检索/问答请求中传递。
+
 - 健康检查：`GET /api/v1/healthz`
-- 写入记忆：`POST /api/v1/memories`，JSON `{"content": "…", "tags": ["偏好"], "source": "…", "namespace": "…"}`
-- 读单条：`GET /api/v1/memories/{id}`
-- 更新：`PATCH /api/v1/memories/{id}`，`{"content": "…"}`
-- 删除：`DELETE /api/v1/memories/{id}`
+- 写入记忆：`POST /api/v1/memories`，JSON `{"content": "…", "tags": ["偏好"], "source": "…", "namespace": "…", "agent_id": "TASK-0076", "client": "TraeWork"}`
+- 读单条：`GET /api/v1/memories/{id}?agent_id=TASK-0076`（他人 memory → 404）
+- 更新：`PATCH /api/v1/memories/{id}?agent_id=TASK-0076`，`{"content": "…"}`（非归属 → 404）
+- 删除：`DELETE /api/v1/memories/{id}?agent_id=TASK-0076`（非归属 → 404）
 - 列表：`GET /api/v1/memories?type=&tag=&q=&limit=`
-- 混合检索：`POST /api/v1/search`，`{"query": "…", "top_k": 5, "mode": "hybrid"}`（mode: hybrid/vector/keyword）
-- 文档入库：`POST /api/v1/documents`（multipart `file` 或 JSON `{"path": "本地路径"}`）
+- 混合检索：`POST /api/v1/search`，`{"query": "…", "top_k": 5, "mode": "hybrid", "agent_id": "TASK-0076"}`（mode: hybrid/vector/keyword；memory 仅返回归属该 agent_id 的）
+- 文档入库：`POST /api/v1/documents`（multipart `file` 或 JSON `{"path": "本地路径", "agent_id": "TASK-0076"}`）
 - 网页入库：`POST /api/v1/ingest/web`，`{"url": "…"}`
-- RAG 问答：`POST /api/v1/ask`，`{"question": "…"}`
+- RAG 问答：`POST /api/v1/ask`，`{"question": "…", "agent_id": "TASK-0076"}`
+- **存取审计查询**：`GET /api/v1/audit?agent=TASK-0076&action=write&days=7&limit=100`（查某 Agent 存过/读过什么）
 
 curl 示例（PowerShell）：
 
 ```powershell
-# 写入
-curl -X POST http://127.0.0.1:8000/api/v1/memories -H "Content-Type: application/json" -d '{"content": "用户偏好深色主题", "tags": ["偏好"]}'
-# 检索
-curl -X POST http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/json" -d '{"query": "用户界面偏好", "top_k": 5}'
+# 写入（标明 Agent 身份）
+curl -X POST http://127.0.0.1:8000/api/v1/memories -H "Content-Type: application/json" -d '{"content": "用户偏好深色主题", "tags": ["偏好"], "agent_id": "worker-1"}'
+# 检索（只返回自己 agent 的 memory + 全部共享知识）
+curl -X POST http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/json" -d '{"query": "用户界面偏好", "top_k": 5, "agent_id": "worker-1"}'
 # 问答
-curl -X POST http://127.0.0.1:8000/api/v1/ask -H "Content-Type: application/json" -d '{"question": "用户喜欢什么主题？"}'
+curl -X POST http://127.0.0.1:8000/api/v1/ask -H "Content-Type: application/json" -d '{"question": "用户喜欢什么主题？", "agent_id": "worker-1"}'
+# 查某 Agent 的存取审计
+curl -X GET "http://127.0.0.1:8000/api/v1/audit?agent=worker-1&limit=20"
 ```
 
 ### 五、写入记忆的规范（什么该写）
