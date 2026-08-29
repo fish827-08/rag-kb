@@ -197,7 +197,7 @@ def test_存取审计_json行(svc):
     log_file = svc.settings.log_dir / "agent-audit" / "TraeWork__kb-mem__agent-a.log"
     assert log_file.is_file(), f"应生成按 Agent 分类的审计文件：{log_file}"
     lines = [json.loads(l) for l in
-             log_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+             log_file.read_text(encoding="utf-8-sig").splitlines() if l.strip()]
     actions = [e["action"] for e in lines]
     assert "write" in actions and "read" in actions and "search" in actions
     # 敏感红线：content 只记前 50 字符摘要，无全文

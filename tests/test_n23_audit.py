@@ -31,7 +31,7 @@ class TestAuditLogger:
                              log_dir=tmp_path)
         log_file = tmp_path / "governance-audit.log"
         assert log_file.exists()
-        lines = log_file.read_text(encoding="utf-8").strip().split("\n")
+        lines = log_file.read_text(encoding="utf-8-sig").strip().split("\n")
         assert len(lines) == 1
         event = json.loads(lines[0])
         assert event["operation"] == "dedup_blocked"
@@ -46,7 +46,7 @@ class TestAuditLogger:
         log_governance_event("op1", "r1", {"k": 1}, log_dir=tmp_path)
         log_governance_event("op2", "r2", {"k": 2}, log_dir=tmp_path)
         log_file = tmp_path / "governance-audit.log"
-        lines = log_file.read_text(encoding="utf-8").strip().split("\n")
+        lines = log_file.read_text(encoding="utf-8-sig").strip().split("\n")
         assert len(lines) == 2
         assert json.loads(lines[0])["operation"] == "op1"
         assert json.loads(lines[1])["operation"] == "op2"
@@ -56,14 +56,14 @@ class TestAuditLogger:
         log_governance_event("dedup_blocked", "r1", {}, namespace="my-ns",
                              log_dir=tmp_path)
         log_file = tmp_path / "governance-audit.log"
-        event = json.loads(log_file.read_text(encoding="utf-8").strip())
+        event = json.loads(log_file.read_text(encoding="utf-8-sig").strip())
         assert event["namespace"] == "my-ns"
 
     def test_detail为空时默认空dict(self, tmp_path):
         """detail 为 None 时默认空 dict。"""
         log_governance_event("op", "r1", None, log_dir=tmp_path)
         log_file = tmp_path / "governance-audit.log"
-        event = json.loads(log_file.read_text(encoding="utf-8").strip())
+        event = json.loads(log_file.read_text(encoding="utf-8-sig").strip())
         assert event["detail"] == {}
 
     def test_审计失败不阻塞主流程(self, tmp_path, monkeypatch):
@@ -105,7 +105,7 @@ class TestServiceDedupAudit:
         # 审计日志应存在
         log_file = tmp_path / "logs" / "governance-audit.log"
         assert log_file.exists(), f"审计日志不存在: {log_file}"
-        event = json.loads(log_file.read_text(encoding="utf-8").strip())
+        event = json.loads(log_file.read_text(encoding="utf-8-sig").strip())
         assert event["operation"] == "dedup_blocked"
         assert event["record_id"] == "existing-rec-001"
         assert event["detail"]["similarity"] == 0.95
@@ -131,7 +131,7 @@ class TestServiceDedupAudit:
         log_file = tmp_path / "logs" / "governance-audit.log"
         # 审计关闭时不应写日志（文件不存在或为空）
         if log_file.exists():
-            assert log_file.read_text(encoding="utf-8").strip() == ""
+            assert log_file.read_text(encoding="utf-8-sig").strip() == ""
 
 
 # ---- retriever 衰减/新鲜度审计测试 ----
@@ -225,7 +225,7 @@ class TestRetrieverAudit:
         ret.search("test", top_k=2, mode="vector")
         log_file = tmp_path / "governance-audit.log"
         assert log_file.exists()
-        event = json.loads(log_file.read_text(encoding="utf-8").strip())
+        event = json.loads(log_file.read_text(encoding="utf-8-sig").strip())
         assert event["operation"] == "decay_applied"
         assert event["record_id"] == "a"
         assert "decay_factor" in event["detail"]
@@ -249,7 +249,7 @@ class TestRetrieverAudit:
         log_file = tmp_path / "governance-audit.log"
         # 审计关闭时不写日志（文件不存在或为空）
         if log_file.exists():
-            assert log_file.read_text(encoding="utf-8").strip() == ""
+            assert log_file.read_text(encoding="utf-8-sig").strip() == ""
 
     def test_新鲜度审计开启时写日志(self, tmp_path, monkeypatch):
         """audit_freshness_enabled=true 时新鲜度应用写 freshness_applied 审计日志。"""
@@ -267,7 +267,7 @@ class TestRetrieverAudit:
         ret.search("test", top_k=2, mode="vector")
         log_file = tmp_path / "governance-audit.log"
         assert log_file.exists()
-        event = json.loads(log_file.read_text(encoding="utf-8").strip())
+        event = json.loads(log_file.read_text(encoding="utf-8-sig").strip())
         assert event["operation"] == "freshness_applied"
         assert event["record_id"] == "b"
         assert "boost" in event["detail"]

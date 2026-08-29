@@ -165,7 +165,7 @@ class MemoryCreate(BaseModel):
     source: str | None = None
     namespace: str = "default"
     agent_id: str = "default"          # 写入方 Agent 身份（A 节点；推荐任务名）；默认 default
-    client: str = "default"            # 来源客户端（可选，如 curl/Python/TraeWork）；默认 default
+    client: str = "HTTP"               # 来源客户端；REST 未显式传时默认 HTTP（审计文件名不再落 default）
     project: str | None = None         # 项目名（可选，仅用于审计文件名归类）
 
     @field_validator("content")
@@ -217,7 +217,7 @@ class SearchRequest(BaseModel):
     type: str | None = None
     tag: str | None = None
     agent_id: str = "default"
-    client: str = "default"
+    client: str = "HTTP"
     project: str | None = None  # 项目名（可选，仅用于审计文件名归类）
 
     @field_validator("agent_id", "client", "project")
@@ -241,7 +241,7 @@ class AskRequest(BaseModel):
     English: Ask request; question is required."""
     question: str
     agent_id: str = "default"          # A 节点：问答检索按该 Agent 隔离 memory
-    client: str = "default"            # 来源客户端（可选）
+    client: str = "HTTP"               # 来源客户端；REST 未显式传时默认 HTTP
     project: str | None = None         # 项目名（可选，仅用于审计文件名归类）
 
     @field_validator("agent_id", "client", "project")
@@ -572,7 +572,7 @@ def create_app(settings: Settings | None = None,
 
     @app.get("/api/v1/memories/{record_id}")
     def get_memory(record_id: str, agent_id: str = "default",
-                   client: str = "default",
+                   client: str = "HTTP",
                    project: str | None = None) -> dict:
         r = kb.get_memory(record_id, agent_id=agent_id, client=client,
                           project=project)
@@ -584,7 +584,7 @@ def create_app(settings: Settings | None = None,
     @app.patch("/api/v1/memories/{record_id}")
     def update_memory(record_id: str, body: MemoryUpdate,
                       agent_id: str = "default",
-                      client: str = "default",
+                      client: str = "HTTP",
                       project: str | None = None) -> dict:
         r = kb.update_memory(record_id, content=body.content, tags=body.tags,
                              agent_id=agent_id, client=client, project=project)
@@ -595,7 +595,7 @@ def create_app(settings: Settings | None = None,
 
     @app.delete("/api/v1/memories/{record_id}")
     def delete_memory(record_id: str, agent_id: str = "default",
-                      client: str = "default",
+                      client: str = "HTTP",
                       project: str | None = None) -> dict:
         if not kb.delete_memory(record_id, agent_id=agent_id, client=client,
                                 project=project):
@@ -653,7 +653,7 @@ def create_app(settings: Settings | None = None,
                     "message": "需提供 multipart file 字段或 JSON path 字段"})
             # JSON path 模式可带 agent_id/client/project（记录归属，仅审计）
             body_agent = (body or {}).get("agent_id", "default")
-            body_client = (body or {}).get("client", "default")
+            body_client = (body or {}).get("client", "HTTP")
             body_project = (body or {}).get("project")
             if not Path(path).is_file():
                 raise HTTPException(status_code=400, detail={
@@ -683,7 +683,7 @@ def create_app(settings: Settings | None = None,
         English: Fetch a webpage body, split and ingest it; returns 400 with the reason on fetch/body-extraction failure."""
         try:
             return kb.add_webpage(body.url, agent_id="default",
-                                 client="default")
+                                 client="HTTP")
         except WebFetchError as exc:
             raise HTTPException(status_code=400, detail={
                 "error": "WEB_FETCH_FAILED", "message": str(exc)})
