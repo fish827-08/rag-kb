@@ -9,6 +9,11 @@
     → 报告：总体 + 分难度 + 未命中清单 + 平均延迟
 
 run_eval 与 service 解耦（鸭子类型：add_memory / search），可注入替身单测。
+
+English: Minimal evaluation benchmark: Chinese QA dataset → Recall@1/@5 + MRR (N26, A3.5 spec §3.5).
+Evaluation flow: isolated KB_DATA_DIR → import all corpus → retrieve per question → hit judgment
+→ metrics (Recall@1 / Recall@5 / MRR) → report. run_eval is decoupled from service
+(duck-typed add_memory / search), so a test stub can be injected for unit tests.
 """
 import json
 import time
@@ -18,14 +23,16 @@ DIFFICULTY_TAGS = ("keyword", "semantic", "distractor")
 
 
 class EvalDatasetError(Exception):
-    """数据集加载失败（文件缺失 / JSONL 损坏 / 必填字段缺失）。"""
+    """数据集加载失败（文件缺失 / JSONL 损坏 / 必填字段缺失）。
+    English: Dataset load failure (missing file / corrupt JSONL / missing required fields)."""
 
 
 def load_dataset(path) -> list[dict]:
     """加载 JSONL 数据集；每行 {"qid", "question", "corpus", "tags"}。
 
     字段缺失 / JSON 损坏 / 文件不存在抛 EvalDatasetError。
-    """
+    English: Load a JSONL dataset; each line is {"qid", "question", "corpus", "tags"}.
+    Missing fields / corrupt JSON / a nonexistent file raise EvalDatasetError."""
     path = Path(path)
     if not path.exists():
         raise EvalDatasetError(f"数据集不存在: {path}")
@@ -52,7 +59,9 @@ def compute_metrics(ranks: list[int | None]) -> dict:
 
     ranks: 每条问题的目标记录排名（1 起）；None=未进 top-k。
     空列表安全返回全 0。
-    """
+    English: Compute Recall@1 / Recall@5 / MRR from a 1-based rank list.
+    ranks: the target-record rank per question (starting at 1); None = not in top-k.
+    An empty list safely returns all zeros."""
     n = len(ranks)
     if n == 0:
         return {"recall_at_1": 0.0, "recall_at_5": 0.0, "mrr": 0.0}
@@ -63,7 +72,8 @@ def compute_metrics(ranks: list[int | None]) -> dict:
 
 
 def _difficulty_of(item: dict) -> str | None:
-    """提取难度标签（keyword/semantic/distractor）；无则 None。"""
+    """提取难度标签（keyword/semantic/distractor）；无则 None。
+    English: Extract the difficulty tag (keyword/semantic/distractor); None if absent."""
     for t in item.get("tags") or []:
         if t in DIFFICULTY_TAGS:
             return t
@@ -77,7 +87,10 @@ def run_eval(service, dataset: list[dict], top_k: int = 5,
     service: KBService 或替身（需 add_memory(content, tags=...) / search(...)）。
     返回报告 dict：{count, top_k, mode, recall_at_1/5, mrr, latency_ms_avg,
                     by_difficulty, misses}。
-    """
+    English: End-to-end evaluation: write corpus → retrieve per question → aggregate metrics.
+    service: a KBService or stub (needs add_memory(content, tags=...) / search(...)).
+    Returns a report dict: {count, top_k, mode, recall_at_1/5, mrr, latency_ms_avg,
+    by_difficulty, misses}."""
     corpus_ids: dict[int, str] = {}  # qid → record_id
     for item in dataset:
         rec = service.add_memory(item["corpus"],

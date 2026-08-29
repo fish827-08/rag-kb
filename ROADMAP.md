@@ -4,6 +4,8 @@
 > AI 助手请读 AGENTS.md + PROJECT.md（含实施细节）；本文件是总线视角的人类入口。
 >
 > 最后更新：2026-08-28 ｜ 总线版本：v3（战略调整：B 线冻结维护，A 线为唯一开发主线）
+>
+> English: [ROADMAP_EN.md](ROADMAP_EN.md)
 
 ## 0. 项目愿景（一句话）
 

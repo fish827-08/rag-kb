@@ -2,6 +2,8 @@
 
 > 用途：把下面「提示词正文」整段复制粘贴给任意 AI Agent（TraeWork / Claude Code / Cursor / 自建 Agent 等），
 > 该 Agent 即可接入 kb 记忆与知识服务。文本是纯文本，不依赖任何框架。
+>
+> English: [AGENT_PROMPT_EN.md](AGENT_PROMPT_EN.md)
 
 ---
 

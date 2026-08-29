@@ -1,4 +1,7 @@
-"""CLI 入口：add / search / info / serve / mcp / forget / dedup。"""
+"""CLI 入口：add / search / info / serve / mcp / forget / dedup / stats / ask / eval。
+
+CLI entry: add / search / info / serve / mcp / forget / dedup / stats / ask / eval.
+"""
 import json
 from datetime import datetime
 
@@ -18,6 +21,8 @@ console = Console()
 
 def find_stale_records(records, days: int, now: datetime | None = None):
     """筛选超 N 天未命中的记录（N23a forget --stale）。
+
+    Find records not touched for more than N days (N23a forget --stale).
 
     last_accessed 为空时用 created_at 替代（governance.days_since 语义）。
     返回 [(record, days_float), ...]，按天数降序。
@@ -171,6 +176,8 @@ def stats(
 ):
     """记忆库统计：概览 / 类型分布 / 访问热度 / 陈旧分布（N28）。
 
+    Memory stats: overview / type distribution / hot records / stale distribution (N28).
+
     用法：
       kb stats                      # 默认 90 天陈旧阈值，热度 top 5
       kb stats --stale-days 30 --top 10
@@ -179,39 +186,39 @@ def stats(
     base = svc.stats()
     records = list(svc.store.iter_all())
 
-    console.print(f"[bold]记忆库统计[/bold]　记录 {base['records']} 条 · "
+    console.print(f"[bold]记忆库统计 (Memory Stats)[/bold]　记录 {base['records']} 条 · "
                   f"device={base['device']} · llm={base['llm']}")
 
-    # 类型分布
+    # 类型分布 / Type distribution
     dist = compute_type_distribution(records)
     if dist:
-        t1 = Table(title="类型分布")
-        t1.add_column("类型", style="cyan")
-        t1.add_column("条数", justify="right")
-        t1.add_column("占比", justify="right")
+        t1 = Table(title="类型分布 (By Type)")
+        t1.add_column("类型 (Type)", style="cyan")
+        t1.add_column("条数 (Count)", justify="right")
+        t1.add_column("占比 (Pct)", justify="right")
         for t, d in dist.items():
             t1.add_row(t, str(d["count"]), f"{d['pct']}%")
         console.print(t1)
     else:
-        console.print("[dim]类型分布：空库[/dim]")
+        console.print("[dim]类型分布：空库 (Type distribution: empty)[/dim]")
 
-    # 访问热度 top N
+    # 访问热度 top N / Hot records top N
     hot = compute_hot_records(records, top=top)
     if hot:
-        t2 = Table(title=f"访问热度 top {len(hot)}")
-        t2.add_column("内容摘要", style="white")
-        t2.add_column("命中次数", justify="right", style="yellow")
-        t2.add_column("最后命中", style="dim")
+        t2 = Table(title=f"访问热度 top {len(hot)} (Hot Records)")
+        t2.add_column("内容摘要 (Summary)", style="white")
+        t2.add_column("命中次数 (Hits)", justify="right", style="yellow")
+        t2.add_column("最后命中 (Last accessed)", style="dim")
         for r, c in hot:
             t2.add_row(_truncate(r.content), str(c),
                        r.last_accessed or "-")
         console.print(t2)
     else:
-        console.print("[dim]访问热度：暂无命中记录[/dim]")
+        console.print("[dim]访问热度：暂无命中记录 (Hot records: none)[/dim]")
 
-    # 陈旧分布
+    # 陈旧分布 / Stale distribution
     stale = find_stale_records(records, stale_days)
-    console.print(f"陈旧分布：超 {stale_days} 天未命中 "
+    console.print(f"陈旧分布 (Stale)：超 {stale_days} 天未命中 "
                   f"[red]{len(stale)}[/red] 条"
                   + ("（kb forget --stale 可清理）" if stale else ""))
 
@@ -223,7 +230,10 @@ def ask(
 ):
     """终端 RAG 问答：检索 + 生成，直连 KBService.ask（N28）。
 
+    Terminal RAG Q&A: retrieval + generation, direct KBService.ask call (N28).
+
     LLM 不可用时仍输出检索命中（标注"仅检索未生成"），退出码 1。
+    When the LLM is unavailable, still prints retrieval hits (marked "retrieval only"), exit code 1.
     """
     from kb.service import LLMDisabledError
     svc = _service()
@@ -248,6 +258,8 @@ def ask(
                       "Key），以下为检索结果（仅检索未生成）[/yellow]")
         console.print(f"配置指引：启动 Ollama（ollama serve + ollama pull "
                       "qwen3:4b），或在 .env 配置 KB_DEEPSEEK_API_KEY 走云端")
+        console.print("[dim]Setup: start Ollama (ollama serve + ollama pull qwen3:4b), "
+                      "or set KB_DEEPSEEK_API_KEY in .env for cloud.[/dim]")
         if hits:
             t = Table(title=f"检索命中（top {len(hits)}）")
             t.add_column("ID", style="cyan", no_wrap=True)

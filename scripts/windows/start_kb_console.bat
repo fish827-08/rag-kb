@@ -7,7 +7,7 @@ REM             Press Ctrl+C to stop. Window stays open after exit.
 REM  Optional env: set KB_LLM_MODE / KB_LLM_MODEL before running.
 REM ============================================================
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
 
 REM --- locate venv: prefer .venv, fallback venv ---
 set "PY="

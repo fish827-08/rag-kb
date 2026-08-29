@@ -1,4 +1,5 @@
-"""混合检索：向量 + BM25 双路，RRF 融合。"""
+"""混合检索：向量 + BM25 双路，RRF 融合。
+English: Hybrid retrieval fusing the vector and BM25 routes via RRF."""
 import threading
 from datetime import datetime
 
@@ -12,6 +13,8 @@ def rrf_fuse(*ranked_lists, top_k: int) -> list[tuple[str, float]]:
     """score(d) = Σ 1/(RRF_K + rank_i(d))，rank 从 1 起；按融合分降序取 top_k。
 
     N25：可变参数（2 路或 3 路，路数由稀疏开关决定），双路行为与原实现一致。
+    English: score(d) = Σ 1/(RRF_K + rank_i(d)), rank starting at 1; take the top_k by fused score descending.
+    N25: variadic args (2 or 3 routes depending on the sparse toggle); dual-route behavior matches the original.
     """
     scores: dict[str, float] = {}
     for ranked in ranked_lists:
@@ -22,7 +25,8 @@ def rrf_fuse(*ranked_lists, top_k: int) -> list[tuple[str, float]]:
 
 
 class HybridRetriever:
-    """混合检索器；mode 支持 hybrid / vector / keyword。"""
+    """混合检索器；mode 支持 hybrid / vector / keyword。
+    English: Hybrid retriever; mode supports hybrid / vector / keyword."""
 
     def __init__(self, store, bm25: BM25Index, embedder: Embedder,
                  settings=None, reranker=None,
@@ -39,7 +43,10 @@ class HybridRetriever:
                type: str | None = None, tag: str | None = None) -> list[dict]:
         """mode: hybrid/vector/keyword；每路取 3*top_k 候选；
         type/tag 过滤在融合后进行（过滤后不足 top_k 属正常）；
-        输出 [{id, content, score, type, source, tags, created_at}]，score 为融合分。"""
+        输出 [{id, content, score, type, source, tags, created_at}]，score 为融合分。
+        English: mode: hybrid/vector/keyword; each route takes 3*top_k candidates;
+        type/tag filtering happens after fusion (fewer than top_k after filtering is normal);
+        output is [{id, content, score, type, source, tags, created_at}], score being the fused score."""
         candidate = 3 * top_k
         if mode in ("hybrid", "vector"):
             vec = self.embedder.embed_query(query)

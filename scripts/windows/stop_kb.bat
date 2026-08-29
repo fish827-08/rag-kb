@@ -7,7 +7,7 @@ REM    2. any process listening on port 8000
 REM    3. any python/pythonw whose command line contains "kb serve"
 REM ============================================================
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
 
 echo [INFO] Stopping kb serve ...
 

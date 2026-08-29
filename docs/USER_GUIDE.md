@@ -3,6 +3,8 @@
 > 面向人类用户的使用指南。AI 助手请改读 [AGENTS.md](../AGENTS.md) + [PROJECT.md](../PROJECT.md)。
 >
 > 版本：v1（2026-08-24）｜ 随版本迭代更新
+>
+> English: [USER_GUIDE_EN.md](USER_GUIDE_EN.md)
 
 ## 目录
 

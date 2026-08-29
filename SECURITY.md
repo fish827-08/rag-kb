@@ -1,5 +1,7 @@
 # 安全策略（Security Policy）
 
+> English: [SECURITY_EN.md](SECURITY_EN.md)
+
 > kb 是本地优先的 Agent 记忆与知识服务，默认面向**单机、单用户**场景设计。
 > 本文档说明默认安全边界、已知风险面与加固方式。
 

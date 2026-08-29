@@ -1,4 +1,5 @@
-"""KBService：统一业务编排，组装 store / embedder / bm25 / retriever / llm。"""
+"""KBService：统一业务编排，组装 store / embedder / bm25 / retriever / llm。
+English: Unified business orchestration that assembles store / embedder / bm25 / retriever / llm."""
 import math
 from collections import OrderedDict
 from pathlib import Path
@@ -29,11 +30,13 @@ COMPRESS_PROMPT = "将以下检索内容压缩为要点，保留全部关键事�
 
 
 class LLMDisabledError(Exception):
-    """LLM 不可用（本地与云端均未就绪）；API 层据此转 503 并附配置指引。"""
+    """LLM 不可用（本地与云端均未就绪）；API 层据此转 503 并附配置指引。
+    English: LLM unavailable (neither local nor cloud ready); the API layer maps it to 503 with setup guidance."""
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
-    """余弦相似度；零向量返回 0（embedder 输出已归一化，此处仍稳妥求模）。"""
+    """余弦相似度；零向量返回 0（embedder 输出已归一化，此处仍稳妥求模）。
+    English: Cosine similarity; zero vectors return 0 (embedder outputs are normalized, but the modulus is still computed defensively)."""
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(y * y for y in b))
@@ -43,7 +46,8 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 def _parse_label(resp: str) -> str:
-    """解析分类输出：取先出现的 SIMPLE/COMPLEX 判定（大小写不敏感）；失败按 SIMPLE。"""
+    """解析分类输出：取先出现的 SIMPLE/COMPLEX 判定（大小写不敏感）；失败按 SIMPLE。
+    English: Parse the classification output: pick the first SIMPLE/COMPLEX verdict (case-insensitive); default to SIMPLE on failure."""
     up = (resp or "").upper()
     i_simple = up.find("SIMPLE")
     i_complex = up.find("COMPLEX")
@@ -53,11 +57,15 @@ def _parse_label(resp: str) -> str:
 
 
 class KBService:
-    """记忆服务核心；REST / MCP / CLI 共用。"""
+    """记忆服务核心；REST / MCP / CLI 共用。
+    English: Core memory service; shared by REST / MCP / CLI."""
 
     def __init__(self, settings: Settings | None = None, llm=None):
         """组装各组件；BM25 启动优先加载持久化语料（N27），漂移/缺失才全量分词重建。
-        llm 未注入时自建 LLMClient(settings)；注入时直接用（测试替身）。"""
+        llm 未注入时自建 LLMClient(settings)；注入时直接用（测试替身）。
+        English: Assemble components; BM25 loads the persisted corpus on startup (N27), rebuilding
+        by full tokenization only on drift/missing. When llm is not injected, build an LLMClient(settings);
+        when injected, use it directly (test double)."""
         self.settings = settings or get_settings()
         self.device = self.settings.device or "cpu"
         self.embedder = Embedder(self.settings.embed_model, device=self.device)
@@ -82,7 +90,8 @@ class KBService:
         self._cache: OrderedDict[str, dict] = OrderedDict()
 
     def _persist_bm25(self) -> None:
-        """BM25 语料落盘；失败记 WARNING 不阻塞主流程（N27）。"""
+        """BM25 语料落盘；失败记 WARNING 不阻塞主流程（N27）。
+        English: Persist the BM25 corpus; on failure log a WARNING without blocking the main flow (N27)."""
         import logging
         try:
             self.bm25.save_corpus(self._bm25_cache)
@@ -90,7 +99,8 @@ class KBService:
             logging.getLogger("kb.service").warning("BM25 语料落盘失败: %s", e)
 
     def _build_reranker(self):
-        """N24：rerank_enabled 时组装 Reranker（懒加载，实例化不加载模型）。"""
+        """N24：rerank_enabled 时组装 Reranker（懒加载，实例化不加载模型）。
+        English: N24: assemble a Reranker when rerank_enabled (lazy-loaded; construction loads no model)."""
         if getattr(self.settings, "rerank_enabled", False):
             from kb.reranker import Reranker
             return Reranker(self.settings.rerank_model, device=self.device)
@@ -104,7 +114,11 @@ class KBService:
         探测失败（非 BGE-M3 族 / sparse_linear.pt 缺失 / 加载异常）记 WARNING，
         稀疏路自动关闭（检索退回双路，行为等同 sparse_enabled=false）。
         索引优先加载持久化（sparse_index.json，id 集合校验），漂移/缺失才全量 encode 重建。
-        """
+        English: Assemble (SparseEmbedder, SparseIndex) when sparse_enabled; degrade to (None, None) on failure.
+        On probe failure (non-BGE-M3 / missing sparse_linear.pt / load error) log a WARNING and disable
+        the sparse route automatically (retrieval falls back to dual-route, same as sparse_enabled=false).
+        The index prefers loading the persisted file (sparse_index.json, id-set validated); rebuild by
+        full encode only on drift/missing."""
         import logging
         if not getattr(self.settings, "sparse_enabled", False):
             return None, None
@@ -131,7 +145,8 @@ class KBService:
         return sparse_embedder, sparse_index
 
     def _persist_sparse(self) -> None:
-        """稀疏索引落盘；失败记 WARNING 不阻塞主流程（同 BM25 模式）。"""
+        """稀疏索引落盘；失败记 WARNING 不阻塞主流程（同 BM25 模式）。
+        English: Persist the sparse index; on failure log a WARNING without blocking the main flow (same as BM25)."""
         import logging
         if self.sparse_index is None:
             return
@@ -141,7 +156,8 @@ class KBService:
             logging.getLogger("kb.service").warning("稀疏索引落盘失败: %s", e)
 
     def _sparse_add(self, records) -> None:
-        """写入路径维护：批量 encode 并入稀疏索引 + 落盘。"""
+        """写入路径维护：批量 encode 并入稀疏索引 + 落盘。
+        English: Write-path maintenance: batch-encode and merge into the sparse index and persist."""
         if self.sparse_embedder is None or not records:
             return
         vecs = self.sparse_embedder.encode([r.content for r in records])
@@ -150,7 +166,8 @@ class KBService:
         self._persist_sparse()
 
     def _sparse_remove(self, record_ids) -> None:
-        """删除路径维护：增量移出稀疏索引 + 落盘。"""
+        """删除路径维护：增量移出稀疏索引 + 落盘。
+        English: Delete-path maintenance: incrementally remove from the sparse index and persist."""
         if self.sparse_index is None:
             return
         for rid in record_ids:
@@ -164,7 +181,9 @@ class KBService:
 
         N22a/TASK-0069：dedup_enabled 时先做语义去重检查，命中则抛 DuplicateError
         （api 层捕获返回 409）；关闭时零行为变化。
-        """
+        English: Write a memory short text and embed it. N22a/TASK-0069: when dedup_enabled, run a semantic
+        dedup check first and raise DuplicateError on a hit (captured by the api layer as 409); zero behavior
+        change when disabled."""
         from kb.governance import DuplicateError, check_duplicate
         if self.settings.dedup_enabled:
             existing_id, similarity = check_duplicate(
@@ -189,20 +208,24 @@ class KBService:
         return record
 
     def get_memory(self, record_id: str) -> Record | None:
-        """读取单条记忆。"""
+        """读取单条记忆。
+        English: Read a single memory."""
         return self.store.get(record_id)
 
     def list_memories(self, **filters) -> tuple[list[Record], int]:
-        """列表（过滤 + 分页），返回 (记录, 总数)。"""
+        """列表（过滤 + 分页），返回 (记录, 总数)。
+        English: List (filter + pagination), returning (records, total)."""
         return self.store.list_records(**filters)
 
     def list_records(self, **filters) -> tuple[list[Record], int]:
-        """记录列表（过滤 + 分页），直接委托 store；watcher 等内部与验收测试使用。"""
+        """记录列表（过滤 + 分页），直接委托 store；watcher 等内部与验收测试使用。
+        English: List records (filter + pagination) delegating directly to store; used by watcher and acceptance tests."""
         return self.store.list_records(**filters)
 
     def update_memory(self, record_id: str, content: str | None = None,
                       tags: list[str] | None = None) -> Record | None:
-        """更新记忆；content 变更时重新嵌入并更新 updated_at。"""
+        """更新记忆；content 变更时重新嵌入并更新 updated_at。
+        English: Update a memory; re-embed and refresh updated_at when content changes."""
         from datetime import datetime
         record = self.store.get(record_id)
         if record is None:
@@ -224,7 +247,8 @@ class KBService:
         return record
 
     def delete_memory(self, record_id: str) -> bool:
-        """删除记忆；不存在返回 False。"""
+        """删除记忆；不存在返回 False。
+        English: Delete a memory; return False if it does not exist."""
         record = self.store.get(record_id)
         if record is None:
             return False
@@ -242,7 +266,10 @@ class KBService:
         返回 {"source": 文件名, "chunks": 入库块数}；
         source 缺省取文件名，multipart 上传时以上传文件名入库（覆盖临时文件名）。
         空文档切不出 chunk，不入库直接返回 chunks=0。
-        """
+        English: Parse local document → split → store each chunk as a doc_chunk Record.
+        Returns {"source": filename, "chunks": count ingested}; source defaults to the file name,
+        and on multipart upload the uploaded file name is stored (overriding the temp file name).
+        An empty document yields no chunks and is not ingested, returning chunks=0 directly."""
         path = Path(path)
         text = parse_file(path)
         chunks = chunk_text(text, self.settings.chunk_size,
@@ -266,7 +293,10 @@ class KBService:
         返回 {"source": url, "chunks": 入库块数}；抓取/正文提取失败抛
         WebFetchError（API 层转 400 + 原因）。正文切不出 chunk 时不入库，
         直接返回 chunks=0。
-        """
+        English: Fetch webpage body → split → store each chunk as a web_chunk Record.
+        Returns {"source": url, "chunks": count}; a fetch/body-extraction failure raises WebFetchError
+        (mapped to 400 with reason by the API layer). No chunks are ingested and chunks=0 is returned
+        when the body yields none."""
         text = fetch_webpage(url)
         chunks = chunk_text(text, self.settings.chunk_size,
                             self.settings.chunk_overlap)
@@ -284,7 +314,9 @@ class KBService:
 
     def list_documents(self) -> list[dict]:
         """按 source 聚合文档列表（source 非空的所有记录，不限 type）。
-        chunks=该 source 记录数；chars=content 总字符数；last_imported=最大 created_at。"""
+        chunks=该 source 记录数；chars=content 总字符数；last_imported=最大 created_at。
+        English: Aggregate a document list by source (all records with a non-empty source, any type).
+        chunks=record count for the source; chars=total content chars; last_imported=max created_at."""
         docs: dict[str, dict] = {}
         for r in self.store.iter_all():
             if not r.source:
@@ -298,7 +330,8 @@ class KBService:
         return sorted(docs.values(), key=lambda d: d["source"])
 
     def delete_document(self, source: str) -> int:
-        """按 source 删除文档全部记录，返回删除数量；同步清理 BM25 索引。"""
+        """按 source 删除文档全部记录，返回删除数量；同步清理 BM25 索引。
+        English: Delete all records of a document by source, returning the count; also clean the BM25 index."""
         ids = [r.id for r in self.store.iter_all() if r.source == source]
         n = self.store.delete_by_source(source)
         for rid in ids:
@@ -310,12 +343,14 @@ class KBService:
     # ---- 检索与统计 ----
     def search(self, query: str, top_k: int = 5, mode: str = "hybrid",
                type: str | None = None, tag: str | None = None) -> list[dict]:
-        """混合检索。"""
+        """混合检索。
+        English: Hybrid retrieval."""
         return self.retriever.search(query, top_k=top_k, mode=mode,
                                      type=type, tag=tag)
 
     def stats(self) -> dict:
-        """运行统计；llm 为当前 LLM 状态（local/cloud/disabled）。"""
+        """运行统计；llm 为当前 LLM 状态（local/cloud/disabled）。
+        English: Runtime stats; llm is the current LLM status (local/cloud/disabled)."""
         _, total = self.store.list_records()
         return {"records": total, "device": self.device,
                 "llm": self.llm.status.value}
@@ -329,7 +364,12 @@ class KBService:
         - llm_mode=local/cloud：走 N10 原路径（后端由 llm.chat 内部按 status/mode 决定）；
         - llm_mode=auto：智能路由（缓存 → 本地分类 → 敏感覆盖 → 分支路由），见 _ask_auto；
         - LLM 禁用时抛 LLMDisabledError（API 层转 503 + 配置指引）。
-        """
+        English: RAG Q&A: retrieve → build context (truncated by char budget) → guarded prompt → generate → attach sources.
+        - top_k=5 retrieval, results joined into context in descending score order;
+        - char budget = context_token_limit * 2 (~2:1 token-to-char estimate);
+        - llm_mode=local/cloud: the N10 original path (backend decided inside llm.chat by status/mode);
+        - llm_mode=auto: smart routing (cache → local classify → sensitive override → branch), see _ask_auto;
+        - throws LLMDisabledError when LLM is disabled (mapped to 503 with guidance by the API layer)."""
         if self.llm.status is LLMStatus.DISABLED:
             raise LLMDisabledError("LLM 不可用：本地 Ollama 未响应且未配置云端 Key")
         results = sorted(self.search(question, top_k=5),
@@ -351,7 +391,11 @@ class KBService:
         分支：SENSITIVE / SIMPLE / COMPLEX 无云 → 本地直答（N10 消息拼装）；
         COMPLEX 有云 → 本地压缩上下文 → 云端生成（失败降级本地直答）。
         缓存优先于分类：命中（问题向量与缓存条目余弦最大值 ≥ 阈值）直接返回，不调 LLM。
-        """
+        English: auto-mode smart routing: cache check → local classify → sensitive override → branch → write cache.
+        Branches: SENSITIVE / SIMPLE / COMPLEX-without-cloud → local answer (N10 message assembly);
+        COMPLEX-with-cloud → compress context locally → cloud generation (fall back to local on failure).
+        Cache takes priority over classification: on a hit (max cosine between question vec and a cached
+        entry ≥ threshold) return directly without calling the LLM."""
         # 1) 缓存检查（问题向量与缓存条目 question_vec 余弦最大值 ≥ 阈值 → 直接返回）
         qvec = self.embedder.embed_texts([question])[0]
         hit = self._cache_lookup(qvec)
@@ -385,7 +429,8 @@ class KBService:
         return {"answer": answer, "sources": sources, "llm": llm_used}
 
     def _classify(self, question: str) -> str:
-        """本地 LLM 复杂度分类；输出解析失败按 SIMPLE 处理。"""
+        """本地 LLM 复杂度分类；输出解析失败按 SIMPLE 处理。
+        English: Local-LLM complexity classification; on parse failure treat as SIMPLE."""
         messages = [
             {"role": "system", "content": RAG_SYSTEM_PROMPT},
             {"role": "user", "content": CLASSIFY_PROMPT.format(q=question)},
@@ -397,7 +442,9 @@ class KBService:
         """敏感判定：检索结果 tag 含 'sensitive'，或记录 namespace 命中敏感名单。
 
         检索结果 dict 不含 namespace 字段，敏感名单非空时按 id 回查 store 取 namespace。
-        """
+        English: Sensitivity judgment: the result tag contains 'sensitive', or the record namespace hits a
+        sensitive list. The result dict lacks a namespace field, so when the sensitive list is non-empty the
+        store is looked up by id to fetch the namespace."""
         sensitive_ns = self.settings.sensitive_ns_list
         for r in results:
             if "sensitive" in (r.get("tags") or []):
@@ -409,7 +456,8 @@ class KBService:
         return False
 
     def _cloud_available(self) -> bool:
-        """auto 模式下云端是否可用：注入的云端客户端优先，其次 DeepSeek Key 非空。"""
+        """auto 模式下云端是否可用：注入的云端客户端优先，其次 DeepSeek Key 非空。
+        English: Whether cloud is available in auto mode: the injected cloud client takes priority; otherwise a non-empty DeepSeek key."""
         if self._cloud_client is not None:
             return True
         return bool(self.settings.deepseek_api_key)
@@ -420,7 +468,9 @@ class KBService:
 
         云端生成优先用注入的 _cloud_client（若非 None），否则 self.llm.chat(prefer="cloud")。
         返回 (answer, llm_used)。
-        """
+        English: COMPLEX-with-cloud path: compress context locally → generate in cloud; fall back to local
+        answering on cloud failure. Cloud generation prefers the injected _cloud_client (if not None),
+        otherwise self.llm.chat(prefer="cloud"). Returns (answer, llm_used)."""
         compress_messages = [
             {"role": "system", "content": RAG_SYSTEM_PROMPT},
             {"role": "user",
@@ -442,7 +492,9 @@ class KBService:
 
     def _cache_lookup(self, qvec: list[float]) -> dict | None:
         """缓存查找：与各条目问题向量余弦最大值 ≥ cache_sim_threshold 即命中；
-        命中提升 LRU 新鲜度并返回该条目。"""
+        命中提升 LRU 新鲜度并返回该条目。
+        English: Cache lookup: a hit occurs when the max cosine between the question vector and a cached
+        entry ≥ cache_sim_threshold; on a hit refresh LRU recency and return that entry."""
         best_key: str | None = None
         best_sim = -1.0
         for key, entry in self._cache.items():
@@ -456,7 +508,8 @@ class KBService:
 
     def _cache_put(self, question: str, qvec: list[float], answer: str,
                    sources: list[dict], llm_used: str) -> None:
-        """写入缓存条目（问题向量/答案/来源/后端）；超容量淘汰最旧（LRU）。"""
+        """写入缓存条目（问题向量/答案/来源/后端）；超容量淘汰最旧（LRU）。
+        English: Write a cache entry (question vector / answer / sources / backend); evict the oldest on overflow (LRU)."""
         self._cache[question] = {"question_vec": qvec, "answer": answer,
                                  "sources": sources, "llm": llm_used}
         self._cache.move_to_end(question)
@@ -465,7 +518,9 @@ class KBService:
 
     # ---- 上下文与消息拼装（N10 逻辑，路由路径复用）----
     def _build_context(self, results: list[dict]) -> str:
-        """逐条累加 content，超出字符预算即截断停止（最后一条截到剩余预算）。"""
+        """逐条累加 content，超出字符预算即截断停止（最后一条截到剩余预算）。
+        English: Accumulate content item by item; truncate and stop once the char budget is exceeded (the last
+        item is cut to the remaining budget)."""
         budget = self.settings.context_token_limit * 2
         parts: list[str] = []
         used = 0
@@ -482,7 +537,8 @@ class KBService:
 
     @staticmethod
     def _build_messages(context: str, question: str) -> list[dict]:
-        """护栏 prompt：system 强约束 + user 参考文档与问题。"""
+        """护栏 prompt：system 强约束 + user 参考文档与问题。
+        English: Guarded prompt: a strongly constrained system + user reference docs and question."""
         return [
             {"role": "system", "content": RAG_SYSTEM_PROMPT},
             {"role": "user",

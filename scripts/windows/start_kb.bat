@@ -1,7 +1,9 @@
 @echo off
 REM ============================================================
 REM  kb one-click start: serve in BACKGROUND with NO window.
-REM  Usage    : double-click this bat, or run from cmd
+REM  Use: double-click, or run from repo root:
+REM     scripts\windows\start_kb.bat
+REM  (script cd's up two levels to resolve repo root paths)
 REM  Logs     : logs\kb_serve.log / logs\kb_serve.log.err
 REM  PID file : kb.pid  (used by stop_kb.bat)
 REM  Stop     : run stop_kb.bat
@@ -13,7 +15,7 @@ REM     environment variables (SET), so there is NO nested quoting -
 REM     the root cause of the old VBS/Start-Job failures.
 REM ============================================================
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
 
 REM --- locate venv: prefer .venv, fallback venv ---
 set "PYW="
