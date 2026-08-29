@@ -36,7 +36,9 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 - **隐私护栏**：敏感 namespace 强制本地回答不出网；`/ask` 智能路由（本地优先，难题可选云端）
 - **断网可用**：模型与数据全部落本地，无网络时存取与检索功能完整
 
-## 快速开始（Windows PowerShell）
+## 快速开始（Windows / Linux / macOS）
+
+**Windows PowerShell：**
 
 ```powershell
 # 1. 创建并激活虚拟环境
@@ -50,6 +52,27 @@ pip install -r requirements.txt
 python -m kb serve
 ```
 
+**Linux / macOS：**
+
+```bash
+# 1. 创建并激活虚拟环境
+python3 -m venv venv
+source venv/bin/activate
+
+# 2. 安装依赖
+pip install -r requirements.txt
+
+# 3. 启动服务
+python -m kb serve
+```
+
+> 重要：`kb` 命令只装在虚拟环境内。**每个新终端都要先激活虚拟环境**
+> （Windows `.\venv\Scripts\Activate.ps1`，Linux/macOS `source venv/bin/activate`），
+> 否则会提示 `kb：未找到命令`。改用 `python -m kb <子命令>` 可绕过激活。
+>
+> 快速安装备选（免虚拟环境，Python 3.10+）：`pip install --user -r requirements.txt` 后
+> 用 `python -m kb serve` 运行，但建议优先使用 venv 隔离依赖。
+
 启动后健康检查：
 
 ```powershell
@@ -58,6 +81,17 @@ curl http://127.0.0.1:8000/api/v1/healthz
 
 > 首次启动会加载本地嵌入模型（默认 BAAI/bge-m3，约 2GB，需提前下载缓存）；
 > 未配置 LLM 时服务照常启动，`/ask` 返回 503 与配置指引。
+
+### 常见问题：嵌入模型下载失败
+
+- **中国大陆直连 `huggingface.co` 会超时**。设置 HF 镜像后重启即可：
+  ```bash
+  export HF_ENDPOINT=https://hf-mirror.com   # 或写入 ~/.bashrc 永久生效
+  python -m kb serve
+  ```
+  模型会自动从镜像下载并缓存到 `~/.cache/huggingface/hub/`，之后断网也能离线加载。
+- **模型已在本机缓存，但无外网**：`kb` 采用离线优先（先命中本地缓存，失败才联网），
+  只要缓存目录完整即可完全离线运行。
 
 ## MCP 挂载
 

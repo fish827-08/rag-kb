@@ -29,7 +29,9 @@ to unlock `/ask` (RAG question answering).
 - **Privacy guardrails** — sensitive namespaces are answered strictly locally;
   `/ask` routes local-first with optional cloud fallback (opt-in)
 
-## Quick Start (Windows PowerShell)
+## Quick Start (Windows / Linux / macOS)
+
+**Windows PowerShell:**
 
 ```powershell
 # 1. Create and activate a virtual environment
@@ -43,6 +45,28 @@ pip install -r requirements.txt
 python -m kb serve
 ```
 
+**Linux / macOS:**
+
+```bash
+# 1. Create and activate a virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Start the service
+python -m kb serve
+```
+
+> Important: the `kb` command only lives inside the virtual environment —
+> **activate it in every new terminal** (Windows `.\venv\Scripts\Activate.ps1`,
+> Linux/macOS `source venv/bin/activate`), otherwise you'll get `kb: command not found`.
+> Alternatively, run `python -m kb <subcommand>` without activating.
+>
+> No-venv alternative (Python 3.10+): `pip install --user -r requirements.txt`, then
+> `python -m kb serve`. A virtual environment is still recommended to isolate deps.
+
 Health check:
 
 ```powershell
@@ -52,6 +76,19 @@ curl http://127.0.0.1:8000/api/v1/healthz
 > First startup lazily loads the embedding model (default `BAAI/bge-m3`, ~2 GB —
 > download it beforehand). Without an LLM configured, the service still starts
 > normally; `/ask` returns 503 with setup instructions.
+
+### FAQ: embedding model download fails
+
+- **Direct `huggingface.co` access times out from mainland China.** Set the HF mirror
+  and restart:
+  ```bash
+  export HF_ENDPOINT=https://hf-mirror.com   # or append to ~/.bashrc to persist
+  python -m kb serve
+  ```
+  The model downloads from the mirror and is cached to `~/.cache/huggingface/hub/`,
+  after which it loads fully offline.
+- **Model already cached locally but no internet:** kb is offline-first (local cache
+  first, network only as a fallback) — with a complete cache it runs fully offline.
 
 ## MCP Integration
 
