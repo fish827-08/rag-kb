@@ -135,3 +135,29 @@ worker 挂载循环:
 | 挂载/心跳高频写库 | 心跳 60s 一次，PATCH 单条记录 |
 | 主题链误判 | 主题非空校验；不同主题即重置链 |
 | 与现有测试冲突 | conftest 仅增 mount patch；registry 不改（零回归） |
+
+## 12. 真机验证结论（2026-08-29，B5-5 人工门禁）
+
+### 验证结果
+
+**状态管理层（mount.py 6 命令 + 心跳 + TTL + streak + 失联检测）：全部通过。**
+- mount/heartbeat/unmount/mount-status/mount-claim/mount-idle/mount-check 七条命令真机跑通
+- 连续相关 streak 累加（同主题）与重置（不同主题）行为正确
+- streak≥5 时输出上下文重置警告
+- 失联检测阈值逻辑正确（300s 无失联 / 1s 阈值检测到）
+- 退出挂载后心跳/领卡均报错，状态机闭合
+
+**自动循环层（AI 客户端自主挂载常驻）：验证未通过，架构性限制。**
+
+### 核心发现
+
+AI 客户端（TraeWork / Claude Code / Cursor / 豆包等）均为**请求-响应模式**：AI 执行完一轮回复后即结束，不会自主发起下一轮循环。prompt 中"进入循环：查卡→有卡干活→无卡 heartbeat+sleep 60s→回到查卡"的指令，AI 只会执行一轮（查卡→领卡→干活→回写→转 idle），转 idle 后回复"已转空闲监听"即停止，不会继续 heartbeat 和查卡。
+
+子协调者同理：mount 后看一眼任务板无活，回复"已挂载待命"即结束，不会持续每 60 秒轮询。
+
+### 结论与后续
+
+- **mount.py 状态管理保留**：作为机械臂脚本（coordinator_loop.py / 未来的 worker_loop.py）的状态后端，价值成立
+- **AI 自主循环不成立**：worker-prompt.md / coordinator-prompt.md 中的"挂载循环"协议在标准 AI 客户端下无法自动持续，需改为"外部脚本驱动循环 + AI 单轮执行"模式
+- **B 线冻结**：本结论记录后不再投入开发；若未来重启，方向是写 worker_loop.py 外部脚本（类似 coordinator_loop.py）做机械循环，AI 只负责单卡智能执行
+- **跨目录设想**：原设想"worker 在任意工作目录运行、通过 kb RAG 库获取任务与协议"在 HTTP 层面可行（board.py 纯 HTTP 客户端），但循环驱动仍需外部脚本，AI 自身无法常驻

@@ -67,7 +67,7 @@
 | B2 反馈闭环 | FBK 卡三类型铁律 + 动态配额 + 超限仲裁 + comm:feedback 归档（协议 v1.4；FBK-0001~0006 六次实战） | ✅ 2026-08-26 |
 | 调度监测架构 | DispatchAgent 四规则检测 + comm:dispatch 播报 + LLM 解耦降级 + 协调者循环常驻自动核验（协议 v1.5） | ✅ 2026-08-26 |
 | B3 成本管控 | 协议 v1.6 §14 + b3.py（动态配额/rounds/summary 四标签）+ relation 关联窗口 + 中断恢复 + watch 轮次列 + 轮次告警（5/6，模型分级待拆） | 🚧 2026-08-27 |
-| B5 挂载常驻 | mount.py 挂载状态模块(6 CLI) + 挂载循环协议 + 子/父协调者分层 + 机械臂心跳监测（独立分支 `feature/orchestra-mount`，B5-0~B5-4 已交付） | 🚧 2026-08-28 |
+| B5 挂载常驻 | mount.py 6 CLI + 心跳/TTL/streak/失联检测（B5-0~B5-4 已交付，真机验证通过）；**AI 自主循环未通过**（AI 客户端请求-响应模式无法自主轮询，需外部脚本驱动）；结论见设计文档 §12 | ✅ 2026-08-29 验证收口 |
 
 - 测试：**240 项全绿**（`orchestra/tests/`，含 relation 15 + b3 22 + client auth 7 + mount 30 + coordinator_loop 失联检测 3 等；B5 挂载常驻在独立分支 `feature/orchestra-mount`）
 - 任务板：TASK-0001~0065 共 65 卡（63 verified；0056/0063 重复卡作废记录）
