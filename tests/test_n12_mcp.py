@@ -19,13 +19,13 @@ def test_八个工具函数全部注册(msvc):
 
 def test_记忆工具链(msvc):
     from kb.mcp import write_memory, read_memory, update_memory, delete_memory, search_memory
-    r = write_memory("MCP写入的记忆", agent_id="tester")
+    r = write_memory("MCP写入的记忆")  # v2：无 agent_id 入参
     assert "id" in r
-    assert read_memory(r["id"], agent_id="tester")["content"] == "MCP写入的记忆"
-    update_memory(r["id"], "MCP更新的记忆", agent_id="tester")
-    hits = search_memory("MCP更新", agent_id="tester")
+    assert read_memory(r["id"])["content"] == "MCP写入的记忆"
+    update_memory(r["id"], "MCP更新的记忆")
+    hits = search_memory("MCP更新")
     assert hits and hits[0]["id"] == r["id"]
-    assert delete_memory(r["id"], agent_id="tester")["ok"] is True
+    assert delete_memory(r["id"])["ok"] is True
 
 
 def test_未就绪工具(msvc):
@@ -33,8 +33,8 @@ def test_未就绪工具(msvc):
     # add_document 已于 N13 接通（计划 L1100："N13 前返回 NOT_READY"）：
     # 不存在的文件返回 FILE_NOT_FOUND；add_webpage 已于 N14 接通
     # （计划 L1101："N14 前返回 NOT_READY"）：不可达 URL 返回 WEB_FETCH_FAILED
-    assert add_document("x.pdf", agent_id="tester")["error"] == "FILE_NOT_FOUND"
-    assert add_webpage("http://x", agent_id="tester")["error"] == "WEB_FETCH_FAILED"
+    assert add_document("x.pdf")["error"] == "FILE_NOT_FOUND"
+    assert add_webpage("http://x")["error"] == "WEB_FETCH_FAILED"
 
 
 def test_应用挂载冒烟(env_isolated):

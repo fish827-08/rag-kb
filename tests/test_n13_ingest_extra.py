@@ -86,15 +86,14 @@ def test_MCP_add_document接通(env_isolated):
     create_mcp_server(svc)
     f = env_isolated / "mcp.txt"
     f.write_text("第三章：MCP 文档导入通道。" * 20, encoding="utf-8")
-    r = add_document(str(f), agent_id="tester")
+    r = add_document(str(f))  # v2：无 agent_id 入参
     assert r["source"] == "mcp.txt" and r["chunks"] >= 1
     assert svc.search("MCP 文档导入", mode="keyword")
     # 错误路径：文件不存在 / 格式不支持
-    assert add_document(str(env_isolated / "none.txt"),
-                        agent_id="tester")["error"] == "FILE_NOT_FOUND"
+    assert add_document(str(env_isolated / "none.txt"))["error"] == "FILE_NOT_FOUND"
     exe = env_isolated / "z.exe"
     exe.write_bytes(b"MZ...")
-    assert add_document(str(exe), agent_id="tester")["error"] == "UNSUPPORTED_FORMAT"
+    assert add_document(str(exe))["error"] == "UNSUPPORTED_FORMAT"
 
 
 def test_空文档返回0块(env_isolated):

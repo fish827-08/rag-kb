@@ -246,14 +246,15 @@ class KBService:
                    project: str | None = None) -> Record:
         """写入一条记忆短文本并嵌入。
 
-        A 节点：记录归属 agent_id（默认 default），并写存取审计（write）。
+        v2（2026-08-30）：隔离键 = (client, project)；agent_id 仅作兼容冗余
+        （Record.agent_id := project 或 "default"，供旧展示层，不参与隔离）。
         N22a/TASK-0069：dedup_enabled 时先做语义去重检查，命中则抛 DuplicateError
         （api 层捕获返回 409）；关闭时零行为变化。
-        English: Write a memory short text and embed it. A-node: the record is owned by
-        agent_id (default "default") and an access-audit entry (write) is emitted.
-        N22a/TASK-0069: when dedup_enabled, run a semantic dedup check first and raise
-        DuplicateError on a hit (captured by the api layer as 409); zero behavior change
-        when disabled."""
+        English: Write a memory short text and embed it. v2: isolation key = (client, project);
+        agent_id is kept only as a compatibility redundancy (Record.agent_id := project or
+        "default"), not used for isolation. N22a: when dedup_enabled, run a semantic dedup
+        check first and raise DuplicateError on a hit (mapped to 409 by the api layer);
+        zero behavior change when disabled."""
         from kb.governance import DuplicateError, check_duplicate
         if self.settings.dedup_enabled:
             existing_id, similarity = check_duplicate(
@@ -268,8 +269,11 @@ class KBService:
                         {"similarity": similarity, "duplicate_of": existing_id},
                         namespace=namespace)
                 raise DuplicateError(existing_id, similarity)
+        # v2：agent_id 冗余 = project 或 default（不再由调用方指定身份）
+        project = project or ""
         record = Record(content=content, tags=tags or [], source=source,
-                        namespace=namespace, agent_id=agent_id, client=client)
+                        namespace=namespace, agent_id=project or "default",
+                        client=client, project=project)
         vec = self.embedder.embed_texts([content])[0]
         self.store.add([record], [vec])
         self.bm25.add(record)
@@ -285,15 +289,16 @@ class KBService:
                    agent_id: str = "default",
                    client: str = "default",
                    project: str | None = None) -> Record | None:
-        """读取单条记忆；A 节点：memory 类型仅归属者本人可读（数据不出库，
-        非归属按 None 处理，调用方转 NOT_FOUND/FORBIDDEN）。
-        English: Read a single memory; A-node: memory records are readable only by their
-        owner agent (looked up in the store; non-owners get None → NOT_FOUND/FORBIDDEN)."""
+        """读取单条记忆；v2：memory 类型仅 (client, project) 归属者可读
+        （数据不出库，非归属按 None 处理，调用方转 NOT_FOUND/FORBIDDEN）。
+        English: Read a single memory; v2: memory records are readable only by the
+        (client, project) owner (looked up in the store; non-owners get None)."""
         record = self.store.get(record_id)
         if record is None:
             return None
-        # 共享知识（doc/web chunk）所有 Agent 可读；个人记忆强制归属校验
-        if record.type == RecordType.MEMORY and record.agent_id != agent_id:
+        # 共享知识（doc/web chunk）所有客户端可见；个人记忆按 (client, project) 校验
+        if record.type == RecordType.MEMORY and (
+                record.client != client or (record.project or "") != (project or "")):
             return None
         self._audit_access("read", agent_id, type=record.type.value,
                            record_id=record_id, content=record.content,
@@ -317,14 +322,15 @@ class KBService:
                       client: str = "default",
                       project: str | None = None) -> Record | None:
         """更新记忆；content 变更时重新嵌入并更新 updated_at。
-        A 节点：memory 类型仅归属者本人可更新，非归属返回 None（FORBIDDEN）。
+        v2：memory 类型仅 (client, project) 归属者可更新，非归属返回 None（FORBIDDEN）。
         English: Update a memory; re-embed and refresh updated_at when content changes.
-        A-node: memory records can only be updated by their owner; non-owners get None."""
+        v2: memory records can only be updated by their (client, project) owner."""
         from datetime import datetime
         record = self.store.get(record_id)
         if record is None:
             return None
-        if record.type == RecordType.MEMORY and record.agent_id != agent_id:
+        if record.type == RecordType.MEMORY and (
+                record.client != client or (record.project or "") != (project or "")):
             return None
         if content is not None:
             record.content = content
@@ -351,13 +357,14 @@ class KBService:
                       client: str = "default",
                       project: str | None = None) -> bool:
         """删除记忆；不存在返回 False。
-        A 节点：memory 类型仅归属者本人可删，非归属返回 False（FORBIDDEN）。
+        v2：memory 类型仅 (client, project) 归属者可删，非归属返回 False（FORBIDDEN）。
         English: Delete a memory; return False if it does not exist.
-        A-node: memory records can only be deleted by their owner; non-owners get False."""
+        v2: memory records can only be deleted by their (client, project) owner."""
         record = self.store.get(record_id)
         if record is None:
             return False
-        if record.type == RecordType.MEMORY and record.agent_id != agent_id:
+        if record.type == RecordType.MEMORY and (
+                record.client != client or (record.project or "") != (project or "")):
             return False
         self.store.delete([record_id])
         self.bm25.remove(record_id)
@@ -494,15 +501,20 @@ class KBService:
             # 审计失败不阻塞主流程（audit.py 内部已兜底，这里再兜一层）
             pass
 
-    def query_access_audit(self, agent: str, action: str | None = None,
+    def query_access_audit(self, client: str | None = None,
+                           project: str | None = None,
+                           agent: str | None = None,
+                           action: str | None = None,
                            days: int | None = None,
                            limit: int = 100) -> list[dict]:
-        """用户查询 Agent 存取审计（A 节点 spec 2.5）：读 log_dir/agent-audit/ 下
-        该 Agent（及任意客户端/项目）的分文件 JSON 行——身份由文件名承载，解析补回
-        client/agent（行内不再重复记录）。可选 action/days/limit，倒序返回最新在前。
-        English: Query the Agent access audit: reads the per-agent files under log_dir/agent-audit/,
-        parses identity (client/agent) back from the file name, filters by agent, optionally by
-        action/days/limit, newest first."""
+        """用户查询存取审计（v2 spec 2.5）：读 log_dir/agent-audit/ 下匹配
+        (client, project) 的分文件 JSON 行——身份由文件名承载，解析补回（行内不重复记录）。
+        client/project 可空（空=全部）；agent 保留为兼容参数（旧三段式文件名回溯）。
+        可选 action/days/limit，倒序返回最新在前。
+        English: Query the access audit (v2 spec 2.5): reads the per-(client, project) files under
+        log_dir/agent-audit/, parsing identity (client/project) back from the file name. client/project
+        may be empty (empty = all); agent is kept for backward compatibility with old three-segment names.
+        Optional action/days/limit filtering, newest first."""
         import json as _json
         from datetime import datetime as _dt, timedelta, timezone
         from kb.audit import parse_agent_file_name
@@ -518,8 +530,13 @@ class KBService:
                 if not f.is_file():
                     continue
                 ident = parse_agent_file_name(f.name)
-                if ident["agent"] != agent:
-                    continue  # 任务名不匹配，跳过整个文件
+                # v2：按 (client, project) 匹配；旧三段式文件名 agent 段仅作兼容回溯
+                if client and ident["client"] != client:
+                    continue
+                if project and ident["project"] != (project or "default"):
+                    continue
+                if agent and ident.get("agent") and ident["agent"] != agent:
+                    continue
                 client_c = ident["client"]
                 project_c = ident.get("project") or ""
                 with open(f, encoding="utf-8-sig") as fh:
@@ -541,10 +558,10 @@ class KBService:
                             except ValueError:
                                 pass
                         # 身份由文件名补回（行内不重复记录）
-                        rec["agent_id"] = agent
                         rec["client"] = client_c
-                        if project_c:
-                            rec["project"] = project_c
+                        rec["project"] = project_c
+                        if ident.get("agent"):
+                            rec["agent_id"] = ident["agent"]
                         items.append(rec)
         except OSError:
             return []
@@ -556,14 +573,14 @@ class KBService:
                agent_id: str = "default",
                client: str = "default",
                project: str | None = None) -> list[dict]:
-        """混合检索（A 节点：按 agent_id 强制隔离 memory，doc/web 共享）。
-        English: Hybrid retrieval (A-node: memory isolated by agent_id; doc/web shared)."""
+        """混合检索（v2：按 (client, project) 隔离 memory，doc/web 共享）。
+        English: Hybrid retrieval (v2: memory isolated by (client, project); doc/web shared)."""
         results = self.retriever.search(
             query, top_k=top_k, mode=mode, type=type, tag=tag,
-            agent_id=agent_id)
+            agent_id=agent_id, client=client, project=project or "")
         self._audit_access("search", agent_id, query=query,
                            hits=len(results), namespace="default",
-                           client=client, project=project)
+                           client=client, project=project or "")
         return results
 
     def stats(self) -> dict:

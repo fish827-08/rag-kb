@@ -17,12 +17,15 @@ class RecordType(str, Enum):
 class Record(BaseModel):
     """记忆条目与文档 chunk 的统一模型。"""
 
-    id: str = Field(default_factory=lambda: uuid4().hex)
+    id: str = Field(default_factory=lambda: uuid4().hex)   # 主键：服务端生成，AI 不参与
     content: str
     type: RecordType = RecordType.MEMORY
     namespace: str = "default"
-    agent_id: str = "default"          # 写入方 Agent 身份（推荐用任务名，如 TASK-xxx / worker-1）；旧记录缺失视为 "default"
-    client: str = "default"            # 来源客户端（TraeWork / Claude Code / Cursor / CLI / HTTP）；旧记录缺失视为 "default"
+    # v2（2026-08-30）：隔离键 = (client, project)，agent_id 降级为兼容冗余
+    #（新写入时=project 或 "default"，仅供旧查询层展示，不参与隔离/审计键）
+    agent_id: str = "default"
+    client: str = "default"            # 来源客户端（框架自动识别：MCP clientInfo / REST HTTP / CLI）
+    project: str = ""                  # 项目/任务归属（环境承载；空=该客户端默认桶）
     source: str | None = None
     tags: list[str] = Field(default_factory=list)
     importance: float = 0.5
@@ -40,6 +43,7 @@ class Record(BaseModel):
             "namespace": self.namespace,
             "agent_id": self.agent_id,
             "client": self.client,
+            "project": self.project,
             "source": self.source,
             "tags": ",".join(self.tags),
             "importance": self.importance,
@@ -52,7 +56,8 @@ class Record(BaseModel):
     @classmethod
     def from_chroma(cls, record_id: str, document: str, metadata: dict) -> "Record":
         """从 Chroma 的 id/document/metadata 还原；tags 按逗号拆分。
-        旧记录缺失 access_count/last_accessed 时用 .get 默认值 0/""（向后兼容，无需迁移）。"""
+        旧记录缺失 access_count/last_accessed 时用 .get 默认值 0/""（向后兼容，无需迁移）；
+        project 缺失回落 ""（默认桶），agent_id/client 缺失回落 "default"。"""
         return cls(
             id=record_id,
             content=document,
@@ -60,6 +65,7 @@ class Record(BaseModel):
             namespace=metadata.get("namespace", "default"),
             agent_id=metadata.get("agent_id", "default"),
             client=metadata.get("client", "default"),
+            project=metadata.get("project", ""),
             source=metadata.get("source"),
             tags=[t for t in (metadata.get("tags", "") or "").split(",") if t],
             importance=metadata.get("importance", 0.5),
@@ -71,13 +77,16 @@ class Record(BaseModel):
 
 
 def decay_factor(last_accessed: str, created_at: str, access_count: int,
-                 lambda_: float = 0.02, gamma: float = 0.3) -> float:
+                 lambda_: float = 0.02, gamma: float = 0.3,
+                 now: datetime | None = None) -> float:
     """访问频率衰减因子（A3 spec §3.1，N21a 纯函数）。
 
     公式：decay_factor = exp(-λ * days_since_last_accessed) * (1 + γ * log₂(1 + access_count))
     - last_accessed 为空时用 created_at 替代（从未命中=创建时间）
     - 无效日期或无时间参考时返回 1.0（不衰减，容错）
     - 纯函数无副作用，N21b 负责将其集成进检索评分管道
+    - now 可注入（2026-08-30 v2）：时钟注入验证——测试可拨到第 N 天验证衰减机理，
+      生产默认 datetime.now()；遗忘机制验证见 USER_GUIDE 对应章节
     """
     ref = last_accessed if last_accessed else created_at
     if not ref:
@@ -86,7 +95,8 @@ def decay_factor(last_accessed: str, created_at: str, access_count: int,
         ref_dt = datetime.fromisoformat(ref)
     except (ValueError, TypeError):
         return 1.0
-    days = (datetime.now() - ref_dt).total_seconds() / 86400
+    now = now or datetime.now()
+    days = (now - ref_dt).total_seconds() / 86400
     if days < 0:
         days = 0.0  # 未来时间不衰减
     return math.exp(-lambda_ * days) * (1 + gamma * math.log2(1 + access_count))
