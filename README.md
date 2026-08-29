@@ -3,6 +3,7 @@
 <!-- mcp-name: io.github.fish827-08/kb-memory -->
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![Glama MCP score](https://glama.ai/mcp/servers/fish827-08/rag-kb/badges/score.svg)](https://glama.ai/mcp/servers/fish827-08/rag-kb)
 [English](README_EN.md) | 中文
 
 本仓库含两个子系统（[ROADMAP](ROADMAP.md)）：
