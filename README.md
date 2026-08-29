@@ -30,6 +30,8 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
   - 可选精排：`KB_RERANK_ENABLED=true` 启用 bge-reranker-v2-m3 交叉重排（默认关）
   - 可选三路：`KB_SPARSE_ENABLED=true` 启用 BGE-M3 稀疏向量第三路（默认关，失败自动降级双路）
 - **记忆管理**：写入 / 更新 / 删除 / 列表，支持 namespace、tags、type 过滤
+- **多 Agent 身份隔离**：所有存取带 `agent_id`（推荐用任务名，如 TASK-0076）——个人记忆只对归属 Agent 可见（读/改/删他人被拒），文档/网页共享知识全 Agent 可见
+- **存取审计**：每次写/读/改/删/检索/问答记 JSON 到 `logs/agent-audit/<客户端>__<项目>__<任务名>.log`（按 Agent 分文件）；用户可查：REST `GET /api/v1/audit?agent=<任务名>` 或 CLI `kb audit <任务名>`
 - **知识入库**：本地文档（txt/md/pdf/docx 等）上传或路径导入，网页正文抓取入库
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
 - **CLI 工具**：`kb add/search/stats/ask/eval/forget/dedup`——终端直接完成写入、检索、统计与 RAG 问答
@@ -81,6 +83,47 @@ curl http://127.0.0.1:8000/api/v1/healthz
 
 > 首次启动会加载本地嵌入模型（默认 BAAI/bge-m3，约 2GB，需提前下载缓存）；
 > 未配置 LLM 时服务照常启动，`/ask` 返回 503 与配置指引。
+>
+> **LLM 默认关闭（`KB_LLM_MODE=off`）**：服务启动不会探测/加载/调用任何大模型，
+> 零显存、零成本、纯离线；记忆写入、文档入库、混合检索完整可用。
+> 需要 RAG 问答（`/ask`）时再按下面方式配置本地或云端 LLM。
+
+### 配置 LLM（可选，`/ask` 问答需要）
+
+`KB_LLM_MODE` 默认 `off`（不加载不调用）；四个档位：
+
+| 档位 | 行为 |
+|---|---|
+| `off`（默认） | 完全不加载/不调用 LLM；记忆存取与检索完整可用 |
+| `local` | 仅本地 Ollama（完全离线，隐私零出网） |
+| `auto` | **本地优先，云端降级**：本地 Ollama 可用走本地，无本地但有云端 Key 走云端 |
+| `cloud` | 全部走云端（本地仅做压缩与隐私隔离） |
+
+**本地 LLM（Ollama）：**
+
+```powershell
+# 1. 安装并启动 Ollama（Windows 从开始菜单/托盘启动，不要从 AI 沙箱终端拉起）
+# 2. 拉取一个适合你电脑的模型（按显存/内存选择，如 qwen3:4b 约 3.2GB、
+#    qwen3:1.7b 约 1.8GB；国内可用魔搭加速，拉完 ollama cp 改成短名）
+ollama pull <你的模型名>
+# 3. 在 .env 配置后重启服务：
+#    KB_LLM_MODE=local            # 仅本地
+#    KB_LLM_MODEL=<你的模型名>    # 以 `ollama list` 输出的名称为准
+#    KB_OLLAMA_BASE_URL=http://localhost:11434
+```
+
+**云端 LLM（任意 OpenAI 兼容服务商，不绑定 DeepSeek）：**
+DeepSeek / OpenAI / 通义千问 / 硅基流动 / Moonshot 等均可，通用三键：
+
+```ini
+# .env
+KB_LLM_MODE=auto                 # 本地优先、云端降级；或 cloud 全云端
+KB_LLM_API_KEY=sk-xxx            # 服务商 API Key
+KB_LLM_BASE_URL=https://api.deepseek.com   # 换成你所用服务商的 OpenAI 兼容端点
+KB_LLM_CLOUD_MODEL=deepseek-v4-flash       # 云端模型名
+```
+
+验证：`GET /api/v1/healthz` 的 `llm` 字段——`local`/`cloud` 表示 LLM 已就绪，`disabled` 表示未启用。
 
 ### 常见问题：嵌入模型下载失败
 
@@ -92,6 +135,41 @@ curl http://127.0.0.1:8000/api/v1/healthz
   模型会自动从镜像下载并缓存到 `~/.cache/huggingface/hub/`，之后断网也能离线加载。
 - **模型已在本机缓存，但无外网**：`kb` 采用离线优先（先命中本地缓存，失败才联网），
   只要缓存目录完整即可完全离线运行。
+
+## 让 Agent 接入 kb（客户端无关）
+
+把 kb 的接入规约交给 AI 客户端（TraeWork / Claude Code / Cursor / 自建 Agent），
+让它们知道怎么读写记忆、按什么身份规约、怎么查审计。**两种方式，任选其一**：
+
+1. **skill（推荐，能自动触发）——可选的独立步骤**：仓库内
+   [`skills/kb-memory/SKILL.md`](skills/kb-memory/SKILL.md)
+   是客户端无关的 Anthropic 开格式 skill。把它安装到你所用客户端的用户级 skills 目录后，
+   该客户端的任何项目会话都会在读写记忆/RAG 问答/审计查询时**自动识别并触发**。
+   安装 = 把 `skills/kb-memory` 目录复制过去即可（有脚本，也可手动复制，无需任何依赖）；
+   更新（重新覆盖）、卸载、以及装好后的使用说明见
+   [`scripts/README.md`](scripts/README.md)。
+
+   > **不装也不影响 kb 服务**：skill 只是给 AI 客户端的「提示词包装」，与服务的安装、
+   > 启动无关——跳过这一步，服务照常运行，你随时可用方法 2 的纯文本提示词接入；
+   > skill 安装是**一次性、按需、独立执行**的，不会随 `kb serve` 自动触发，
+   > 也不会写入你的任何客户端目录以外的文件。
+2. **纯文本提示词（兜底，任何客户端通用）**：整段复制
+   [`docs/AGENT_PROMPT.md`](docs/AGENT_PROMPT.md) 粘贴给 Agent 即可，不依赖 skill 机制。
+
+> **`.trae-cn/skills` / `.claude/skills` / `.cursor/skills` 是任何客户端都认的「标准」吗？——不是。**
+> 这些只是各家客户端各自的**用户级约定目录**：`SKILL.md` 本身是统一的 Anthropic 开格式，
+> 但「装到哪个目录、能否自动触发」由各客户端自行决定，支持程度不一：
+
+| 客户端 | 用户级 skills 目录 | 自动加载 |
+|---|---|---|
+| TraeWork | `~/.trae-cn/skills/` | 自动发现 |
+| Claude Code | `~/.claude/skills/` | 高版本支持 |
+| Cursor | `~/.cursor/skills/` | 逐步跟进 |
+| 其他 / 自建 Agent | 无统一约定 | 需手动加载或不支持 |
+
+> 不存在「所有客户端都遵循」的统一目录；你的客户端若不支持 skill，**永远有方法 2 兜底**
+> （粘贴 `AGENT_PROMPT.md`，纯文本任何客户端可用）。安装方法、各客户端目录差异与加载机制、
+> 相互引用关系：详细见 [`scripts/README.md`](scripts/README.md)（此处不重复）。
 
 ## MCP 挂载
 
@@ -172,15 +250,15 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask `
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
-| `KB_LLM_MODE` | `auto` | LLM 模式：`local`（仅本地 Ollama）/ `auto`（本地优先，云端降级）/ `cloud` |
+| `KB_LLM_MODE` | `off` | LLM 模式：`off`（默认，不加载/不调用 LLM，零显存零成本）/ `local`（仅本地 Ollama）/ `auto`（本地优先，云端降级）/ `cloud` |
 | `KB_DEVICE` | 空 | 嵌入模型设备：空=自动检测，可显式设 `cpu` / `cuda` |
 | `KB_WATCH_DIR` | `data` | serve 模式监听目录，文件变动自动入库；空串或 `.` = 不启动 |
 | `KB_DATA_DIR` | `kb_data` | 运行数据根目录（ChromaDB、运行时状态等） |
 | `KB_API_HOST` / `KB_API_PORT` | `127.0.0.1` / `8000` | REST 与 MCP 监听地址 |
 | `KB_EMBED_MODEL` | `BAAI/bge-m3` | 嵌入模型 |
-| `KB_LLM_MODEL` | `qwen3:4b` | 本地 Ollama 模型名（以 `ollama list` 为准） |
+| `KB_LLM_MODEL` | 空 | 本地 Ollama 模型名（默认空=不配；配 `KB_LLM_MODE=local/auto` 时须按自己电脑选模型，以 `ollama list` 为准） |
 | `KB_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 端点 |
-| `KB_DEEPSEEK_API_KEY` | 空 | 云端降级 API Key（可选，只填在本机 `.env`） |
+| `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` | 空 | 云端 LLM（可选）：**任意 OpenAI 兼容服务商**（DeepSeek / OpenAI / 通义 / 硅基流动等），仅填在本机 `.env` |
 | `KB_CHUNK_SIZE` / `KB_CHUNK_OVERLAP` | `500` / `100` | 文档切分参数 |
 | `KB_SENSITIVE_NAMESPACES` | 空 | 逗号分隔的敏感 namespace，命中强制本地回答不出网 |
 | `KB_API_KEY` | 空 | 空=不鉴权（本地回环零摩擦）；非空=启用 Bearer/X-API-Key 鉴权；orchestra 客户端自动带 `X-API-Key` 头 |
@@ -190,10 +268,11 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask `
 ## CLI 速查（无需启动服务）
 
 ```powershell
-python -m kb add "记忆内容" --tags 偏好      # 写入
-python -m kb search "查询词"                 # 混合检索
+python -m kb add "记忆内容" --tags 偏好 --agent TASK-0076 --client TraeWork   # 写入（归属任务名）
+python -m kb search "查询词" --agent TASK-0076              # 混合检索（只回自己 agent 的 memory）
 python -m kb stats                            # 统计：类型分布 / 访问热度 / 陈旧分布
-python -m kb ask "问题"                       # 终端 RAG 问答（LLM 不可用时输出检索命中）
+python -m kb ask "问题" --agent TASK-0076      # 终端 RAG 问答（LLM 不可用时输出检索命中）
+python -m kb audit TASK-0076 --days 7          # 查某 Agent 在哪个客户端存过/读过什么
 python -m kb eval --file tests/eval_zh_50.jsonl   # 检索质量评测（Recall@1/@5 + MRR）
 python -m kb forget --stale --days 90         # 清理超期未命中记忆
 python -m kb dedup --threshold 0.92           # 语义去重
