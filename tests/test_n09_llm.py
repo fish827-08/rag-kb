@@ -6,7 +6,8 @@ def _client(env_isolated, monkeypatch, ollama_up=True, key=""):
     from kb.config import get_settings
     from kb.llm import LLMClient
     get_settings.cache_clear()
-    monkeypatch.setenv("KB_DEEPSEEK_API_KEY", key)
+    monkeypatch.setenv("KB_LLM_API_KEY", key)
+    monkeypatch.setenv("KB_LLM_MODEL", "test-local-model")   # 默认已空；本 fixture 显式配本地模型名
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/models":
@@ -32,6 +33,7 @@ import json
 
 
 def test_本地可用与护栏参数(env_isolated, monkeypatch):
+    monkeypatch.setenv("KB_LLM_MODE", "auto")   # 显式 auto（默认已改 off）
     c = _client(env_isolated, monkeypatch)
     assert c.status.value == "local"
     assert c.chat([{"role": "user", "content": "hi"}]) == "本地回答"

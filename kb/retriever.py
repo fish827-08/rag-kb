@@ -5,6 +5,7 @@ from datetime import datetime
 
 from kb.bm25 import BM25Index
 from kb.embedder import Embedder
+from kb.models import RecordType
 
 RRF_K = 60
 
@@ -40,13 +41,20 @@ class HybridRetriever:
         self.sparse_index = sparse_index        # N25：稀疏倒排索引（None=无稀疏路）
 
     def search(self, query: str, top_k: int = 5, mode: str = "hybrid",
-               type: str | None = None, tag: str | None = None) -> list[dict]:
+               type: str | None = None, tag: str | None = None,
+               agent_id: str = "default") -> list[dict]:
         """mode: hybrid/vector/keyword；每路取 3*top_k 候选；
         type/tag 过滤在融合后进行（过滤后不足 top_k 属正常）；
-        输出 [{id, content, score, type, source, tags, created_at}]，score 为融合分。
+        agent_id 隔离（A 节点 spec 2.3）：memory 记录仅返回归属该 Agent 的，
+        doc_chunk/web_chunk（共享知识库）不受隔离；
+        输出 [{id, content, score, type, source, tags, created_at, agent_id}]，
+        score 为融合分。
         English: mode: hybrid/vector/keyword; each route takes 3*top_k candidates;
         type/tag filtering happens after fusion (fewer than top_k after filtering is normal);
-        output is [{id, content, score, type, source, tags, created_at}], score being the fused score."""
+        agent_id isolation (A-node spec 2.3): memory records only return those owned by the
+        calling agent, while doc_chunk/web_chunk (shared knowledge base) are not isolated;
+        output is [{id, content, score, type, source, tags, created_at, agent_id}],
+        score being the fused score."""
         candidate = 3 * top_k
         if mode in ("hybrid", "vector"):
             vec = self.embedder.embed_query(query)
@@ -179,6 +187,10 @@ class HybridRetriever:
                 continue
             if tag and tag not in rec.tags:
                 continue
+            # A 节点 agent_id 隔离：个人记忆（memory）只返回归属调用方的；
+            # 共享知识（doc_chunk/web_chunk）对所有 Agent 可见
+            if rec.type == RecordType.MEMORY and rec.agent_id != agent_id:
+                continue
             results.append({
                 "id": rec.id,
                 "content": rec.content,
@@ -187,6 +199,7 @@ class HybridRetriever:
                 "source": rec.source,
                 "tags": rec.tags,
                 "created_at": rec.created_at,
+                "agent_id": rec.agent_id,
             })
         # N21a/TASK-0067：命中记录异步更新 access_count+1 / last_accessed=now
         # （daemon 线程，不阻塞检索返回；increment_access 内部捕获异常记 WARNING）

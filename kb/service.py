@@ -28,6 +28,71 @@ CLASSIFY_PROMPT = "判断问题类型，仅输出 SIMPLE 或 COMPLEX。问题：
 # 云端前置压缩提示（本地 LLM）：保留全部关键事实的要点化压缩
 COMPRESS_PROMPT = "将以下检索内容压缩为要点，保留全部关键事实，500字内输出：\n{context}"
 
+# ---- 身份字段规约（A 节点：MCP/REST 统一校验 agent_id / client / project）----
+import re as _re
+
+# agent_id / project：任务名白名单——字母数字中文、下划线、连字符；1~64 字符。
+# 禁止 default/空等无意义标识；client 额外允许空格与点（如 "Claude Code"）。
+_IDENT_RE = _re.compile(r"^[A-Za-z0-9_\-\u4e00-\u9fff]{1,64}$")
+_CLIENT_RE = _re.compile(r"^[A-Za-z0-9_\-\u4e00-\u9fff.· ]{1,64}$")
+# 显式禁止的占位标识（调用方漏传时常见的默认/占位字串）
+_FORBIDDEN_IDENTS = {"", "default", "unknown", "null", "none", "undefined",
+                     "agent", "agent_id", "你的任务名"}
+
+
+def validate_agent_id(agent_id: str | None, *, required: bool = False) -> str | None:
+    """校验 agent_id（任务名）格式；非法返回错误消息（中文），合法返回 None。
+
+    required=True 时空值/占位符也报错（MCP 通道用）；
+    required=False 时空值视为未提供（REST 向后兼容 default 语义）。
+    规则：1~64 字符，仅字母数字中文、下划线、连字符；禁止 default/unknown 等占位。
+    English: Validate an agent_id (task name) against the whitelist format; returns an error
+    message (Chinese) when invalid, None when OK. With required=True, empty/placeholder values
+    also fail (used on the MCP channel); with required=False, empty means "not provided"."""
+    if agent_id is None:
+        v = ""
+    else:
+        v = str(agent_id).strip()
+    if v in _FORBIDDEN_IDENTS:
+        if required:
+            return ("agent_id 必填且必须是有意义的任务名"
+                    "（如 TASK-0076 / worker-1），不能用 default/unknown 等占位")
+        return None
+    if len(v) > 64 or not _IDENT_RE.match(v):
+        return ("agent_id 格式非法：仅允许字母/数字/中文/下划线/连字符，1~64 字符"
+                f"（当前：{v!r}）")
+    return None
+
+
+def validate_client(client: str | None) -> str | None:
+    """校验 client（来源客户端）格式；空值/占位视为未提供（自动识别）。
+    规则：1~64 字符，字母数字中文、下划线、连字符、空格、点。
+    注意：default 视为"未提供"（客户端不传时服务端自动识别，不强制）。
+    English: Validate a client (source client) name; empty/placeholder means auto-detect.
+    "default" is treated as "not provided" so callers that omit client keep working."""
+    if not client:
+        return None
+    v = str(client).strip()
+    if v in ("", "default", "unknown", "null", "none", "undefined"):
+        return None  # 未提供/占位 → 自动识别
+    if len(v) > 64 or not _CLIENT_RE.match(v):
+        return ("client 格式非法：仅允许字母/数字/中文/下划线/连字符/空格/点，"
+                f"1~64 字符（当前：{v!r}；不传则自动识别）")
+    return None
+
+
+def validate_project(project: str | None) -> str | None:
+    """校验 project（项目名）格式；空值视为未提供。
+    同 agent_id 白名单（字母数字中文、下划线、连字符，1~64）。
+    English: Validate a project name; empty means not provided."""
+    if not project:
+        return None
+    v = str(project).strip()
+    if v in _FORBIDDEN_IDENTS or len(v) > 64 or not _IDENT_RE.match(v):
+        return ("project 格式非法：仅允许字母/数字/中文/下划线/连字符，"
+                f"1~64 字符（当前：{v!r}）")
+    return None
+
 
 class LLMDisabledError(Exception):
     """LLM 不可用（本地与云端均未就绪）；API 层据此转 503 并附配置指引。
@@ -176,14 +241,19 @@ class KBService:
 
     # ---- 记忆 CRUD ----
     def add_memory(self, content: str, tags: list[str] | None = None,
-                   source: str | None = None, namespace: str = "default") -> Record:
+                   source: str | None = None, namespace: str = "default",
+                   agent_id: str = "default", client: str = "default",
+                   project: str | None = None) -> Record:
         """写入一条记忆短文本并嵌入。
 
+        A 节点：记录归属 agent_id（默认 default），并写存取审计（write）。
         N22a/TASK-0069：dedup_enabled 时先做语义去重检查，命中则抛 DuplicateError
         （api 层捕获返回 409）；关闭时零行为变化。
-        English: Write a memory short text and embed it. N22a/TASK-0069: when dedup_enabled, run a semantic
-        dedup check first and raise DuplicateError on a hit (captured by the api layer as 409); zero behavior
-        change when disabled."""
+        English: Write a memory short text and embed it. A-node: the record is owned by
+        agent_id (default "default") and an access-audit entry (write) is emitted.
+        N22a/TASK-0069: when dedup_enabled, run a semantic dedup check first and raise
+        DuplicateError on a hit (captured by the api layer as 409); zero behavior change
+        when disabled."""
         from kb.governance import DuplicateError, check_duplicate
         if self.settings.dedup_enabled:
             existing_id, similarity = check_duplicate(
@@ -199,18 +269,37 @@ class KBService:
                         namespace=namespace)
                 raise DuplicateError(existing_id, similarity)
         record = Record(content=content, tags=tags or [], source=source,
-                        namespace=namespace)
+                        namespace=namespace, agent_id=agent_id, client=client)
         vec = self.embedder.embed_texts([content])[0]
         self.store.add([record], [vec])
         self.bm25.add(record)
         self._persist_bm25()
         self._sparse_add([record])
+        self._audit_access("write", agent_id, type="memory",
+                           record_id=record.id, content=content,
+                           namespace=namespace, client=client,
+                           project=project)
         return record
 
-    def get_memory(self, record_id: str) -> Record | None:
-        """读取单条记忆。
-        English: Read a single memory."""
-        return self.store.get(record_id)
+    def get_memory(self, record_id: str,
+                   agent_id: str = "default",
+                   client: str = "default",
+                   project: str | None = None) -> Record | None:
+        """读取单条记忆；A 节点：memory 类型仅归属者本人可读（数据不出库，
+        非归属按 None 处理，调用方转 NOT_FOUND/FORBIDDEN）。
+        English: Read a single memory; A-node: memory records are readable only by their
+        owner agent (looked up in the store; non-owners get None → NOT_FOUND/FORBIDDEN)."""
+        record = self.store.get(record_id)
+        if record is None:
+            return None
+        # 共享知识（doc/web chunk）所有 Agent 可读；个人记忆强制归属校验
+        if record.type == RecordType.MEMORY and record.agent_id != agent_id:
+            return None
+        self._audit_access("read", agent_id, type=record.type.value,
+                           record_id=record_id, content=record.content,
+                           namespace=record.namespace, client=client,
+                           project=project)
+        return record
 
     def list_memories(self, **filters) -> tuple[list[Record], int]:
         """列表（过滤 + 分页），返回 (记录, 总数)。
@@ -223,12 +312,19 @@ class KBService:
         return self.store.list_records(**filters)
 
     def update_memory(self, record_id: str, content: str | None = None,
-                      tags: list[str] | None = None) -> Record | None:
+                      tags: list[str] | None = None,
+                      agent_id: str = "default",
+                      client: str = "default",
+                      project: str | None = None) -> Record | None:
         """更新记忆；content 变更时重新嵌入并更新 updated_at。
-        English: Update a memory; re-embed and refresh updated_at when content changes."""
+        A 节点：memory 类型仅归属者本人可更新，非归属返回 None（FORBIDDEN）。
+        English: Update a memory; re-embed and refresh updated_at when content changes.
+        A-node: memory records can only be updated by their owner; non-owners get None."""
         from datetime import datetime
         record = self.store.get(record_id)
         if record is None:
+            return None
+        if record.type == RecordType.MEMORY and record.agent_id != agent_id:
             return None
         if content is not None:
             record.content = content
@@ -244,32 +340,52 @@ class KBService:
         self._persist_bm25()
         self._sparse_remove([record_id])
         self._sparse_add([record])
+        self._audit_access("update", agent_id, type=record.type.value,
+                           record_id=record_id, content=record.content,
+                           namespace=record.namespace, client=client,
+                           project=project)
         return record
 
-    def delete_memory(self, record_id: str) -> bool:
+    def delete_memory(self, record_id: str,
+                      agent_id: str = "default",
+                      client: str = "default",
+                      project: str | None = None) -> bool:
         """删除记忆；不存在返回 False。
-        English: Delete a memory; return False if it does not exist."""
+        A 节点：memory 类型仅归属者本人可删，非归属返回 False（FORBIDDEN）。
+        English: Delete a memory; return False if it does not exist.
+        A-node: memory records can only be deleted by their owner; non-owners get False."""
         record = self.store.get(record_id)
         if record is None:
+            return False
+        if record.type == RecordType.MEMORY and record.agent_id != agent_id:
             return False
         self.store.delete([record_id])
         self.bm25.remove(record_id)
         self._persist_bm25()
         self._sparse_remove([record_id])
+        self._audit_access("delete", agent_id, type=record.type.value,
+                           record_id=record_id, namespace=record.namespace,
+                           client=client, project=project)
         return True
 
     # ---- 文档摄取与管理 ----
     def add_document(self, path: str | Path,
-                     source: str | None = None) -> dict:
+                     source: str | None = None,
+                     agent_id: str = "default",
+                     client: str = "default",
+                     project: str | None = None) -> dict:
         """解析本地文档 → 切分 → 每 chunk 一条 doc_chunk Record 入库。
 
         返回 {"source": 文件名, "chunks": 入库块数}；
         source 缺省取文件名，multipart 上传时以上传文件名入库（覆盖临时文件名）。
         空文档切不出 chunk，不入库直接返回 chunks=0。
+        A 节点：doc/web 为共享知识库，记录归属 agent_id 仅用于审计，检索不隔离。
         English: Parse local document → split → store each chunk as a doc_chunk Record.
         Returns {"source": filename, "chunks": count ingested}; source defaults to the file name,
         and on multipart upload the uploaded file name is stored (overriding the temp file name).
-        An empty document yields no chunks and is not ingested, returning chunks=0 directly."""
+        An empty document yields no chunks and is not ingested, returning chunks=0 directly.
+        A-node: doc/web chunks form the shared knowledge base; agent_id is recorded for audit only,
+        not used for retrieval isolation."""
         path = Path(path)
         text = parse_file(path)
         chunks = chunk_text(text, self.settings.chunk_size,
@@ -278,38 +394,51 @@ class KBService:
         if not chunks:
             return {"source": doc_source, "chunks": 0}
         records = [Record(content=c, type=RecordType.DOC_CHUNK,
-                          source=doc_source) for c in chunks]
+                          source=doc_source, agent_id=agent_id, client=client)
+                   for c in chunks]
         vecs = self.embedder.embed_texts([r.content for r in records])
         self.store.add(records, vecs)
         for r in records:
             self.bm25.add(r)
         self._persist_bm25()
         self._sparse_add(records)
+        self._audit_access("ingest", agent_id, type="doc_chunk",
+                           source=doc_source, content=records[0].content,
+                           namespace=records[0].namespace, client=client,
+                           project=project)
         return {"source": doc_source, "chunks": len(records)}
 
-    def add_webpage(self, url: str) -> dict:
+    def add_webpage(self, url: str,
+                    agent_id: str = "default",
+                    client: str = "default",
+                    project: str | None = None) -> dict:
         """抓取网页正文 → 切分 → 每 chunk 一条 web_chunk Record 入库。
 
         返回 {"source": url, "chunks": 入库块数}；抓取/正文提取失败抛
         WebFetchError（API 层转 400 + 原因）。正文切不出 chunk 时不入库，
         直接返回 chunks=0。
+        A 节点：web chunk 属共享知识库，agent_id 仅审计，不隔离。
         English: Fetch webpage body → split → store each chunk as a web_chunk Record.
         Returns {"source": url, "chunks": count}; a fetch/body-extraction failure raises WebFetchError
         (mapped to 400 with reason by the API layer). No chunks are ingested and chunks=0 is returned
-        when the body yields none."""
+        when the body yields none. A-node: web chunks are shared; agent_id is audit-only."""
         text = fetch_webpage(url)
         chunks = chunk_text(text, self.settings.chunk_size,
                             self.settings.chunk_overlap)
         if not chunks:
             return {"source": url, "chunks": 0}
         records = [Record(content=c, type=RecordType.WEB_CHUNK,
-                          source=url) for c in chunks]
+                          source=url, agent_id=agent_id, client=client) for c in chunks]
         vecs = self.embedder.embed_texts([r.content for r in records])
         self.store.add(records, vecs)
         for r in records:
             self.bm25.add(r)
         self._persist_bm25()
         self._sparse_add(records)
+        self._audit_access("ingest", agent_id, type="web_chunk",
+                           source=url, content=records[0].content,
+                           namespace=records[0].namespace, client=client,
+                           project=project)
         return {"source": url, "chunks": len(records)}
 
     def list_documents(self) -> list[dict]:
@@ -341,12 +470,101 @@ class KBService:
         return n
 
     # ---- 检索与统计 ----
+    def _audit_access(self, action: str, agent_id: str, *,
+                      type: str | None = None, record_id: str | None = None,
+                      content: str | None = None, query: str | None = None,
+                      hits: int | None = None, source: str | None = None,
+                      namespace: str = "default",
+                      client: str = "default",
+                      project: str | None = None) -> None:
+        """Agent 存取审计统一入口（A 节点 spec 2.4）：开关关闭零成本跳过；
+        content/query 截断摘要由 audit.py 负责，本方法不阻塞主流程。
+        English: Unified Agent access-audit entry (A-node spec 2.4): skipped when the toggle is off;
+        content/query are snipped by audit.py; never blocks the main flow."""
+        if not getattr(self.settings, "access_audit_enabled", True):
+            return
+        try:
+            from kb.audit import log_access_event
+            log_access_event(
+                agent_id=agent_id, action=action, record_id=record_id,
+                type=type, content=content, query=query, hits=hits,
+                namespace=namespace, source=source, client=client,
+                project=project)
+        except Exception:
+            # 审计失败不阻塞主流程（audit.py 内部已兜底，这里再兜一层）
+            pass
+
+    def query_access_audit(self, agent: str, action: str | None = None,
+                           days: int | None = None,
+                           limit: int = 100) -> list[dict]:
+        """用户查询 Agent 存取审计（A 节点 spec 2.5）：读 log_dir/agent-audit/ 下
+        该 Agent（及任意客户端/项目）的分文件 JSON 行——身份由文件名承载，解析补回
+        client/agent（行内不再重复记录）。可选 action/days/limit，倒序返回最新在前。
+        English: Query the Agent access audit: reads the per-agent files under log_dir/agent-audit/,
+        parses identity (client/agent) back from the file name, filters by agent, optionally by
+        action/days/limit, newest first."""
+        import json as _json
+        from datetime import datetime as _dt, timedelta, timezone
+        from kb.audit import parse_agent_file_name
+        agent_dir = self.settings.log_dir / "agent-audit"
+        if not agent_dir.is_dir():
+            return []
+        items: list[dict] = []
+        cutoff = None
+        if days is not None and days > 0:
+            cutoff = _dt.now(timezone.utc) - timedelta(days=days)
+        try:
+            for f in agent_dir.glob("*__*.log*"):
+                if not f.is_file():
+                    continue
+                ident = parse_agent_file_name(f.name)
+                if ident["agent"] != agent:
+                    continue  # 任务名不匹配，跳过整个文件
+                client_c = ident["client"]
+                project_c = ident.get("project") or ""
+                with open(f, encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            rec = _json.loads(line)
+                        except ValueError:
+                            continue
+                        if action and rec.get("action") != action:
+                            continue
+                        if cutoff is not None:
+                            try:
+                                ts = _dt.fromisoformat(rec.get("timestamp", ""))
+                                if ts < cutoff:
+                                    continue
+                            except ValueError:
+                                pass
+                        # 身份由文件名补回（行内不重复记录）
+                        rec["agent_id"] = agent
+                        rec["client"] = client_c
+                        if project_c:
+                            rec["project"] = project_c
+                        items.append(rec)
+        except OSError:
+            return []
+        items.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+        return items[:limit]
+
     def search(self, query: str, top_k: int = 5, mode: str = "hybrid",
-               type: str | None = None, tag: str | None = None) -> list[dict]:
-        """混合检索。
-        English: Hybrid retrieval."""
-        return self.retriever.search(query, top_k=top_k, mode=mode,
-                                     type=type, tag=tag)
+               type: str | None = None, tag: str | None = None,
+               agent_id: str = "default",
+               client: str = "default",
+               project: str | None = None) -> list[dict]:
+        """混合检索（A 节点：按 agent_id 强制隔离 memory，doc/web 共享）。
+        English: Hybrid retrieval (A-node: memory isolated by agent_id; doc/web shared)."""
+        results = self.retriever.search(
+            query, top_k=top_k, mode=mode, type=type, tag=tag,
+            agent_id=agent_id)
+        self._audit_access("search", agent_id, query=query,
+                           hits=len(results), namespace="default",
+                           client=client, project=project)
+        return results
 
     def stats(self) -> dict:
         """运行统计；llm 为当前 LLM 状态（local/cloud/disabled）。
@@ -356,7 +574,9 @@ class KBService:
                 "llm": self.llm.status.value}
 
     # ---- 问答（基础 RAG + 智能路由）----
-    def ask(self, question: str) -> dict:
+    def ask(self, question: str, agent_id: str = "default",
+            client: str = "default",
+            project: str | None = None) -> dict:
         """RAG 问答：检索 → 上下文拼装（字符预算截断）→ 护栏 prompt → 生成 → 附 sources。
 
         - 检索 top_k=5，结果按 score 降序拼入上下文；
@@ -364,24 +584,31 @@ class KBService:
         - llm_mode=local/cloud：走 N10 原路径（后端由 llm.chat 内部按 status/mode 决定）；
         - llm_mode=auto：智能路由（缓存 → 本地分类 → 敏感覆盖 → 分支路由），见 _ask_auto；
         - LLM 禁用时抛 LLMDisabledError（API 层转 503 + 配置指引）。
+        - A 节点：检索按 agent_id 隔离 memory（doc/web 共享），并写 ask 存取审计。
         English: RAG Q&A: retrieve → build context (truncated by char budget) → guarded prompt → generate → attach sources.
         - top_k=5 retrieval, results joined into context in descending score order;
         - char budget = context_token_limit * 2 (~2:1 token-to-char estimate);
         - llm_mode=local/cloud: the N10 original path (backend decided inside llm.chat by status/mode);
         - llm_mode=auto: smart routing (cache → local classify → sensitive override → branch), see _ask_auto;
-        - throws LLMDisabledError when LLM is disabled (mapped to 503 with guidance by the API layer)."""
+        - throws LLMDisabledError when LLM is disabled (mapped to 503 with guidance by the API layer).
+        - A-node: retrieval isolates memory by agent_id (doc/web shared); an ask access-audit is emitted."""
         if self.llm.status is LLMStatus.DISABLED:
             raise LLMDisabledError("LLM 不可用：本地 Ollama 未响应且未配置云端 Key")
-        results = sorted(self.search(question, top_k=5),
+        results = sorted(self.search(question, top_k=5, agent_id=agent_id,
+                                     client=client, project=project),
                          key=lambda r: r["score"], reverse=True)
         sources = [{"id": r["id"], "content": r["content"],
                     "score": r["score"], "source": r["source"]} for r in results]
         if self.settings.llm_mode == "auto":
-            return self._ask_auto(question, results, sources)
-        context = self._build_context(results)
-        answer = self.llm.chat(self._build_messages(context, question))
-        return {"answer": answer, "sources": sources,
-                "llm": self.llm.status.value}
+            result = self._ask_auto(question, results, sources)
+        else:
+            context = self._build_context(results)
+            answer = self.llm.chat(self._build_messages(context, question))
+            result = {"answer": answer, "sources": sources,
+                      "llm": self.llm.status.value}
+        self._audit_access("ask", agent_id, query=question, hits=len(results),
+                           namespace="default", client=client, project=project)
+        return result
 
     # ---- 智能路由（auto 模式）----
     def _ask_auto(self, question: str, results: list[dict],
@@ -456,11 +683,11 @@ class KBService:
         return False
 
     def _cloud_available(self) -> bool:
-        """auto 模式下云端是否可用：注入的云端客户端优先，其次 DeepSeek Key 非空。
-        English: Whether cloud is available in auto mode: the injected cloud client takes priority; otherwise a non-empty DeepSeek key."""
+        """auto 模式下云端是否可用：注入的云端客户端优先，其次通用云端 API Key 非空（KB_LLM_API_KEY，任意 OpenAI 兼容服务商）。
+        English: Whether cloud is available in auto mode: the injected cloud client takes priority; otherwise a non-empty generic cloud API key (KB_LLM_API_KEY, any OpenAI-compatible provider)."""
         if self._cloud_client is not None:
             return True
-        return bool(self.settings.deepseek_api_key)
+        return bool(self.settings.cloud_api_key)
 
     def _answer_complex_cloud(self, question: str,
                               context: str) -> tuple[str, str]:

@@ -21,6 +21,8 @@ class Record(BaseModel):
     content: str
     type: RecordType = RecordType.MEMORY
     namespace: str = "default"
+    agent_id: str = "default"          # 写入方 Agent 身份（推荐用任务名，如 TASK-xxx / worker-1）；旧记录缺失视为 "default"
+    client: str = "default"            # 来源客户端（TraeWork / Claude Code / Cursor / CLI / HTTP）；旧记录缺失视为 "default"
     source: str | None = None
     tags: list[str] = Field(default_factory=list)
     importance: float = 0.5
@@ -36,6 +38,8 @@ class Record(BaseModel):
             "id": self.id,
             "type": self.type.value,
             "namespace": self.namespace,
+            "agent_id": self.agent_id,
+            "client": self.client,
             "source": self.source,
             "tags": ",".join(self.tags),
             "importance": self.importance,
@@ -54,6 +58,8 @@ class Record(BaseModel):
             content=document,
             type=RecordType(metadata.get("type", RecordType.MEMORY.value)),
             namespace=metadata.get("namespace", "default"),
+            agent_id=metadata.get("agent_id", "default"),
+            client=metadata.get("client", "default"),
             source=metadata.get("source"),
             tags=[t for t in (metadata.get("tags", "") or "").split(",") if t],
             importance=metadata.get("importance", 0.5),

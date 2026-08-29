@@ -393,6 +393,7 @@ class TestRetrieverSparseHook:
             rec.source = None
             rec.tags = []
             rec.created_at = ""
+            rec.agent_id = "default"  # A 节点：Agent 归属（默认 default 隔离不生效）
             recs.append(rec)
 
         class _Store:

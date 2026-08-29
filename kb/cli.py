@@ -3,6 +3,8 @@
 CLI entry: add / search / info / serve / mcp / forget / dedup / stats / ask / eval.
 """
 import json
+import os
+import sys
 from datetime import datetime
 
 import typer
@@ -15,6 +17,37 @@ from kb.service import KBService
 
 app = typer.Typer()
 console = Console()
+
+
+def _force_utf8_stdio() -> None:
+    """强制本进程三个标准流以 UTF-8 编解码，Windows 下把控制台代码页切到 65001。
+
+    背景：Windows 控制台默认代码页 936（GBK）；若 Python 进程按系统编码输出，
+    而终端/管道按 UTF-8 解码（或反之），中文即显示为乱码——MCP stdio/SSE
+    传输除协议本身外，错误信息、日志、CLI 输出都会踩中。本函数：
+    1) reconfigure stdin/stdout/stderr 为 UTF-8（Python 3.7+）；
+    2) 设置 PYTHONIOENCODING，令 uvicorn 等子进程继承 UTF-8；
+    3) Windows 下 SetConsoleOutputCP/SetConsoleCP(65001)（失败静默）。
+    幂等，可重复调用。
+    English: Force the three standard streams of this process to UTF-8 and, on Windows, switch the
+    console code page to 65001. Windows consoles default to 936 (GBK); when a Python process emits in the
+    system encoding while the terminal/pipe decodes as UTF-8 (or vice versa), Chinese turns into mojibake —
+    affecting MCP stdio/SSE, error messages, logs and CLI output alike. This: 1) reconfigures
+    stdin/stdout/stderr to UTF-8 (Python 3.7+); 2) sets PYTHONIOENCODING so child processes (uvicorn) inherit
+    UTF-8; 3) on Windows calls SetConsoleOutputCP/SetConsoleCP(65001) (fails silently). Idempotent."""
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            pass  # 非文本流或旧 Python，跳过
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleOutputCP(65001)
+            ctypes.windll.kernel32.SetConsoleCP(65001)
+        except Exception:
+            pass  # 非交互终端（管道/服务）无控制台，静默即可
 
 
 # ---- N23a 维护 CLI 候选筛选纯函数（可单测，不依赖 CLI/服务）----
@@ -142,20 +175,28 @@ def _service() -> KBService:
 def add(content: str,
         tags: str = typer.Option("", "--tags", help="逗号分隔的标签"),
         source: str | None = typer.Option(None, "--source", help="来源标识"),
-        namespace: str = typer.Option("default", "--namespace", help="命名空间")):
-    """写入一条记忆。"""
+        namespace: str = typer.Option("default", "--namespace", help="命名空间"),
+        agent: str = typer.Option("default", "--agent", help="Agent 身份（推荐用任务名，如 TASK-xxx）"),
+        client: str = typer.Option("CLI", "--client", help="来源客户端（默认 CLI）"),
+        project: str | None = typer.Option(None, "--project", help="项目名（可选，用于审计文件名归类）")):
+    """写入一条记忆（归属 agent，之后仅该 agent 可检索/改/删）。"""
     r = _service().add_memory(
         content, tags=[t for t in tags.split(",") if t] if tags else None,
-        source=source, namespace=namespace)
-    console.print(f"已写入 id={r.id}")
+        source=source, namespace=namespace, agent_id=agent, client=client,
+        project=project)
+    console.print(f"已写入 id={r.id} agent={agent} client={client} project={project or '-'}")
 
 
 @app.command()
 def search(query: str,
            top_k: int = typer.Option(5, "--top-k", help="返回条数"),
-           mode: str = typer.Option("hybrid", "--mode", help="hybrid/vector/keyword")):
-    """混合检索。"""
-    hits = _service().search(query, top_k=top_k, mode=mode)
+           mode: str = typer.Option("hybrid", "--mode", help="hybrid/vector/keyword"),
+           agent: str = typer.Option("default", "--agent", help="Agent 身份（推荐用任务名）"),
+           client: str = typer.Option("CLI", "--client", help="来源客户端（默认 CLI）"),
+           project: str | None = typer.Option(None, "--project", help="项目名（可选，用于审计文件名归类）")):
+    """混合检索（A 节点：memory 仅返回归属该 agent 的，doc/web 共享）。"""
+    hits = _service().search(query, top_k=top_k, mode=mode, agent_id=agent,
+                             client=client, project=project)
     if not hits:
         console.print("无结果")
         return
@@ -227,6 +268,9 @@ def stats(
 def ask(
     question: str,
     top_k: int = typer.Option(5, "--top-k", help="检索条数"),
+    agent: str = typer.Option("default", "--agent", help="Agent 身份（推荐用任务名）"),
+    client: str = typer.Option("CLI", "--client", help="来源客户端（默认 CLI）"),
+    project: str | None = typer.Option(None, "--project", help="项目名（可选，用于审计文件名归类）"),
 ):
     """终端 RAG 问答：检索 + 生成，直连 KBService.ask（N28）。
 
@@ -234,12 +278,13 @@ def ask(
 
     LLM 不可用时仍输出检索命中（标注"仅检索未生成"），退出码 1。
     When the LLM is unavailable, still prints retrieval hits (marked "retrieval only"), exit code 1.
+    A 节点：按 agent 隔离 memory（doc/web 共享）。
     """
     from kb.service import LLMDisabledError
     svc = _service()
     console.print("[dim]正在检索与生成…（首次调用需加载模型，请稍候）[/dim]")
     try:
-        result = svc.ask(question)
+        result = svc.ask(question, agent_id=agent, client=client, project=project)
         console.print(f"\n[bold green]{result['answer']}[/bold green]\n")
         if result.get("sources"):
             t = Table(title=f"来源（{len(result['sources'])} 条 · "
@@ -256,10 +301,12 @@ def ask(
         hits = svc.search(question, top_k=top_k)
         console.print("[yellow]LLM 不可用（本地 Ollama 未响应且未配置云端 "
                       "Key），以下为检索结果（仅检索未生成）[/yellow]")
-        console.print(f"配置指引：启动 Ollama（ollama serve + ollama pull "
-                      "qwen3:4b），或在 .env 配置 KB_DEEPSEEK_API_KEY 走云端")
-        console.print("[dim]Setup: start Ollama (ollama serve + ollama pull qwen3:4b), "
-                      "or set KB_DEEPSEEK_API_KEY in .env for cloud.[/dim]")
+        console.print(f"配置指引：在 .env 设 KB_LLM_MODE=local 并配置 KB_LLM_MODEL=（先用 "
+                      "ollama pull 选一个模型，名称以 ollama list 为准），或设"
+                      " KB_LLM_API_KEY 启用云端（任意 OpenAI 兼容服务商）")
+        console.print("[dim]Setup: set KB_LLM_MODE=local + KB_LLM_MODEL= (ollama pull first, "
+                      "name per `ollama list`), or set KB_LLM_API_KEY for cloud "
+                      "(any OpenAI-compatible provider).[/dim]")
         if hits:
             t = Table(title=f"检索命中（top {len(hits)}）")
             t.add_column("ID", style="cyan", no_wrap=True)
@@ -401,6 +448,47 @@ def dedup(
                   "请人工审核候选对后手动删除/合并。[/yellow]")
 
 
+@app.command()
+def audit(
+    agent: str = typer.Argument(..., help="Agent 身份（如 worker-1）"),
+    action: str | None = typer.Option(None, "--action",
+                                      help="过滤操作类型：write/search/read/update/delete/ask/ingest"),
+    days: int | None = typer.Option(None, "--days", help="最近 N 天（默认全部）"),
+    limit: int = typer.Option(100, "--limit", help="条数上限（默认100）"),
+):
+    """查询一个 Agent 的记忆存取审计（谁存了什么/读了什么）。
+
+    读本机 access-audit.log（JSON 行），按 agent 过滤，倒序输出最新在前。
+    用法：
+      kb audit worker-1                  # 该 Agent 全部存取记录
+      kb audit worker-1 --action write   # 只查写入
+      kb audit worker-1 --days 7 --limit 20
+    """
+    svc = _service()
+    items = svc.query_access_audit(agent=agent, action=action,
+                                   days=days, limit=limit)
+    if not items:
+        console.print(f"[yellow]Agent `{agent}` 无匹配的存取审计记录"
+                      f"（文件 logs/access-audit.log 可能为空或未发生存取）[/yellow]")
+        return
+    table = Table(title=f"Agent `{agent}` 存取审计（{len(items)} 条）")
+    table.add_column("时间", style="cyan", no_wrap=True)
+    table.add_column("客户端", style="yellow")
+    table.add_column("操作", style="magenta")
+    table.add_column("内容/查询", style="white")
+    table.add_column("命中", justify="right")
+    for rec in items:
+        ts = rec.get("timestamp", "")
+        act = rec.get("action", "")
+        body = rec.get("query") or rec.get("content") or rec.get("source") or ""
+        hits = str(rec.get("hits", "")) if rec.get("hits") is not None else ""
+        c = rec.get("client", "-")
+        table.add_row(ts, c, act, _truncate(str(body), 40), hits)
+    console.print(table)
+    console.print("[dim]Tip: 内容/查询为前50字符摘要（敏感红线），完整内容不落日志。["
+                  "/dim]")
+
+
 @app.command("eval")
 def eval_cmd(
     file: str = typer.Option("tests/eval_zh_50.jsonl", "--file",
@@ -477,6 +565,8 @@ def eval_cmd(
 
 
 def main() -> None:
+    # 乱码修复：先强制三流 UTF-8 + Windows 控制台 65001，再进 typer 分发
+    _force_utf8_stdio()
     app()
 
 

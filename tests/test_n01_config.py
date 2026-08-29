@@ -6,10 +6,14 @@ def test_默认配置(env_isolated):
     # _env_file=None：禁用磁盘 .env（本地开发可能设了 KB_LLM_MODEL 降级值），
     # 本测试断言代码默认值，须与本地配置完全隔离
     s = Settings(_env_file=None)
-    assert s.llm_mode == "auto"
-    assert s.llm_model == "qwen3:4b"
+    assert s.llm_mode == "off"
+    assert s.llm_model == ""                  # 本地模型默认空＝未配置，用户按自己硬件自配（不写死厂商/型号）
     assert s.llm_temperature == 0.2
     assert s.llm_max_tokens == 800
+    assert s.llm_api_key == ""            # 通用云端键默认空
+    assert s.llm_base_url == "https://api.deepseek.com"
+    assert s.llm_cloud_model == "deepseek-v4-flash"
+    assert s.cloud_api_key == ""          # 兼容属性回退 deepseek
     assert s.context_token_limit == 2000
     assert s.chroma_dir == Path(env_isolated) / "chroma"
     assert s.runtime_file == Path(env_isolated) / "runtime.json"

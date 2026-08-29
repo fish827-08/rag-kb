@@ -15,12 +15,16 @@ class Settings(BaseSettings):
     data_dir: Path = Path("kb_data")            # 运行数据根目录
     device: str = ""                            # 空=自动检测；显式设 cpu/cuda 覆盖
     embed_model: str = "BAAI/bge-m3"
-    llm_mode: str = "auto"                      # local | auto | cloud
+    llm_mode: str = "off"                      # off(默认,完全不加载/调用LLM) | local | auto | cloud
     ollama_base_url: str = "http://localhost:11434"
-    llm_model: str = "qwen3:4b"
-    deepseek_api_key: str = ""
+    llm_model: str = ""                        # 本地 Ollama 模型名（空=未配置，用户按自己电脑显存/需求自配，以 ollama list 为准）
+    deepseek_api_key: str = ""             # 兼容旧配置（已弃用，见 llm_api_key/llm_base_url/llm_model）
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
+    # 通用云端 LLM（OpenAI 兼容接口）：任意服务商（OpenAI/DeepSeek/通义/硅基流动等）
+    llm_api_key: str = ""                  # KB_LLM_API_KEY：云服务商 API Key
+    llm_base_url: str = "https://api.deepseek.com"   # KB_LLM_BASE_URL：OpenAI 兼容端点 base_url
+    llm_cloud_model: str = "deepseek-v4-flash"      # KB_LLM_CLOUD_MODEL：云端模型名
     chunk_size: int = 500
     chunk_overlap: int = 100
     watch_dir: Path = Path("data")            # 目录监听（serve 挂载）；空串/"."=不启动
@@ -47,6 +51,8 @@ class Settings(BaseSettings):
     dispatch_enabled: bool = True                # KB_DISPATCH_ENABLED：监控单轮后异常调度（comm:dispatch），默认开（TASK-0049）
     monitor_llm: str = "off"                     # KB_MONITOR_LLM：监控摘要模式 off=全程纯文本不调LLM(默认零成本/不抢GPU) / auto=LLM可用摘要化不可用降级(TASK-0065)
     # ---- 记忆治理 A3（N21b 衰减评分公式模块，TASK-0068；N22a 语义去重服务层，TASK-0069）----
+    # ---- Agent 身份隔离与存取审计（A 节点 spec：2026-08-29）----
+    access_audit_enabled: bool = True             # KB_ACCESS_AUDIT_ENABLED：Agent 存取审计开关（access-audit.log）
     decay_enabled: bool = False                   # KB_DECAY_ENABLED：访问频率衰减开关，默认关（零行为变化）
     decay_lambda: float = 0.02                    # KB_DECAY_LAMBDA：衰减速率 λ（/天），半衰期≈35天
     decay_gamma: float = 0.3                      # KB_DECAY_GAMMA：高频访问加权系数 γ，access_count=10→约2.0倍
@@ -92,6 +98,21 @@ class Settings(BaseSettings):
     def log_file(self) -> Path:
         """日志文件路径（log_dir/kb.log）。"""
         return self.log_dir / "kb.log"
+
+    @property
+    def cloud_api_key(self) -> str:
+        """云端 API Key：优先通用 KB_LLM_API_KEY，回退旧 KB_DEEPSEEK_API_KEY（兼容）。"""
+        return self.llm_api_key or self.deepseek_api_key
+
+    @property
+    def cloud_base_url(self) -> str:
+        """云端 base_url：优先通用 KB_LLM_BASE_URL，回退旧 KB_DEEPSEEK_BASE_URL（兼容）。"""
+        return self.llm_base_url or self.deepseek_base_url
+
+    @property
+    def cloud_model(self) -> str:
+        """云端模型名：优先 KB_LLM_CLOUD_MODEL，回退旧 KB_DEEPSEEK_MODEL（兼容）。"""
+        return self.llm_cloud_model or self.deepseek_model
 
 
 @lru_cache

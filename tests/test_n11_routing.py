@@ -71,6 +71,7 @@ def test_复杂问题有云先压缩(env_isolated, monkeypatch):
         def chat(self, messages, **kw):
             self.received.append(messages); return "云端回答"
 
+    monkeypatch.setenv("KB_LLM_MODE", "auto")   # 本测试走 auto 智能路由（默认已改 off）
     llm = ScriptedLLM(["COMPLEX", "压缩后的要点"])
     svc = KBService(llm=llm)
     svc._cloud_client = FakeCloud()

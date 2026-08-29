@@ -154,12 +154,13 @@ class _FakeAskService:
         self.ask_result = ask_result
         self.ask_error = ask_error
 
-    def ask(self, question):
+    def ask(self, question, agent_id="default", client="CLI", project=None):
         if self.ask_error is not None:
             raise self.ask_error
         return self.ask_result
 
-    def search(self, question, top_k=5, mode="hybrid"):
+    def search(self, question, top_k=5, mode="hybrid", agent_id="default",
+               client="CLI", project=None):
         return [{"id": "r1", "content": "检索命中内容", "score": 0.9,
                  "type": "memory", "source": None, "tags": [],
                  "created_at": ""}]

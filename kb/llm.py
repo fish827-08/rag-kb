@@ -19,7 +19,11 @@ class LLMStatus(str, Enum):
 
 
 class LLMClient:
-    """本地（Ollama 原生 /api/chat）与云端（DeepSeek，openai SDK）统一生成接口。
+    """本地（Ollama 原生 /api/chat）与云端（OpenAI 兼容接口）统一生成接口。
+
+    模式（KB_LLM_MODE）：off（默认，不加载/不调用任何 LLM）| local | auto | cloud。
+    云端端点通用化：任意 OpenAI 兼容服务（OpenAI/DeepSeek/通义/硅基流动等），
+    配置键 KB_LLM_API_KEY / KB_LLM_BASE_URL / KB_LLM_CLOUD_MODEL；旧 KB_DEEPSEEK_* 兼容。
 
     护栏参数硬编码默认值：think=False、temperature 0.2、num_ctx 4096、
     max_tokens 800（可被 chat 入参覆盖），不新增配置项。
@@ -38,7 +42,12 @@ class LLMClient:
 
     def probe(self) -> dict:
         """GET {ollama_base_url}/v1/models（2s 超时）→ 本地可用性；
-        deepseek_api_key 非空 → 云端可用性。返回 {"local": bool, "cloud": bool}。"""
+        云端 API Key 非空 → 云端可用性。off 模式不探测（恒 DISABLED）。
+        Returns {"local": bool, "cloud": bool}."""
+        if self._settings.llm_mode == "off":
+            self._local_ok = False
+            self._cloud_ok = False
+            return {"local": False, "cloud": False}
         local_ok = False
         try:
             resp = self._http.get("/v1/models", timeout=2.0)
@@ -46,15 +55,18 @@ class LLMClient:
         except httpx.HTTPError:
             local_ok = False
         self._local_ok = local_ok
-        self._cloud_ok = bool(self._settings.deepseek_api_key)
+        self._cloud_ok = bool(self._settings.cloud_api_key)
         return {"local": self._local_ok, "cloud": self._cloud_ok}
 
     @property
     def status(self) -> LLMStatus:
-        """local 模式：本地可用→LOCAL 否则 DISABLED；
+        """off：恒 DISABLED；
+        local 模式：本地可用→LOCAL 否则 DISABLED；
         cloud 模式：有 Key→CLOUD 否则 DISABLED；
         auto 模式：本地可用→LOCAL；无本地有云→CLOUD；都无→DISABLED。"""
         mode = self._settings.llm_mode
+        if mode == "off":
+            return LLMStatus.DISABLED
         if mode == "local":
             return LLMStatus.LOCAL if self._local_ok else LLMStatus.DISABLED
         if mode == "cloud":
@@ -76,7 +88,7 @@ class LLMClient:
         - auto：本地优先，云端兜底，都无抛 LLMError。
         """
         if self.status is LLMStatus.DISABLED:
-            raise LLMError("LLM 不可用：本地 Ollama 未响应且未配置 DeepSeek API Key")
+            raise LLMError("LLM 不可用：KB_LLM_MODE=off 或本地 Ollama 未响应且云端未配置 API Key")
         mode = self._settings.llm_mode
         # 模式约束后端范围：local 模式禁云端，cloud 模式禁本地
         local_usable = self._local_ok and mode != "cloud"
@@ -96,6 +108,9 @@ class LLMClient:
 
     def _chat_local(self, messages: list[dict], max_tokens: int | None) -> str:
         """本地 Ollama 原生 /api/chat（openai SDK 不透传 think 参数，故直用 httpx）。"""
+        if not self._settings.llm_model:
+            raise LLMError(
+                "未配置本地模型：请在 .env 设置 KB_LLM_MODEL=<ollama list 中的模型名>")
         body = {
             "model": self._settings.llm_model,
             "messages": messages,
@@ -116,16 +131,19 @@ class LLMClient:
         return data.get("message", {}).get("content") or ""
 
     def _chat_cloud(self, messages: list[dict], max_tokens: int | None) -> str:
-        """云端 DeepSeek（openai SDK 兼容接口；延迟导入，纯本地模式无需安装 SDK）。"""
+        """云端 OpenAI 兼容接口（openai SDK；延迟导入，off/local 模式无需安装 SDK）。
+
+        端点由 KB_LLM_BASE_URL / KB_LLM_API_KEY / KB_LLM_CLOUD_MODEL 配置（兼容旧 KB_DEEPSEEK_*）。
+        """
         try:
             from openai import OpenAI, OpenAIError
         except ImportError as exc:
             raise LLMError("未安装 openai SDK，无法调用云端 LLM") from exc
-        client = OpenAI(api_key=self._settings.deepseek_api_key,
-                        base_url=self._settings.deepseek_base_url)
+        client = OpenAI(api_key=self._settings.cloud_api_key,
+                        base_url=self._settings.cloud_base_url)
         try:
             resp = client.chat.completions.create(
-                model=self._settings.deepseek_model,
+                model=self._settings.cloud_model,
                 messages=messages,
                 temperature=0.2,
                 max_tokens=max_tokens or 800,

@@ -113,7 +113,8 @@ class _FakeType:
 class _FakeRecord:
     """mock Record：含 access_count/last_accessed/created_at（TASK-0067 字段兼容）。"""
     def __init__(self, rid, content="c", access_count=0, last_accessed="",
-                 created_at=None, type_value="memory", tags=None, source="s"):
+                 created_at=None, type_value="memory", tags=None, source="s",
+                 agent_id="default"):
         self.id = rid
         self.content = content
         self.access_count = access_count
@@ -122,6 +123,7 @@ class _FakeRecord:
         self.type = _FakeType(type_value)
         self.tags = tags or []
         self.source = source
+        self.agent_id = agent_id  # A 节点：Agent 归属（fetch 现有 fake 均 default）
 
 
 class _FakeStore:

@@ -164,6 +164,9 @@ class MemoryCreate(BaseModel):
     tags: list[str] = []
     source: str | None = None
     namespace: str = "default"
+    agent_id: str = "default"          # 写入方 Agent 身份（A 节点；推荐任务名）；默认 default
+    client: str = "default"            # 来源客户端（可选，如 curl/Python/TraeWork）；默认 default
+    project: str | None = None         # 项目名（可选，仅用于审计文件名归类）
 
     @field_validator("content")
     @classmethod
@@ -173,6 +176,24 @@ class MemoryCreate(BaseModel):
         failure maps to 422)."""
         if not v.strip():
             raise ValueError("content 不能为空或纯空白")
+        return v
+
+    @field_validator("agent_id", "client", "project")
+    @classmethod
+    def identity_fields_valid(cls, v: str | None, info) -> str | None:
+        """规约校验身份字段（A 节点）：agent_id/client/project 白名单格式，
+        非法直接 422，杜绝调用方随意传任意字符串。
+        English: Validate identity fields against the whitelist; invalid values are rejected
+        with 422 so callers cannot pass arbitrary strings."""
+        from kb.service import validate_agent_id, validate_client, validate_project
+        if info.field_name == "agent_id":
+            err = validate_agent_id(v)
+        elif info.field_name == "client":
+            err = validate_client(v)
+        else:
+            err = validate_project(v)
+        if err:
+            raise ValueError(err)
         return v
 
 
@@ -185,18 +206,58 @@ class MemoryUpdate(BaseModel):
 
 class SearchRequest(BaseModel):
     """检索请求；query 必填，top_k/mode 带默认值，type/tag 可选过滤。
-    English: Search request; query is required, top_k/mode have defaults, and type/tag are optional filters."""
+    agent_id：A 节点强制隔离——memory 只返回归属该 Agent 的，doc/web 共享。
+    client：来源客户端（可选）。
+    English: Search request; query is required, top_k/mode have defaults, and type/tag are optional filters.
+    agent_id: A-node mandatory isolation — memory records only return those owned by the calling agent,
+    doc/web chunks are shared. client: source client (optional)."""
     query: str
     top_k: int = Field(default=5, ge=1)
     mode: Literal["hybrid", "vector", "keyword"] = "hybrid"
     type: str | None = None
     tag: str | None = None
+    agent_id: str = "default"
+    client: str = "default"
+    project: str | None = None  # 项目名（可选，仅用于审计文件名归类）
+
+    @field_validator("agent_id", "client", "project")
+    @classmethod
+    def identity_fields_valid(cls, v: str | None, info) -> str | None:
+        """规约校验身份字段（A 节点），非法 422。"""
+        from kb.service import validate_agent_id, validate_client, validate_project
+        if info.field_name == "agent_id":
+            err = validate_agent_id(v)
+        elif info.field_name == "client":
+            err = validate_client(v)
+        else:
+            err = validate_project(v)
+        if err:
+            raise ValueError(err)
+        return v
 
 
 class AskRequest(BaseModel):
     """问答请求；question 必填。
     English: Ask request; question is required."""
     question: str
+    agent_id: str = "default"          # A 节点：问答检索按该 Agent 隔离 memory
+    client: str = "default"            # 来源客户端（可选）
+    project: str | None = None         # 项目名（可选，仅用于审计文件名归类）
+
+    @field_validator("agent_id", "client", "project")
+    @classmethod
+    def identity_fields_valid(cls, v: str | None, info) -> str | None:
+        """规约校验身份字段（A 节点），非法 422。"""
+        from kb.service import validate_agent_id, validate_client, validate_project
+        if info.field_name == "agent_id":
+            err = validate_agent_id(v)
+        elif info.field_name == "client":
+            err = validate_client(v)
+        else:
+            err = validate_project(v)
+        if err:
+            raise ValueError(err)
+        return v
 
 
 class WebIngestRequest(BaseModel):
@@ -488,7 +549,9 @@ def create_app(settings: Settings | None = None,
         from kb.governance import DuplicateError
         try:
             r = kb.add_memory(body.content, tags=body.tags,
-                              source=body.source, namespace=body.namespace)
+                              source=body.source, namespace=body.namespace,
+                              agent_id=body.agent_id, client=body.client,
+                              project=body.project)
         except DuplicateError as e:
             # N22a/TASK-0069：语义去重命中，返回 409 + 已有记录 id 与相似度
             return JSONResponse(
@@ -508,34 +571,46 @@ def create_app(settings: Settings | None = None,
         return {"items": [r.model_dump() for r in records], "total": total}
 
     @app.get("/api/v1/memories/{record_id}")
-    def get_memory(record_id: str) -> dict:
-        r = kb.get_memory(record_id)
+    def get_memory(record_id: str, agent_id: str = "default",
+                   client: str = "default",
+                   project: str | None = None) -> dict:
+        r = kb.get_memory(record_id, agent_id=agent_id, client=client,
+                          project=project)
         if r is None:
             raise HTTPException(status_code=404,
-                                detail={"error": "NOT_FOUND", "message": "记录不存在"})
+                                detail={"error": "NOT_FOUND", "message": "记录不存在或无权访问"})
         return r.model_dump()
 
     @app.patch("/api/v1/memories/{record_id}")
-    def update_memory(record_id: str, body: MemoryUpdate) -> dict:
-        r = kb.update_memory(record_id, content=body.content, tags=body.tags)
+    def update_memory(record_id: str, body: MemoryUpdate,
+                      agent_id: str = "default",
+                      client: str = "default",
+                      project: str | None = None) -> dict:
+        r = kb.update_memory(record_id, content=body.content, tags=body.tags,
+                             agent_id=agent_id, client=client, project=project)
         if r is None:
             raise HTTPException(status_code=404,
-                                detail={"error": "NOT_FOUND", "message": "记录不存在"})
+                                detail={"error": "NOT_FOUND", "message": "记录不存在或无权访问"})
         return r.model_dump()
 
     @app.delete("/api/v1/memories/{record_id}")
-    def delete_memory(record_id: str) -> dict:
-        if not kb.delete_memory(record_id):
+    def delete_memory(record_id: str, agent_id: str = "default",
+                      client: str = "default",
+                      project: str | None = None) -> dict:
+        if not kb.delete_memory(record_id, agent_id=agent_id, client=client,
+                                project=project):
             raise HTTPException(status_code=404,
-                                detail={"error": "NOT_FOUND", "message": "记录不存在"})
+                                detail={"error": "NOT_FOUND", "message": "记录不存在或无权访问"})
         return {"ok": True}
 
     @app.post("/api/v1/search")
     def search(body: SearchRequest) -> dict:
-        """混合检索；results 即 KBService.search 的返回。
-        English: Hybrid retrieval; results is exactly the return value of KBService.search."""
+        """混合检索；A 节点按 agent_id 强制隔离 memory（doc/web 共享）。
+        English: Hybrid retrieval with A-node mandatory memory isolation by agent_id (doc/web shared)."""
         results = kb.search(body.query, top_k=body.top_k, mode=body.mode,
-                            type=body.type, tag=body.tag)
+                            type=body.type, tag=body.tag,
+                            agent_id=body.agent_id, client=body.client,
+                            project=body.project)
         return {"results": results}
 
     @app.post("/api/v1/documents")
@@ -576,11 +651,16 @@ def create_app(settings: Settings | None = None,
                 raise HTTPException(status_code=400, detail={
                     "error": "BAD_REQUEST",
                     "message": "需提供 multipart file 字段或 JSON path 字段"})
+            # JSON path 模式可带 agent_id/client/project（记录归属，仅审计）
+            body_agent = (body or {}).get("agent_id", "default")
+            body_client = (body or {}).get("client", "default")
+            body_project = (body or {}).get("project")
             if not Path(path).is_file():
                 raise HTTPException(status_code=400, detail={
                     "error": "FILE_NOT_FOUND",
                     "message": f"文件不存在：{path}"})
-            return kb.add_document(path)
+            return kb.add_document(path, agent_id=body_agent, client=body_client,
+                                   project=body_project)
         except UnsupportedFormatError as exc:
             raise HTTPException(status_code=400, detail={
                 "error": "UNSUPPORTED_FORMAT", "message": str(exc)})
@@ -602,7 +682,8 @@ def create_app(settings: Settings | None = None,
         """抓取网页正文切分入库；抓取/正文提取失败返回 400 与原因。
         English: Fetch a webpage body, split and ingest it; returns 400 with the reason on fetch/body-extraction failure."""
         try:
-            return kb.add_webpage(body.url)
+            return kb.add_webpage(body.url, agent_id="default",
+                                 client="default")
         except WebFetchError as exc:
             raise HTTPException(status_code=400, detail={
                 "error": "WEB_FETCH_FAILED", "message": str(exc)})
@@ -612,13 +693,27 @@ def create_app(settings: Settings | None = None,
         """基础 RAG 问答；LLM 禁用时返回 503 与配置指引。
         English: Basic RAG Q&A; returns 503 with setup guidance when the LLM is disabled."""
         try:
-            return kb.ask(body.question)
+            return kb.ask(body.question, agent_id=body.agent_id,
+                          client=body.client, project=body.project)
         except LLMDisabledError:
             raise HTTPException(status_code=503, detail={
                 "error": "LLM_DISABLED",
-                "message": "未检测到可用的 LLM：请安装并启动 Ollama"
-                           "（https://ollama.com），或在 .env 配置 "
-                           "KB_DEEPSEEK_API_KEY 启用云端"})
+                "message": "未检测到可用的 LLM：请在 .env 配置 KB_LLM_MODE=local "
+                           "（Ollama）或 KB_LLM_API_KEY 启用云端（任意 OpenAI 兼容服务商）"})
+
+    @app.get("/api/v1/audit")
+    def audit(agent: str, action: str | None = None,
+              days: int | None = None, limit: int = 100) -> dict:
+        """用户查询 Agent 存取审计（A 节点 spec 2.5）：读 access-audit.log，
+        按 agent 过滤，可选 action/days/limit。返回 {"items": [...], "total": N}。
+        English: Query the Agent access audit (A-node spec 2.5): reads access-audit.log, filters by
+        agent, optionally by action/days/limit. Returns {"items": [...], "total": N}."""
+        if not agent or not agent.strip():
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": "agent 参数必填"})
+        items = kb.query_access_audit(
+            agent=agent, action=action, days=days, limit=limit)
+        return {"items": items, "total": len(items)}
 
     @app.get("/api/v1/healthz")
     def healthz() -> dict:

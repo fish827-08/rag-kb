@@ -56,16 +56,20 @@ def test_MCP工具参数校验(env_isolated):
     from kb.mcp import (create_mcp_server, write_memory, search_memory,
                         update_memory)
     create_mcp_server(KBService())  # 显式注入，绑定当前隔离环境
-    # 空内容拒绝
-    assert write_memory("")["error"] == "INVALID_ARGUMENT"
-    assert write_memory("   ")["error"] == "INVALID_ARGUMENT"
+    # 空内容拒绝（agent_id 必填合法，验证内容校验独立生效）
+    assert write_memory("", agent_id="tester")["error"] == "INVALID_ARGUMENT"
+    assert write_memory("   ", agent_id="tester")["error"] == "INVALID_ARGUMENT"
     # top_k 下界
-    assert search_memory("测试", top_k=0)["error"] == "INVALID_ARGUMENT"
-    assert search_memory("测试", top_k=-3)["error"] == "INVALID_ARGUMENT"
+    assert search_memory("测试", top_k=0, agent_id="tester")["error"] == "INVALID_ARGUMENT"
+    assert search_memory("测试", top_k=-3, agent_id="tester")["error"] == "INVALID_ARGUMENT"
+    # agent_id 必填：schema required（字面缺参由 SDK 校验层拦截，不进函数体）
+    # 这里验证显式传 default 等占位会被服务端拒绝
+    assert write_memory("MCP校验测试的正常记忆",
+                        agent_id="default")["error"] == "INVALID_ARGUMENT"
     # 正常调用不受影响；更新为空内容同样拒绝
-    r = write_memory("MCP校验测试的正常记忆")
+    r = write_memory("MCP校验测试的正常记忆", agent_id="tester")
     assert "id" in r
-    assert update_memory(r["id"], "")["error"] == "INVALID_ARGUMENT"
+    assert update_memory(r["id"], "", agent_id="tester")["error"] == "INVALID_ARGUMENT"
 
 
 def test_MCP响应头含charset(env_isolated):

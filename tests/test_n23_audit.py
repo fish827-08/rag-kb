@@ -143,7 +143,7 @@ class _FakeType:
 
 class _FakeRecord:
     def __init__(self, rid, access_count=0, last_accessed="", created_at=None,
-                 updated_at=None, content=""):
+                 updated_at=None, content="", agent_id="default"):
         self.id = rid
         self.access_count = access_count
         self.last_accessed = last_accessed
@@ -153,6 +153,7 @@ class _FakeRecord:
         self.tags = []
         self.source = "s"
         self.content = content
+        self.agent_id = agent_id  # A 节点：Agent 归属（默认 default 隔离不生效）
 
 
 class _FakeStore:

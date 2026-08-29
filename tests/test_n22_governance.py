@@ -109,7 +109,8 @@ class _FakeType:
 class _FakeRecordForRetriever:
     """mock Record for retriever：含 access_count/last_accessed/created_at/updated_at。"""
     def __init__(self, rid, access_count=0, last_accessed="", created_at=None,
-                 updated_at=None, type_value="memory", tags=None, source="s", content=""):
+                 updated_at=None, type_value="memory", tags=None, source="s", content="",
+                 agent_id="default"):
         self.id = rid
         self.access_count = access_count
         self.last_accessed = last_accessed
@@ -119,6 +120,7 @@ class _FakeRecordForRetriever:
         self.tags = tags or []
         self.source = source
         self.content = content
+        self.agent_id = agent_id  # A 节点：Agent 归属（默认 default 隔离不生效）
 
 
 class _FakeStore:
