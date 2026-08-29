@@ -30,8 +30,8 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
   - 可选精排：`KB_RERANK_ENABLED=true` 启用 bge-reranker-v2-m3 交叉重排（默认关）
   - 可选三路：`KB_SPARSE_ENABLED=true` 启用 BGE-M3 稀疏向量第三路（默认关，失败自动降级双路）
 - **记忆管理**：写入 / 更新 / 删除 / 列表，支持 namespace、tags、type 过滤
-- **多 Agent 身份隔离**：所有存取带 `agent_id`（推荐用任务名，如 TASK-0076）——个人记忆只对归属 Agent 可见（读/改/删他人被拒），文档/网页共享知识全 Agent 可见
-- **存取审计**：每次写/读/改/删/检索/问答记 JSON 到 `logs/agent-audit/<客户端>__<项目>__<任务名>.log`（按 Agent 分文件）；用户可查：REST `GET /api/v1/audit?agent=<任务名>` 或 CLI `kb audit <任务名>`
+- **多客户端/项目隔离（v2）**：隔离键 = `(client, project)`，身份由环境承载、AI 不自报——client 从 MCP clientInfo 自动识别（框架级可信），project 由连接/目录承载（缺省=该客户端默认桶）；个人记忆只对本客户端+本项目可见（读/改/删他人被拒），文档/网页共享知识全客户端可见；主键服务端生成
+- **存取审计**：每次写/读/改/删/检索/问答记 JSON 到 `logs/agent-audit/<客户端>__<项目>.log`（按 client+project 分文件）；用户可查：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 CLI `kb audit --client <客户端>`
 - **知识入库**：本地文档（txt/md/pdf/docx 等）上传或路径导入，网页正文抓取入库
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
 - **CLI 工具**：`kb add/search/stats/ask/eval/forget/dedup`——终端直接完成写入、检索、统计与 RAG 问答
@@ -268,11 +268,11 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask `
 ## CLI 速查（无需启动服务）
 
 ```powershell
-python -m kb add "记忆内容" --tags 偏好 --agent TASK-0076 --client TraeWork   # 写入（归属任务名）
-python -m kb search "查询词" --agent TASK-0076              # 混合检索（只回自己 agent 的 memory）
+python -m kb add "记忆内容" --tags 偏好 --client TraeWork                       # 写入（project 缺省自动取当前目录名）
+python -m kb search "查询词" --client TraeWork                                 # 混合检索（只回本客户端+本项目的 memory）
 python -m kb stats                            # 统计：类型分布 / 访问热度 / 陈旧分布
-python -m kb ask "问题" --agent TASK-0076      # 终端 RAG 问答（LLM 不可用时输出检索命中）
-python -m kb audit TASK-0076 --days 7          # 查某 Agent 在哪个客户端存过/读过什么
+python -m kb ask "问题" --client TraeWork      # 终端 RAG 问答（LLM 不可用时输出检索命中）
+python -m kb audit --client TraeWork --days 7   # 查某客户端/项目存过/读过什么
 python -m kb eval --file tests/eval_zh_50.jsonl   # 检索质量评测（Recall@1/@5 + MRR）
 python -m kb forget --stale --days 90         # 清理超期未命中记忆
 python -m kb dedup --threshold 0.92           # 语义去重

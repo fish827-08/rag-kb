@@ -189,6 +189,39 @@ Content-Type: application/json; charset=utf-8
 - **新鲜度权重**（`KB_FRESHNESS_ENABLED`）：看 `updated_at`（内容新旧）——刚更新的记录最高加权 1+α 倍（默认 α=0.3，即最多 1.3 倍），加权随时间指数衰减（半衰期≈14 天，β=0.05）。调参：`KB_FRESHNESS_BETA` / `KB_FRESHNESS_ALPHA`
 - **访问频率衰减**（`KB_DECAY_ENABLED`）：看 `last_accessed`/`access_count`（访问冷热）——长期未访问降权（半衰期≈35 天，λ=0.02），高频访问加权（γ=0.3，access_count=10 时约 2.0 倍）。调参：`KB_DECAY_LAMBDA` / `KB_DECAY_GAMMA`
 
+#### 3.5.2a 遗忘机制怎么验证（不等半衰期也能确认真实有效）
+
+衰减默认半衰期≈35 天，**不可能真等 35 天验收**。两条互补路径即可完成最接近真实的验证（2026-08-30 v2）：
+
+**① 时钟注入逻辑验证（秒级，证明"机理正确"）**
+
+衰减计算的时间基准可注入：`kb.models.decay_factor(..., now=<datetime>)` 直接传入"未来某天"，
+测试/复现脚本可拨到第 35 天验证公式行为。示例（Python 或 pytest）：
+
+```python
+from datetime import datetime, timedelta
+from kb.models import decay_factor
+created = "2026-01-01T00:00:00"
+later = datetime.fromisoformat(created) + timedelta(days=35)
+f = decay_factor("", created, 0, now=later)   # λ=0.02 → exp(-0.02*35)≈0.497
+assert abs(f - 0.4966) < 0.01                  # 35 天半衰期：分数≈0.5
+```
+
+这条验证衰减公式、热度加权的数值正确性——秒级完成，仓库 `tests/test_agent_isolation.py::test_decay时钟注入` 已覆盖。
+
+**② 加速真实运行验证（2~3 天，证明"端到端真实有效"）**
+
+不牺牲正确性，临时缩半衰期跑真实服务：
+- 方案 A（半衰期≈1.4 天）：`.env` 设 `KB_DECAY_ENABLED=true`、`KB_DECAY_LAMBDA=0.5`，
+  跑 2~3 天真实写入+检索，观察：importance/检索排序随未访问天数下降、高频访问加权生效、
+  `kb forget --stale` 能捞出预期记录、`governance-audit.log` 出现 `decay_applied` 事件。
+- 方案 B（当天可见）：`KB_DECAY_LAMBDA=3`（半衰期≈几小时）+ 多写几条不同访问频率的记忆，
+  数小时内即可在检索排序与治理统计中看到衰减效果。
+
+验证指标：① importance 随时间下降；② access_count 加权生效；③ 遗忘候选（stale）与审计事件正确；
+④ 恢复默认 λ 后行为回到基线。两条路径组合 = 逻辑正确性（秒级）+ 真实运行证据（短周期），
+无需等 35 天实机。
+
 #### 3.5.3 治理端点（只读）
 
 ```powershell
@@ -324,8 +357,8 @@ venv\Scripts\python.exe orchestra\board.py mount-idle worker-1
 | 性能调优 | `KB_DEVICE=cuda/cpu`；`KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` 切分参数 |
 | 局域网/多 Agent 访问鉴权 | `KB_API_KEY=<≥32随机字符>` 启用 Bearer/X-API-Key 鉴权（见 5.1） |
 | 记忆治理 | `KB_DEDUP_ENABLED`（去重）/ `KB_DECAY_ENABLED`（衰减）/ `KB_FRESHNESS_ENABLED`（新鲜度），均默认关（见 3.5） |
-| 多 Agent 身份隔离 | 所有写/读/改/删/检索/问答带 `agent_id`（默认 `default`）：memory 只对归属 Agent 可见，doc/web 共享知识全可见（见 5.3） |
-| Agent 存取审计 | `KB_ACCESS_AUDIT_ENABLED`（默认开）：每次存取写 `logs/access-audit.log` JSON 行；查询：REST `GET /api/v1/audit?agent=<身份>` 或 `kb audit <身份>`（见 5.3） |
+| 多客户端/项目隔离 | 隔离键 = `(client, project)`：memory 只对本客户端+本项目可见，doc/web 共享知识全可见；AI 不自报身份（见 5.3） |
+| Agent 存取审计 | `KB_ACCESS_AUDIT_ENABLED`（默认开）：每次存取写 `logs/agent-audit/<客户端>__<项目>.log` JSON 行；查询：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 `kb audit --client <客户端>`（见 5.3） |
 
 完整键名见 [`.env.example`](../.env.example)。
 
@@ -375,33 +408,37 @@ MCP 配置带 key 示例（本机自用，**勿提交入库**）：
 
 仓库内 `.mcp.json` 模板保持无 key（JSON 不支持注释，说明落本手册）；健康探针 `GET /api/v1/healthz` 永远无需 key。
 
-### 5.3 Agent 身份隔离与存取审计（A 节点）
+### 5.3 记忆隔离与存取审计（v2：client + project 双键，2026-08-30）
 
-**身份隔离**（多 Agent 协作时各自记忆不串）：
+**身份隔离**（多客户端/多项目各自记忆不串）：
 
-- 每个操作都带 `agent_id`（推荐用任务名，如 `TASK-0076`、`worker-1`，避免看不出是谁的代号），MCP/CLI/REST 均支持
-- **来源客户端（client）**：MCP 不传时自动从握手 clientInfo 识别（TraeWork / Claude Code / Cursor）；REST/CLI 显式传 `client`；写入与审计都会记录
-- **身份字段规约（A 节点）**：MCP 与 REST 都会校验 `agent_id`/`client`/`project` 格式——
-  - `agent_id`/`project`：仅字母/数字/中文/下划线/连字符，1~64 字符；**MCP 下 `agent_id` 必填且不能用 `default`/`unknown` 等占位**（否则审计看不出是谁）
-  - `client`：额外允许空格与点（如 `Claude Code`）；不传时自动识别
-  - 非法值直接拒绝：REST 返回 422，MCP 返回 `INVALID_ARGUMENT`——AI 不能再随意传任意字符串
-- **个人记忆（memory）强制隔离**：检索只搜得到自己写的，读/改/删别人的记忆被拒（REST 404 / MCP `FORBIDDEN`）
-- **共享知识（doc/web chunk）全可见**：任何 Agent 入库的文档/网页，所有 Agent 都能检索（RAG 问答不受隔离影响）
-- 旧数据（无 agent_id/client）自动视为 `default`，无需迁移
+- **隔离键 = `(client, project)` 双键**，身份由**环境承载、AI 不自报**：
+  - `client`（来源客户端）：MCP 自动从握手 clientInfo 识别（TraeWork / Claude Code / Cursor，框架级可信）；
+    REST 默认 `HTTP`；CLI 默认 `CLI`
+  - `project`（项目/任务归属）：MCP 由连接配置声明（`.mcp.json` 连接级）；CLI 自动取当前目录名；
+    REST 显式传。**不传 = 该客户端的默认桶**
+  - 不再有 `agent_id` 入参——记录主键由服务端生成（uuid），AI 无需（也不应）自报身份
+- **身份字段规约（v2）**：MCP 与 REST 校验 `client`/`project` 格式——
+  - `project`：仅字母/数字/中文/下划线/连字符，1~64 字符；`client` 额外允许空格与点（如 `Claude Code`）
+  - 非法值直接拒绝：REST 422，MCP `INVALID_ARGUMENT`
+- **个人记忆（memory）按 (client, project) 强制隔离**：检索只搜得到本客户端+本项目的，
+  读/改/删别的 (client, project) 记忆被拒（REST 404 / MCP `FORBIDDEN`）
+- **共享知识（doc/web chunk）全可见**：任何客户端入库的文档/网页，所有客户端都能检索
+- 旧数据（无 project/client）自动回落默认桶/`default`，无需迁移
 
 **存取审计**（谁在哪个客户端/项目下存了什么/读了什么）：
 
-- **按 Agent 分文件**：每次 write/search/read/update/delete/ask/ingest 记一条 JSON 到
-  `logs/agent-audit/<客户端名>__<项目名>__<任务名>.log`（无项目则 `<客户端名>__<任务名>.log`，
-  如 `TraeWork__kb__TASK-0076.log`、`Claude Code__worker-1.log`）——每个 Agent 独立文件，
-  不再全部写一起；任务更名只需重命名对应文件
+- **按 (client, project) 分文件**：每次 write/search/read/update/delete/ask/ingest 记一条 JSON 到
+  `logs/agent-audit/<客户端>__<项目>.log`（project 为空 → `<客户端>__default.log`，
+  如 `TraeWork__kb.log`、`Claude Code__default.log`）——每个 (client, project) 独立文件，
+  不再混写；换项目只需改连接声明的 project
 - 行内 JSON：`{"timestamp","action","type","record_id","namespace","content 前50摘要","query 前50摘要","hits"}`
-  （client/agent/project 由文件名承载，行内不重复记录；查询侧自动解析补回）
+  （client/project 由文件名承载，行内不重复记录；查询侧自动解析补回）
 - 敏感红线：内容/查询只记前 50 字符摘要，全文不落日志
 - 用户查询入口：
   ```powershell
-  curl -X GET "http://127.0.0.1:8000/api/v1/audit?agent=TASK-0076&action=write&days=7&limit=100"
-  kb audit TASK-0076 --action write --days 7 --limit 100
+  curl -X GET "http://127.0.0.1:8000/api/v1/audit?client=TraeWork&project=kb&action=write&days=7&limit=100"
+  kb audit --client TraeWork --project kb --action write --days 7 --limit 100
   ```
 
 ## 6. 维护命令（forget / dedup）

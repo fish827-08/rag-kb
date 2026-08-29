@@ -24,6 +24,7 @@
 | `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` | ✅ 有效 | orchestra v2 迭代计划（总线 B1 P0 载体；V2-0 修复卡保留，其余节点按总线 B1.1-B1.7 编号演进） |
 | `README.md` | ✅ 有效 | 项目说明（N16 按新定位重写：快速开始 / MCP 挂载 / 端点速查） |
 | `docs/AGENT_PROMPT.md` / `AGENT_PROMPT_EN.md` | ✅ 有效 | 通用 Agent 接入提示词（客户端无关；另封装为 `skills/kb-memory/SKILL.md`，安装见 scripts/README.md） |
+| `docs/superpowers/specs/2026-08-30-memory-scope-refactor-design.md` | ✅ 有效 | **记忆范围重构 v2（2026-08-30 收口）**：隔离键改 client+project（agent_id 降为主键冗余）、MCP 工具去 agent_id、审计文件 client__project、遗忘时钟注入验证；取代 2026-08-29 agent-isolation spec 的隔离语义 |
 | `.mcp.json` | ✅ 有效 | 项目级 MCP 挂载配置（Claude Code 等在本目录启动即连 kb 服务） |
 | `_archive/`（含旧 `README.md`、旧 `ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`、`data/`） | ❌ 已归档（2026-08-23/24） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写**（注意：归档内旧 ROADMAP.md 与根目录新 ROADMAP.md 无关） |
 
