@@ -13,6 +13,8 @@ logs/
 .worktrees/
 # orchestra 协调者循环临时快照（TASK-0061）
 .kb_tmp/
+# 旧学习项目归档（2026-08-23/24）：本地保留历史，解除 git 跟踪不上传远程
+_archive/
 # SSH 私钥与凭据（严禁入库，2026-08-27）
 key/
 *.pem
