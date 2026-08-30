@@ -170,25 +170,30 @@ class ChromaStore(VectorStore):
     def increment_access(self, record_ids: list[str]) -> None:
         """命中记录 access_count+1 与 last_accessed=now（N21a/TASK-0067，异步调用）。
 
-        逐条读取当前 access_count 后 +1，更新 Chroma metadata（仅改 access_count/last_accessed，
-        其余字段保留）；失败记 WARNING 不抛异常（检索路径异步调用，不阻塞返回）。
+        批量实现（改进项 4）：get_many 单次读取 + update 单次批量写，N 条命中
+        从 2N 次 Chroma 调用降为 2 次；仅改 access_count/last_accessed，其余字段保留；
+        失败记 WARNING 不抛异常（检索路径异步调用，不阻塞返回）。
         English: Increment access_count and set last_accessed=now for hit records (N21a/TASK-0067, async call).
-        Reads the current access_count per record then +1, updating Chroma metadata (only access_count/last_accessed
-        are changed; other fields kept); on failure logs a WARNING without raising (async call on the retrieval
-        path, does not block the return)."""
+        Batch implementation (improvement #4): a single get_many read plus a single batch update
+        reduce N hits from 2N Chroma calls to 2; only access_count/last_accessed are changed, other
+        fields kept; on failure logs a WARNING without raising (async call on the retrieval path,
+        does not block the return)."""
         import logging
         from datetime import datetime
         logger = logging.getLogger("kb.storage")
         try:
             now = datetime.now().isoformat()
+            recs = self.get_many(record_ids)
+            ids: list[str] = []
+            metadatas: list[dict] = []
             for rid in record_ids:
-                rec = self.get(rid)
+                rec = recs.get(rid)
                 if rec is None:
                     continue
-                self._col.update(
-                    ids=[rid],
-                    metadatas=[{"access_count": rec.access_count + 1,
-                                "last_accessed": now}],
-                )
+                ids.append(rid)
+                metadatas.append({"access_count": rec.access_count + 1,
+                                  "last_accessed": now})
+            if ids:
+                self._col.update(ids=ids, metadatas=metadatas)
         except Exception as e:
             logger.warning("异步更新访问计数失败: %s", e)

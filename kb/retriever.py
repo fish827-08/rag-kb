@@ -31,7 +31,8 @@ class HybridRetriever:
 
     def __init__(self, store, bm25: BM25Index, embedder: Embedder,
                  settings=None, reranker=None,
-                 sparse_embedder=None, sparse_index=None):
+                 sparse_embedder=None, sparse_index=None,
+                 write_lock=None):
         self.store = store
         self.bm25 = bm25
         self.embedder = embedder
@@ -39,6 +40,9 @@ class HybridRetriever:
         self.reranker = reranker  # N24：CrossEncoder 精排器（None=不精排）
         self.sparse_embedder = sparse_embedder  # N25：稀疏编码器（None=无稀疏路）
         self.sparse_index = sparse_index        # N25：稀疏倒排索引（None=无稀疏路）
+        # 改进项 2：服务层写锁注入（None=无锁，测试直构检索器时零行为变化）。
+        # 命中计数的异步更新也是 Chroma 写操作，须与 CRUD 写路径串行化。
+        self._write_lock = write_lock
 
     def search(self, query: str, top_k: int = 5, mode: str = "hybrid",
                type: str | None = None, tag: str | None = None,
@@ -61,11 +65,34 @@ class HybridRetriever:
         candidate = 3 * top_k
         if mode in ("hybrid", "vector"):
             vec = self.embedder.embed_query(query)
-            vector_hits = [(r.id, s) for r, s in self.store.query(vec, top_k=candidate)]
+            # 改进项 3：隔离下推到 Chroma where——memory 按 (client, project) 查、
+            # doc/web 共享知识单独查，两段候选按相似度降序合并恢复全局排名
+            # （RRF rank 语义与原单次查询一致；跨客户端记忆不再挤占候选池）。
+            # 默认桶（project=""）无法用 where 表达（Chroma 1.5.9 拒绝空串值且
+            # 缺键不匹配），仅 client 下推，项目精确过滤留在融合后 Python 侧。
+            mem_where: dict = {"$and": [{"type": RecordType.MEMORY.value},
+                                        {"client": client}]}
+            if project:
+                mem_where["$and"].append({"project": project})
+            shared_where = {"type": {"$in": [RecordType.DOC_CHUNK.value,
+                                             RecordType.WEB_CHUNK.value]}}
+            mem_hits = self.store.query(vec, top_k=candidate, where=mem_where)
+            shared_hits = self.store.query(vec, top_k=candidate, where=shared_where)
+            merged = sorted(mem_hits + shared_hits, key=lambda x: x[1], reverse=True)
+            # 按 id 去重保留最高分：真实 Chroma 两段结果（memory / doc+web）天然不相交，
+            # 此步为防御（降级实现/测试替身可能返回重叠集）；插入序即分数降序
+            seen: dict[str, tuple] = {}
+            for rec, s in merged:
+                if rec.id not in seen:
+                    seen[rec.id] = (rec, s)
+            vector_hits = [(r.id, s) for r, s in seen.values()]
         else:
             vector_hits = []
         if mode in ("hybrid", "keyword"):
-            keyword_hits = self.bm25.search(query, top_n=candidate)
+            # 改进项 3：BM25 排序前过滤不可见 memory（filter 不改变 BM25 分数）
+            keyword_hits = self.bm25.search(
+                query, top_n=candidate,
+                filter_fn=lambda rid: self._visible(rid, client, project))
         else:
             keyword_hits = []
         # N25 稀疏第三路（A3.5 spec §3.3）：仅 hybrid 且 sparse_enabled 且组件
@@ -207,11 +234,30 @@ class HybridRetriever:
             })
         # N21a/TASK-0067：命中记录异步更新 access_count+1 / last_accessed=now
         # （daemon 线程，不阻塞检索返回；increment_access 内部捕获异常记 WARNING）
+        # 改进项 2：更新为 Chroma 写操作，持有服务层写锁与 CRUD 串行化
         if results:
             hit_ids = [r["id"] for r in results]
-            threading.Thread(
-                target=self.store.increment_access,
-                args=(hit_ids,),
-                daemon=True,
-            ).start()
+
+            def _touch() -> None:
+                if self._write_lock is not None:
+                    with self._write_lock:
+                        self.store.increment_access(hit_ids)
+                else:
+                    self.store.increment_access(hit_ids)
+
+            threading.Thread(target=_touch, daemon=True).start()
         return results
+
+    def _visible(self, record_id: str, client: str, project: str) -> bool:
+        """检索隔离可见性（改进项 3，v2 spec 2.3）：memory 仅 (client, project)
+        归属者可见，doc/web 共享可见；元信息缺失（旧语料/未知 id）不拦截（防御）。
+        English: Retrieval isolation visibility (improvement #3, v2 spec 2.3): memory
+        records visible only to their (client, project) owner, doc/web chunks shared;
+        records without meta info are not blocked (defensive fallback)."""
+        meta = self.bm25.meta_of(record_id)
+        if meta is None:
+            return True
+        rec_client, rec_project, rec_type = meta
+        if rec_type != RecordType.MEMORY.value:
+            return True
+        return rec_client == client and (rec_project or "") == (project or "")
