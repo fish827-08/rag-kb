@@ -21,12 +21,12 @@ RUN apt-get update \
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    HF_HOME=/data/hf-cache \
+    HF_HOME=/root/.cache/huggingface \
     KB_DATA_DIR=/data \
     KB_LOG_DIR=/data/logs \
     KB_DEVICE=cpu \
     KB_LLM_MODE=off \
-    HF_ENDPOINT=https://hf-mirror.com
+    HF_ENDPOINT=https://huggingface.co
 
 WORKDIR /app
 
