@@ -17,10 +17,19 @@ def tokenize(text: str) -> list[str]:
 
 
 class BM25Index:
-    """内部维护 {record_id: tokens}；每次变更同步重建 BM25Okapi（个人级规模毫秒级）。"""
+    """内部维护 {record_id: tokens}；每次变更同步重建 BM25Okapi（个人级规模毫秒级）。
+
+    另维护轻量元信息 {record_id: (client, project, type)}（改进项 3：检索隔离
+    下推到 BM25 排序前过滤用）；启动 load_corpus 成功后由 service.set_meta 回填。
+    English: Internally maintains {record_id: tokens}; rebuilds BM25Okapi on every change
+    (millisecond-level at personal scale). Also keeps lightweight per-record metadata
+    {record_id: (client, project, type)} (improvement #3: isolation pushdown into the
+    BM25 pre-ranking filter); after a successful load_corpus the service backfills it
+    via set_meta."""
 
     def __init__(self) -> None:
         self._docs: dict[str, list[str]] = {}
+        self._meta: dict[str, tuple[str, str, str]] = {}
         self._bm25 = None
 
     def _rebuild_bm25(self) -> None:
@@ -33,27 +42,74 @@ class BM25Index:
     def rebuild(self, records) -> None:
         """用一组记录全量重建索引（启动时传 store.iter_all()）。"""
         self._docs = {r.id: tokenize(r.content) for r in records}
+        self._meta = {r.id: (r.client, r.project, r.type.value) for r in records}
         self._rebuild_bm25()
+
+    def set_meta(self, records) -> None:
+        """回填轻量元信息（load_corpus 成功路径；不触发重建）。"""
+        self._meta = {r.id: (r.client, r.project, r.type.value) for r in records}
+
+    def meta_of(self, record_id: str) -> tuple[str, str, str] | None:
+        """返回该 id 的 (client, project, type) 元信息；未知 id 返回 None（防御不拦截）。
+        English: Return (client, project, type) for an id; None when unknown (defensive)."""
+        return self._meta.get(record_id)
 
     def add(self, record: Record) -> None:
         """新增一条记录并重建索引。"""
         self._docs[record.id] = tokenize(record.content)
+        self._meta[record.id] = (record.client, record.project, record.type.value)
+        self._rebuild_bm25()
+
+    def add_many(self, records) -> None:
+        """批量新增（改进项 1B）：全部并入语料后只重建一次，避免 N 条 N 次全量重建。
+
+        用于 add_document / add_webpage 的 chunk 批量入库（此前循环 add 对每个
+        chunk 重建一次，N 个 chunk = N 次 O(语料) 重建）。
+        English: Batch add (improvement #1B): merge all records into the corpus then
+        rebuild exactly once, avoiding one full rebuild per record (previously the
+        chunk-ingest loop rebuilt per chunk, i.e. N rebuilds for N chunks)."""
+        for r in records:
+            self._docs[r.id] = tokenize(r.content)
+            self._meta[r.id] = (r.client, r.project, r.type.value)
         self._rebuild_bm25()
 
     def remove(self, record_id: str) -> None:
         """删除一条记录并重建索引。"""
         self._docs.pop(record_id, None)
+        self._meta.pop(record_id, None)
         self._rebuild_bm25()
 
-    def search(self, query: str, top_n: int = 10) -> list[tuple[str, float]]:
-        """返回 (record_id, bm25分数) 降序；空索引返回 []。"""
+    def remove_many(self, record_ids) -> None:
+        """批量删除（改进项 1B）：全部移出后只重建一次（delete_document 用）。"""
+        for rid in record_ids:
+            self._docs.pop(rid, None)
+            self._meta.pop(rid, None)
+        self._rebuild_bm25()
+
+    def search(self, query: str, top_n: int = 10,
+               filter_fn=None) -> list[tuple[str, float]]:
+        """返回 (record_id, bm25分数) 降序；空索引返回 []。
+
+        filter_fn(record_id)->bool（可选）在排序前过滤（改进项 3：检索隔离下推——
+        BM25 分数由全语料 DF 决定，过滤只剔除不可见记录，不改变剩余记录分数）。
+        English: Return (record_id, bm25 score) descending; an empty index returns [].
+        Optional filter_fn(record_id)->bool filters before ranking (improvement #3:
+        isolation pushdown — BM25 scores depend on corpus-wide DF, so filtering only
+        drops invisible records without altering the scores of the rest)."""
         if self._bm25 is None:
             return []
         query_tokens = tokenize(query)
         if not query_tokens:
             return []
         scores = self._bm25.get_scores(query_tokens)
-        ranked = sorted(zip(self._docs.keys(), scores), key=lambda x: x[1], reverse=True)
+        if filter_fn is None:
+            ranked = sorted(zip(self._docs.keys(), scores),
+                            key=lambda x: x[1], reverse=True)
+        else:
+            ranked = sorted(
+                ((rid, s) for rid, s in zip(self._docs.keys(), scores)
+                 if filter_fn(rid)),
+                key=lambda x: x[1], reverse=True)
         return [(rid, float(score)) for rid, score in ranked[:top_n]]
 
     # ---- 语料持久化（N27，A3.5 spec §3.4）----

@@ -1,6 +1,7 @@
 """KBService：统一业务编排，组装 store / embedder / bm25 / retriever / llm。
 English: Unified business orchestration that assembles store / embedder / bm25 / retriever / llm."""
 import math
+import threading
 from collections import OrderedDict
 from pathlib import Path
 
@@ -137,17 +138,26 @@ class KBService:
         self.store = ChromaStore(self.settings.chroma_dir)
         self.bm25 = BM25Index()
         self._bm25_cache = self.settings.data_dir / "bm25_corpus.json"
+        # 并发写入锁（改进项 2）：ChromaDB PersistentClient / BM25 内存索引 / 稀疏索引
+        # 均非线程安全，所有写路径（CRUD/文档/网页/删除/访问计数）串行化；
+        # 读路径（search/get/list）不加锁，检索不被写入阻塞（CPython GIL 下内存索引
+        # 读与写交错安全，Chroma 读与写并发风险主要在写侧）。
+        self._write_lock = threading.RLock()
         all_records = list(self.store.iter_all())
         if not self.bm25.load_corpus(self._bm25_cache, [r.id for r in all_records]):
             self.bm25.rebuild(all_records)
             self._persist_bm25()
+        # 改进项 3：无论 load 成功与否，都从库内记录回填 (client, project, type)
+        # 轻量元信息（BM25 排序前隔离过滤用；load 成功路径下 _meta 需要回填）
+        self.bm25.set_meta(all_records)
         # N25：稀疏第三路组装（sparse_enabled 且探测成功才启用，失败降级双路）
         self.sparse_embedder, self.sparse_index = self._build_sparse(all_records)
         self.retriever = HybridRetriever(self.store, self.bm25, self.embedder,
                                          settings=self.settings,
                                          reranker=self._build_reranker(),
                                          sparse_embedder=self.sparse_embedder,
-                                         sparse_index=self.sparse_index)
+                                         sparse_index=self.sparse_index,
+                                         write_lock=self._write_lock)
         self.llm = llm or LLMClient(self.settings)
         # 云端客户端注入点：None=无独立云端客户端（真实云端由 self.llm 统一承担）
         self._cloud_client = None
@@ -255,35 +265,36 @@ class KBService:
         "default"), not used for isolation. N22a: when dedup_enabled, run a semantic dedup
         check first and raise DuplicateError on a hit (mapped to 409 by the api layer);
         zero behavior change when disabled."""
-        from kb.governance import DuplicateError, check_duplicate
-        if self.settings.dedup_enabled:
-            existing_id, similarity = check_duplicate(
-                content, self.store, self.embedder,
-                threshold=self.settings.dedup_threshold)
-            if existing_id is not None:
-                # N23b/TASK-0073：去重拦截审计日志（默认开，不阻塞主流程）
-                if getattr(self.settings, "audit_dedup_enabled", True):
-                    from kb.audit import log_governance_event
-                    log_governance_event(
-                        "dedup_blocked", existing_id,
-                        {"similarity": similarity, "duplicate_of": existing_id},
-                        namespace=namespace)
-                raise DuplicateError(existing_id, similarity)
-        # v2：agent_id 冗余 = project 或 default（不再由调用方指定身份）
-        project = project or ""
-        record = Record(content=content, tags=tags or [], source=source,
-                        namespace=namespace, agent_id=project or "default",
-                        client=client, project=project)
-        vec = self.embedder.embed_texts([content])[0]
-        self.store.add([record], [vec])
-        self.bm25.add(record)
-        self._persist_bm25()
-        self._sparse_add([record])
-        self._audit_access("write", agent_id, type="memory",
-                           record_id=record.id, content=content,
-                           namespace=namespace, client=client,
-                           project=project)
-        return record
+        with self._write_lock:
+            from kb.governance import DuplicateError, check_duplicate
+            if self.settings.dedup_enabled:
+                existing_id, similarity = check_duplicate(
+                    content, self.store, self.embedder,
+                    threshold=self.settings.dedup_threshold)
+                if existing_id is not None:
+                    # N23b/TASK-0073：去重拦截审计日志（默认开，不阻塞主流程）
+                    if getattr(self.settings, "audit_dedup_enabled", True):
+                        from kb.audit import log_governance_event
+                        log_governance_event(
+                            "dedup_blocked", existing_id,
+                            {"similarity": similarity, "duplicate_of": existing_id},
+                            namespace=namespace)
+                    raise DuplicateError(existing_id, similarity)
+            # v2：agent_id 冗余 = project 或 default（不再由调用方指定身份）
+            project = project or ""
+            record = Record(content=content, tags=tags or [], source=source,
+                            namespace=namespace, agent_id=project or "default",
+                            client=client, project=project)
+            vec = self.embedder.embed_texts([content])[0]
+            self.store.add([record], [vec])
+            self.bm25.add(record)
+            self._persist_bm25()
+            self._sparse_add([record])
+            self._audit_access("write", agent_id, type="memory",
+                               record_id=record.id, content=content,
+                               namespace=namespace, client=client,
+                               project=project)
+            return record
 
     def get_memory(self, record_id: str,
                    agent_id: str = "default",
@@ -325,32 +336,33 @@ class KBService:
         v2：memory 类型仅 (client, project) 归属者可更新，非归属返回 None（FORBIDDEN）。
         English: Update a memory; re-embed and refresh updated_at when content changes.
         v2: memory records can only be updated by their (client, project) owner."""
-        from datetime import datetime
-        record = self.store.get(record_id)
-        if record is None:
-            return None
-        if record.type == RecordType.MEMORY and (
-                record.client != client or (record.project or "") != (project or "")):
-            return None
-        if content is not None:
-            record.content = content
-        if tags is not None:
-            record.tags = tags
-        record.updated_at = datetime.now().isoformat()
-        # 先删旧向量，再按同 id 重新嵌入写入（保持主键不变）
-        self.store.delete([record_id])
-        vec = self.embedder.embed_texts([record.content])[0]
-        self.store.add([record], [vec])
-        self.bm25.remove(record_id)
-        self.bm25.add(record)
-        self._persist_bm25()
-        self._sparse_remove([record_id])
-        self._sparse_add([record])
-        self._audit_access("update", agent_id, type=record.type.value,
-                           record_id=record_id, content=record.content,
-                           namespace=record.namespace, client=client,
-                           project=project)
-        return record
+        with self._write_lock:
+            from datetime import datetime
+            record = self.store.get(record_id)
+            if record is None:
+                return None
+            if record.type == RecordType.MEMORY and (
+                    record.client != client or (record.project or "") != (project or "")):
+                return None
+            if content is not None:
+                record.content = content
+            if tags is not None:
+                record.tags = tags
+            record.updated_at = datetime.now().isoformat()
+            # 先删旧向量，再按同 id 重新嵌入写入（保持主键不变）
+            self.store.delete([record_id])
+            vec = self.embedder.embed_texts([record.content])[0]
+            self.store.add([record], [vec])
+            self.bm25.remove(record_id)
+            self.bm25.add(record)
+            self._persist_bm25()
+            self._sparse_remove([record_id])
+            self._sparse_add([record])
+            self._audit_access("update", agent_id, type=record.type.value,
+                               record_id=record_id, content=record.content,
+                               namespace=record.namespace, client=client,
+                               project=project)
+            return record
 
     def delete_memory(self, record_id: str,
                       agent_id: str = "default",
@@ -360,20 +372,21 @@ class KBService:
         v2：memory 类型仅 (client, project) 归属者可删，非归属返回 False（FORBIDDEN）。
         English: Delete a memory; return False if it does not exist.
         v2: memory records can only be deleted by their (client, project) owner."""
-        record = self.store.get(record_id)
-        if record is None:
-            return False
-        if record.type == RecordType.MEMORY and (
-                record.client != client or (record.project or "") != (project or "")):
-            return False
-        self.store.delete([record_id])
-        self.bm25.remove(record_id)
-        self._persist_bm25()
-        self._sparse_remove([record_id])
-        self._audit_access("delete", agent_id, type=record.type.value,
-                           record_id=record_id, namespace=record.namespace,
-                           client=client, project=project)
-        return True
+        with self._write_lock:
+            record = self.store.get(record_id)
+            if record is None:
+                return False
+            if record.type == RecordType.MEMORY and (
+                    record.client != client or (record.project or "") != (project or "")):
+                return False
+            self.store.delete([record_id])
+            self.bm25.remove(record_id)
+            self._persist_bm25()
+            self._sparse_remove([record_id])
+            self._audit_access("delete", agent_id, type=record.type.value,
+                               record_id=record_id, namespace=record.namespace,
+                               client=client, project=project)
+            return True
 
     # ---- 文档摄取与管理 ----
     def add_document(self, path: str | Path,
@@ -393,27 +406,28 @@ class KBService:
         An empty document yields no chunks and is not ingested, returning chunks=0 directly.
         A-node: doc/web chunks form the shared knowledge base; agent_id is recorded for audit only,
         not used for retrieval isolation."""
-        path = Path(path)
-        text = parse_file(path)
-        chunks = chunk_text(text, self.settings.chunk_size,
-                            self.settings.chunk_overlap)
-        doc_source = source or path.name
-        if not chunks:
-            return {"source": doc_source, "chunks": 0}
-        records = [Record(content=c, type=RecordType.DOC_CHUNK,
-                          source=doc_source, agent_id=agent_id, client=client)
-                   for c in chunks]
-        vecs = self.embedder.embed_texts([r.content for r in records])
-        self.store.add(records, vecs)
-        for r in records:
-            self.bm25.add(r)
-        self._persist_bm25()
-        self._sparse_add(records)
-        self._audit_access("ingest", agent_id, type="doc_chunk",
-                           source=doc_source, content=records[0].content,
-                           namespace=records[0].namespace, client=client,
-                           project=project)
-        return {"source": doc_source, "chunks": len(records)}
+        with self._write_lock:
+            path = Path(path)
+            text = parse_file(path)
+            chunks = chunk_text(text, self.settings.chunk_size,
+                                self.settings.chunk_overlap)
+            doc_source = source or path.name
+            if not chunks:
+                return {"source": doc_source, "chunks": 0}
+            records = [Record(content=c, type=RecordType.DOC_CHUNK,
+                              source=doc_source, agent_id=agent_id, client=client)
+                       for c in chunks]
+            vecs = self.embedder.embed_texts([r.content for r in records])
+            self.store.add(records, vecs)
+            # 改进项 1B：批量并入语料后单次重建（此前每个 chunk 触发一次全量重建）
+            self.bm25.add_many(records)
+            self._persist_bm25()
+            self._sparse_add(records)
+            self._audit_access("ingest", agent_id, type="doc_chunk",
+                               source=doc_source, content=records[0].content,
+                               namespace=records[0].namespace, client=client,
+                               project=project)
+            return {"source": doc_source, "chunks": len(records)}
 
     def add_webpage(self, url: str,
                     agent_id: str = "default",
@@ -429,24 +443,25 @@ class KBService:
         Returns {"source": url, "chunks": count}; a fetch/body-extraction failure raises WebFetchError
         (mapped to 400 with reason by the API layer). No chunks are ingested and chunks=0 is returned
         when the body yields none. A-node: web chunks are shared; agent_id is audit-only."""
-        text = fetch_webpage(url)
-        chunks = chunk_text(text, self.settings.chunk_size,
-                            self.settings.chunk_overlap)
-        if not chunks:
-            return {"source": url, "chunks": 0}
-        records = [Record(content=c, type=RecordType.WEB_CHUNK,
-                          source=url, agent_id=agent_id, client=client) for c in chunks]
-        vecs = self.embedder.embed_texts([r.content for r in records])
-        self.store.add(records, vecs)
-        for r in records:
-            self.bm25.add(r)
-        self._persist_bm25()
-        self._sparse_add(records)
-        self._audit_access("ingest", agent_id, type="web_chunk",
-                           source=url, content=records[0].content,
-                           namespace=records[0].namespace, client=client,
-                           project=project)
-        return {"source": url, "chunks": len(records)}
+        with self._write_lock:
+            text = fetch_webpage(url)
+            chunks = chunk_text(text, self.settings.chunk_size,
+                                self.settings.chunk_overlap)
+            if not chunks:
+                return {"source": url, "chunks": 0}
+            records = [Record(content=c, type=RecordType.WEB_CHUNK,
+                              source=url, agent_id=agent_id, client=client) for c in chunks]
+            vecs = self.embedder.embed_texts([r.content for r in records])
+            self.store.add(records, vecs)
+            # 改进项 1B：批量并入语料后单次重建
+            self.bm25.add_many(records)
+            self._persist_bm25()
+            self._sparse_add(records)
+            self._audit_access("ingest", agent_id, type="web_chunk",
+                               source=url, content=records[0].content,
+                               namespace=records[0].namespace, client=client,
+                               project=project)
+            return {"source": url, "chunks": len(records)}
 
     def list_documents(self) -> list[dict]:
         """按 source 聚合文档列表（source 非空的所有记录，不限 type）。
@@ -468,13 +483,14 @@ class KBService:
     def delete_document(self, source: str) -> int:
         """按 source 删除文档全部记录，返回删除数量；同步清理 BM25 索引。
         English: Delete all records of a document by source, returning the count; also clean the BM25 index."""
-        ids = [r.id for r in self.store.iter_all() if r.source == source]
-        n = self.store.delete_by_source(source)
-        for rid in ids:
-            self.bm25.remove(rid)
-        self._persist_bm25()
-        self._sparse_remove(ids)
-        return n
+        with self._write_lock:
+            ids = [r.id for r in self.store.iter_all() if r.source == source]
+            n = self.store.delete_by_source(source)
+            # 改进项 1B：批量移出语料后单次重建
+            self.bm25.remove_many(ids)
+            self._persist_bm25()
+            self._sparse_remove(ids)
+            return n
 
     # ---- 检索与统计 ----
     def _audit_access(self, action: str, agent_id: str, *,

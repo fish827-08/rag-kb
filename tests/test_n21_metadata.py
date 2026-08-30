@@ -118,16 +118,18 @@ class TestIncrementAccess:
         """异步更新失败（_col.update 抛异常）不向外抛，记 WARNING。"""
         store = self._make_store()
         store._col.update.side_effect = RuntimeError("db error")
-        store.get = MagicMock(return_value=MagicMock(access_count=0, id="id1"))
+        # 改进项 4：批量实现内部走 get_many（原逐条 get 已移除）
+        store.get_many = MagicMock(
+            return_value={"id1": MagicMock(access_count=0, id="id1")})
         # 不应抛异常
         store.increment_access(["id1"])
 
     def test_increment_access_increments_count(self):
-        """正常路径：access_count+1，last_accessed=now，调用 _col.update。"""
+        """正常路径：access_count+1，last_accessed=now，调用 _col.update（批量）。"""
         from kb.models import Record
         store = self._make_store()
         rec = Record(content="test", access_count=3)
-        store.get = MagicMock(return_value=rec)
+        store.get_many = MagicMock(return_value={rec.id: rec})
         store.increment_access([rec.id])
         assert store._col.update.called
         call_kwargs = store._col.update.call_args

@@ -400,7 +400,7 @@ class TestRetrieverSparseHook:
             def __init__(self, recs):
                 self._records = {r.id: r for r in recs}
 
-            def query(self, vec, top_k=10):
+            def query(self, vec, top_k=10, where=None):
                 return [(r, 0.9 - i * 0.1)
                         for i, r in enumerate(self._records.values())][:top_k]
 
@@ -416,8 +416,12 @@ class TestRetrieverSparseHook:
                 return [0.1, 0.2, 0.3]
 
         class _BM25:
-            def search(self, q, top_n=10):
+            def search(self, q, top_n=10, filter_fn=None):
                 return []
+
+            def meta_of(self, record_id):
+                """改进项 3 隔离过滤回调：mock 无元信息 → 返回 None（不拦截）。"""
+                return None
 
         class _Settings:
             def __init__(self, sparse_enabled):
