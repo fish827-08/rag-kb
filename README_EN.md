@@ -6,6 +6,10 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
 [![Glama MCP score](https://glama.ai/mcp/servers/fish827-08/rag-kb/badges/score.svg)](https://glama.ai/mcp/servers/fish827-08/rag-kb)
 
+**Local-first, offline-capable Agent memory & knowledge service.** REST + MCP dual-protocol, hybrid retrieval (vector + BM25/RRF), document/webpage ingestion and RAG Q&A — storage & retrieval fully usable without any LLM.
+
+<!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
+
 **kb** is a local-first, completely free memory & knowledge service for AI agents.
 One resident process (`python -m kb serve`) exposes both **REST** and **MCP** protocols,
 giving Claude Code / Cursor / TraeWork / custom agents persistent memory, document &
