@@ -256,15 +256,15 @@ class KBService:
                    project: str | None = None) -> Record:
         """写入一条记忆短文本并嵌入。
 
-        v2（2026-08-30）：隔离键 = (client, project)；agent_id 仅作兼容冗余
-        （Record.agent_id := project 或 "default"，供旧展示层，不参与隔离）。
+        v3（2026-08-31）：记忆全共享——client/project 仅审计归类，不隔离读写；
+        agent_id 为兼容冗余（Record.agent_id := project 或 "default"，供展示层）。
         N22a/TASK-0069：dedup_enabled 时先做语义去重检查，命中则抛 DuplicateError
         （api 层捕获返回 409）；关闭时零行为变化。
-        English: Write a memory short text and embed it. v2: isolation key = (client, project);
-        agent_id is kept only as a compatibility redundancy (Record.agent_id := project or
-        "default"), not used for isolation. N22a: when dedup_enabled, run a semantic dedup
-        check first and raise DuplicateError on a hit (mapped to 409 by the api layer);
-        zero behavior change when disabled."""
+        English: Write a memory short text and embed it. v3: memories are fully shared —
+        client/project are audit-bucketing only; agent_id is a compatibility redundancy
+        (Record.agent_id := project or "default"), for the display layer. N22a: when
+        dedup_enabled, run a semantic dedup check first and raise DuplicateError on a hit
+        (mapped to 409 by the api layer); zero behavior change when disabled."""
         with self._write_lock:
             from kb.governance import DuplicateError, check_duplicate
             if self.settings.dedup_enabled:
@@ -300,16 +300,12 @@ class KBService:
                    agent_id: str = "default",
                    client: str = "default",
                    project: str | None = None) -> Record | None:
-        """读取单条记忆；v2：memory 类型仅 (client, project) 归属者可读
-        （数据不出库，非归属按 None 处理，调用方转 NOT_FOUND/FORBIDDEN）。
-        English: Read a single memory; v2: memory records are readable only by the
-        (client, project) owner (looked up in the store; non-owners get None)."""
+        """读取单条记忆；v3（2026-08-31）：全共享——memory 与 doc/web 均
+        返回记录本体；client/project 仅用于审计归类，不参与可见性。
+        English: Read a single memory; v3: fully shared — memory and doc/web records
+        are all returned as-is; client/project are audit-bucketing only, not visibility."""
         record = self.store.get(record_id)
         if record is None:
-            return None
-        # 共享知识（doc/web chunk）所有客户端可见；个人记忆按 (client, project) 校验
-        if record.type == RecordType.MEMORY and (
-                record.client != client or (record.project or "") != (project or "")):
             return None
         self._audit_access("read", agent_id, type=record.type.value,
                            record_id=record_id, content=record.content,
@@ -333,16 +329,13 @@ class KBService:
                       client: str = "default",
                       project: str | None = None) -> Record | None:
         """更新记忆；content 变更时重新嵌入并更新 updated_at。
-        v2：memory 类型仅 (client, project) 归属者可更新，非归属返回 None（FORBIDDEN）。
+        v3（2026-08-31）：全共享——不再校验 (client, project) 归属，任何调用方均可更新。
         English: Update a memory; re-embed and refresh updated_at when content changes.
-        v2: memory records can only be updated by their (client, project) owner."""
+        v3: fully shared — (client, project) ownership is no longer checked; anyone can update."""
         with self._write_lock:
             from datetime import datetime
             record = self.store.get(record_id)
             if record is None:
-                return None
-            if record.type == RecordType.MEMORY and (
-                    record.client != client or (record.project or "") != (project or "")):
                 return None
             if content is not None:
                 record.content = content
@@ -369,15 +362,12 @@ class KBService:
                       client: str = "default",
                       project: str | None = None) -> bool:
         """删除记忆；不存在返回 False。
-        v2：memory 类型仅 (client, project) 归属者可删，非归属返回 False（FORBIDDEN）。
+        v3（2026-08-31）：全共享——不再校验 (client, project) 归属，任何调用方均可删除。
         English: Delete a memory; return False if it does not exist.
-        v2: memory records can only be deleted by their (client, project) owner."""
+        v3: fully shared — (client, project) ownership is no longer checked; anyone can delete."""
         with self._write_lock:
             record = self.store.get(record_id)
             if record is None:
-                return False
-            if record.type == RecordType.MEMORY and (
-                    record.client != client or (record.project or "") != (project or "")):
                 return False
             self.store.delete([record_id])
             self.bm25.remove(record_id)
@@ -589,8 +579,9 @@ class KBService:
                agent_id: str = "default",
                client: str = "default",
                project: str | None = None) -> list[dict]:
-        """混合检索（v2：按 (client, project) 隔离 memory，doc/web 共享）。
-        English: Hybrid retrieval (v2: memory isolated by (client, project); doc/web shared)."""
+        """混合检索（v3：全共享，无 (client, project) 隔离；client/project 仅审计）。
+        English: Hybrid retrieval (v3: fully shared without (client, project) isolation;
+        client/project are audit-bucketing only)."""
         results = self.retriever.search(
             query, top_k=top_k, mode=mode, type=type, tag=tag,
             agent_id=agent_id, client=client, project=project or "")
@@ -617,7 +608,8 @@ class KBService:
         - llm_mode=local/cloud：走 N10 原路径（后端由 llm.chat 内部按 status/mode 决定）；
         - llm_mode=auto：智能路由（缓存 → 本地分类 → 敏感覆盖 → 分支路由），见 _ask_auto；
         - LLM 禁用时抛 LLMDisabledError（API 层转 503 + 配置指引）。
-        - A 节点：检索按 agent_id 隔离 memory（doc/web 共享），并写 ask 存取审计。
+        - v3（2026-08-31）：检索全共享，无 (client, project) 隔离（doc/web 亦共享），
+          并写 ask 存取审计。
         English: RAG Q&A: retrieve → build context (truncated by char budget) → guarded prompt → generate → attach sources.
         - top_k=5 retrieval, results joined into context in descending score order;
         - char budget = context_token_limit * 2 (~2:1 token-to-char estimate);

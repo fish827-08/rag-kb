@@ -372,26 +372,21 @@ Full key list: [`.env.example`](../.env.example).
 - **Fallback**: the plain-text prompt in `docs/AGENT_PROMPT.md` — paste it into any agent to connect;
   no skill mechanism required. Both sources stay in sync.
 
-### 5.3 Memory isolation & access audit (v2: client + project, 2026-08-30)
+### 5.3 Fully shared memory & access audit (v3: client + project as audit-only tags, 2026-08-31)
 
-**Identity isolation** (multiple clients/projects never cross-read each other's memories):
+**Memory is fully shared** (local single-user positioning — all agents/tasks read the same memory):
 
-- **Isolation key = `(client, project)` — identity comes from the environment, agents do NOT self-report**:
-  - `client` (source client): MCP auto-detects it from the handshake clientInfo (TraeWork / Claude
-    Code / Cursor — framework-level, cannot be spoofed); REST defaults to `HTTP`; CLI defaults to `CLI`
-  - `project` (project/task bucket): MCP declares it in the connection config; CLI auto-takes the
-    current directory name; REST passes it explicitly. **Omitted = this client's default bucket**
-  - No `agent_id` parameter anymore — the record primary key is generated server-side (uuid);
-    agents do not (and should not) self-report identity
-- **Identity field regulation (v2)**: MCP and REST validate `client`/`project` formats — `project`:
-  letters/digits/CJK/underscore/hyphen, 1-64 chars; `client` additionally allows spaces and dots
-  (e.g. `Claude Code`); invalid values are rejected (REST 422 / MCP `INVALID_ARGUMENT`)
-- **Personal memory (`memory`) is strictly isolated by (client, project)**: retrieval only returns this
-  client+project's memories; reading/updating/deleting another (client, project)'s memory is rejected
-  (REST 404 / MCP `FORBIDDEN`)
-- **Shared knowledge (doc/web chunks) is visible to all**: documents/web pages ingested by any client
-  are searchable by every client (RAG Q&A is unaffected)
-- Old records without `project`/`client` fall back to the default bucket/`default` — zero migration
+- **All memories (`memory`) and knowledge (`doc/web` chunks) are fully shared**: any client,
+  task, or AI can search / read / update / delete every record — no more (client, project)
+  read/write isolation; preferences and decisions are visible across agents and tasks
+- **v2 isolation removed (2026-08-31)**: the (client, project) dual-key isolation proved
+  unworkable for local single-user use — client detection works, but project/task attribution
+  relies on connection/directory context, and missing isolation keys made memories invisible
+  entirely; security boundaries remain `KB_API_KEY`'s job (a real tenant model can come later)
+- **`client` / `project` remain optional**, used only for **audit categorization and metadata**
+  (which client/project a record came from) — they never affect read/write visibility;
+  format validation is kept (invalid values → REST 422 / MCP `INVALID_ARGUMENT`)
+- Old records (long stored under per-project isolation) need no migration — fully searchable from v3 on
 
 **Access audit** (who stored/read what, from which client/project):
 

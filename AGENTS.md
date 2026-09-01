@@ -4,9 +4,19 @@
 
 ## 0. 强制规则
 
-1. **开始任何编码工作前，先完整阅读设计文档**：`docs/superpowers/specs/2026-08-23-kb-memory-service-design.md`。它是本项目唯一的事实来源（single source of truth）。
+1. **开始任何编码工作前，先阅读与本次改动相关的设计文档**：改动涉及哪个模块/功能，就通读对应的 spec 与计划（完整文档清单见第 1 节）。核心基线 `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` 定义需求、架构与 API 的方式适用于全项目，是新人入门必读。
 2. 实现与设计文档冲突时：停下来向用户确认，先修订文档再改代码。
 3. 仓库内除设计文档与本文件外的所有文档均已作废（见第 1 节），**禁止从中提取需求、架构或约定**。
+
+### 验证协议（2026-08-31 定稿）
+
+| 变更级别 | 设计文档范围 | 测试范围 |
+|---|---|---|
+| **小改动 / 功能迭代**（常规） | 只读相关 spec | **只跑相关测试**（改动涉及的模块/功能的验收测试 + 单元测试） |
+| **版本大更新 / 核心架构改变** | 通读相应 spec 链 | **全量测试**（kb 套件 `pytest tests/`） |
+| **orchestra（B 线）** | — | **冻结不测**：任何情况下不跑 `orchestra/tests/`，也不为其改动做验证开销 |
+
+其余红线不变：先测后实现（TDD）；任何 AI 不得代替人工声称"验收已完成"；交付时出具"自动化已覆盖 / 待人工验证"两部分。
 
 ## 1. 文档有效性声明
 
@@ -24,7 +34,8 @@
 | `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` | ✅ 有效 | orchestra v2 迭代计划（总线 B1 P0 载体；V2-0 修复卡保留，其余节点按总线 B1.1-B1.7 编号演进） |
 | `README.md` | ✅ 有效 | 项目说明（N16 按新定位重写：快速开始 / MCP 挂载 / 端点速查） |
 | `docs/AGENT_PROMPT.md` / `AGENT_PROMPT_EN.md` | ✅ 有效 | 通用 Agent 接入提示词（客户端无关；另封装为 `skills/kb-memory/SKILL.md`，安装见 scripts/README.md） |
-| `docs/superpowers/specs/2026-08-30-memory-scope-refactor-design.md` | ✅ 有效 | **记忆范围重构 v2（2026-08-30 收口）**：隔离键改 client+project（agent_id 降为主键冗余）、MCP 工具去 agent_id、审计文件 client__project、遗忘时钟注入验证；取代 2026-08-29 agent-isolation spec 的隔离语义 |
+| `docs/superpowers/specs/2026-08-30-memory-scope-refactor-design.md` | ✅ 有效（隔离语义已取代） | **记忆范围重构 v2（2026-08-30 收口）**：隔离键改 client+project（agent_id 降为主键冗余）、MCP 工具去 agent_id、审计文件 client__project、遗忘时钟注入验证；**其 (client, project) 隔离语义已被 v3 取代**（见下行） |
+| `docs/superpowers/specs/2026-08-31-memory-share-refactor-design.md` | ✅ 有效 | **记忆全共享 v3（2026-08-31 定稿）**：去除 (client, project) 隔离——所有记忆/知识全共享，client/project 降级为审计归类与元数据；取代 v2 的隔离语义 |
 | `.mcp.json` | ✅ 有效 | 项目级 MCP 挂载配置（Claude Code 等在本目录启动即连 kb 服务） |
 | `_archive/`（含旧 `README.md`、旧 `ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`、`data/`） | ❌ 已归档（2026-08-23/24） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写**（注意：归档内旧 ROADMAP.md 与根目录新 ROADMAP.md 无关） |
 
@@ -63,7 +74,7 @@
 ### 开发流程（节点门禁制）
 
 1. 开发严格按节点计划串行推进：**`docs/superpowers/plans/2026-08-23-kb-dev-nodes.md`**。
-2. 每个节点必须：全部验收测试通过 → git 提交（含测试）→ 打节点 tag（如 `node-01`）→ 人工确认后才能进入下一节点。**禁止并行开发多个节点，禁止跳过未通过门禁的节点**。
+2. 每个节点必须：**相关测试**通过（重大变更按第 0 节验证协议跑全量）→ git 提交（含测试）→ 打节点 tag（如 `node-01`）→ 人工确认后才能进入下一节点。**禁止并行开发多个节点，禁止跳过未通过门禁的节点**。
 3. 节点验收测试由文档/测试 AI 提供或评审；开发 AI 也可补充单元测试，但验收测试不得自行修改（发现测试本身有误时提出，由文档 AI 修正）。
 4. 红线：**任何 AI 不得代替人工声称"验收已完成"**；自动化测试全绿只是进入人工验收的前置条件。交付时明确说明"自动化已覆盖 / 待人工验证"两部分。
 

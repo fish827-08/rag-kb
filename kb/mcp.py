@@ -15,6 +15,7 @@ from mcp.server.mcpserver.context import Context
 from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
                         WebFetchError, validate_agent_id, validate_client,
                         validate_project)
+from kb.i18n import mcp_instructions
 
 # 模块级服务单例：None 表示尚未注入，首次调用工具时惰性自建
 _service: KBService | None = None
@@ -48,16 +49,15 @@ def _client_from_ctx(ctx) -> str:
 
 def _check_identity(ctx, client: str | None,
                     project: str | None) -> str | None:
-    """身份字段规约校验（v2：client/project，无 agent_id）。
+    """身份字段规约校验（v3：client/project 仅审计归类，不参与隔离）。
 
-    - v2（2026-08-30）：agent_id 不再由 AI 自报——client 从 MCP clientInfo 自动识别，
-      project 由连接配置/环境承载（可空=该客户端默认桶）；仅校验显式传入值的格式。
+    - v3（2026-08-31）：记忆全共享，client/project 不再承担隔离语义，
+      仅用于存取审计归类与记录元数据；仍校验显式传入值的格式。
     - client/project 可空缺省（client 空=自动识别），显式传入非法值拦截。
     返回 None=通过，否则返回错误消息。
-    English: Validate the identity fields (v2: client/project, no agent_id).
-    client is auto-detected from the MCP clientInfo; project comes from the connection
-    config/environment (empty = this client's default bucket); only explicitly passed
-    values are format-checked. Returns None on pass, else an error message."""
+    English: Validate the identity fields (v3: client/project are audit-bucketing only,
+    never used for isolation). Only explicitly passed values are format-checked;
+    empty client = auto-detected from MCP clientInfo. Returns None on pass, else an error message."""
     err = validate_client(client or _client_from_ctx(ctx))
     if err:
         return err
@@ -75,18 +75,15 @@ def write_memory(content: str,
                  project: str | None = None,
                  client: str | None = None,
                  ctx: Context | None = None) -> dict:
-    """写入一条记忆短文本（事实/笔记/摘要），可选标签与归属项目；返回 {"id": 记录ID}。
+    """写入一条记忆短文本（事实/笔记/摘要），可选标签；返回 {"id": 记录ID}。
     内容为空串或纯空白时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。
-    v2（2026-08-30）：身份由环境承载——client 自动从 MCP 握手 clientInfo 识别
-    （TraeWork / Claude Code / Cursor），project 为项目/任务归属（连接配置声明，
-    可空=该客户端默认桶）；记录主键由服务端生成。共享知识（add_document/add_webpage）
-    所有客户端可见。
-    English: Write a memory short text (fact/note/summary) with optional tags and project; returns {"id": record_id}.
+    v3（2026-08-31）：所有记忆全共享——client（MCP 握手 clientInfo 自动识别）与
+    project（可选）仅用于审计归类，不再隔离读写；记录主键由服务端生成。
+    English: Write a memory short text (fact/note/summary) with optional tags; returns {"id": record_id}.
     Returns {"error": "INVALID_ARGUMENT", "message": reason} when content is empty or blank.
-    v2: identity comes from the environment — client is auto-detected from the MCP clientInfo
-    handshake (TraeWork / Claude Code / Cursor), project is the project/task bucket (declared in the
-    connection config; empty = this client's default bucket). The record primary key is generated
-    server-side. Shared knowledge (add_document/add_webpage) is visible to all clients."""
+    v3: all memories are fully shared — client (auto-detected from the MCP clientInfo) and
+    project (optional) are audit-bucketing only and never isolate access. The record primary
+    key is generated server-side."""
     if not content or not content.strip():
         return {"error": "INVALID_ARGUMENT", "message": "content 不能为空或纯空白"}
     err = _check_identity(ctx, client, project)
@@ -104,14 +101,12 @@ def search_memory(query: str, top_k: int = 5,
                   ctx: Context | None = None) -> list[dict] | dict:
     """混合检索记忆与知识（向量语义 + BM25 关键词，RRF 融合）；
     返回命中列表，每项含 id/content/score/type/source。
-    v2：个人记忆（memory）只返回归属当前 (client, project) 的；
-    共享知识（doc/web chunk）所有客户端可见。top_k 小于 1 时返回
-    {"error": "INVALID_ARGUMENT", "message": 原因}。
+    v3（2026-08-31）：所有记忆与知识全共享，不限 client/project。
+    top_k 小于 1 时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。
     client：来源客户端（可选，缺省从 clientInfo 自动识别）。
     English: Hybrid retrieval over memories and knowledge (vector semantics + BM25 keywords, RRF-fused);
     returns a hit list, each item having id/content/score/type/source.
-    v2: memory records only return those owned by the current (client, project);
-    shared knowledge (doc/web chunks) is visible to all clients.
+    v3: all memories and knowledge are fully shared, unrestricted by client/project.
     Returns {"error": "INVALID_ARGUMENT", "message": reason} when top_k is less than 1.
     client: source client (optional; auto-detected from clientInfo when omitted)."""
     if top_k < 1:
@@ -128,12 +123,12 @@ def read_memory(record_id: str,
                 project: str | None = None,
                 client: str | None = None,
                 ctx: Context | None = None) -> dict:
-    """按 ID 读取单条记忆完整内容；记录不存在返回 {"error": "NOT_FOUND"}；
-    非 (client, project) 归属的 memory 返回 {"error": "FORBIDDEN"}；共享知识可读。
+    """按 ID 读取单条记忆完整内容；记录不存在返回 {"error": "NOT_FOUND"}。
     client：来源客户端（可选，缺省从 clientInfo 自动识别）。
-    project：项目归属（可选，缺省=该客户端默认桶）。
-    English: Read the full content of a single memory by ID; returns {"error": "NOT_FOUND"} when absent;
-    a memory not owned by the (client, project) returns {"error": "FORBIDDEN"}; shared knowledge is readable."""
+    project：项目归属（可选，仅审计归类）。
+    v3（2026-08-31）：所有记忆全共享，无 FORBIDDEN。
+    English: Read the full content of a single memory by ID; returns {"error": "NOT_FOUND"} when absent.
+    v3: all memories are fully shared — there is no FORBIDDEN."""
     err = _check_identity(ctx, client, project)
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
@@ -141,9 +136,6 @@ def read_memory(record_id: str,
     record = _svc().get_memory(record_id, agent_id=project or "default",
                                client=c, project=project)
     if record is None:
-        existing = _svc().store.get(record_id) if hasattr(_svc(), "store") else None
-        if existing is not None and existing.type.value == "memory":
-            return {"error": "FORBIDDEN"}
         return {"error": "NOT_FOUND"}
     return record.model_dump()
 
@@ -153,12 +145,12 @@ def update_memory(record_id: str, content: str,
                   client: str | None = None,
                   ctx: Context | None = None) -> dict:
     """按 ID 更新记忆内容（变更后自动重新嵌入）；记录不存在返回 {"error": "NOT_FOUND"}；
-    非 (client, project) 归属返回 {"error": "FORBIDDEN"}；
     内容为空串或纯空白时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。
     client：来源客户端（可选，缺省从 clientInfo 自动识别）。
+    v3（2026-08-31）：所有记忆全共享，无 FORBIDDEN。
     English: Update a memory's content by ID (auto re-embed on change); returns {"error": "NOT_FOUND"}
-    when absent; non-(client, project) owners get {"error": "FORBIDDEN"}; empty content
-    returns {"error": "INVALID_ARGUMENT", "message": reason}."""
+    when absent; empty content returns {"error": "INVALID_ARGUMENT", "message": reason}.
+    v3: all memories are fully shared — there is no FORBIDDEN."""
     if not content or not content.strip():
         return {"error": "INVALID_ARGUMENT", "message": "content 不能为空或纯空白"}
     err = _check_identity(ctx, client, project)
@@ -169,9 +161,6 @@ def update_memory(record_id: str, content: str,
                                   agent_id=project or "default",
                                   client=c, project=project)
     if record is None:
-        existing = _svc().store.get(record_id) if hasattr(_svc(), "store") else None
-        if existing is not None and existing.type.value == "memory":
-            return {"error": "FORBIDDEN"}
         return {"error": "NOT_FOUND"}
     return record.model_dump()
 
@@ -180,20 +169,17 @@ def delete_memory(record_id: str,
                   project: str | None = None,
                   client: str | None = None,
                   ctx: Context | None = None) -> dict:
-    """按 ID 删除一条记忆；成功返回 {"ok": true}，记录不存在返回 {"error": "NOT_FOUND"}；
-    非 (client, project) 归属返回 {"error": "FORBIDDEN"}。
+    """按 ID 删除一条记忆；成功返回 {"ok": true}，记录不存在返回 {"error": "NOT_FOUND"}。
     client：来源客户端（可选，缺省从 clientInfo 自动识别）。
+    v3（2026-08-31）：所有记忆全共享，无 FORBIDDEN。
     English: Delete a memory by ID; returns {"ok": true} on success and {"error": "NOT_FOUND"} when
-    it does not exist; non-(client, project) owners get {"error": "FORBIDDEN"}."""
+    it does not exist. v3: all memories are fully shared — there is no FORBIDDEN."""
     err = _check_identity(ctx, client, project)
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
     c = _resolve_client_ctx(ctx, client)
     if not _svc().delete_memory(record_id, agent_id=project or "default",
                                 client=c, project=project):
-        existing = _svc().store.get(record_id) if hasattr(_svc(), "store") else None
-        if existing is not None and existing.type.value == "memory":
-            return {"error": "FORBIDDEN"}
         return {"error": "NOT_FOUND"}
     return {"ok": True}
 
@@ -251,12 +237,12 @@ def ask_kb(question: str,
            client: str | None = None,
            ctx: Context | None = None) -> dict:
     """基于知识库的 RAG 问答（检索 → 上下文拼装 → 护栏生成），返回 answer 与 sources；
-    v2：检索按当前 (client, project) 隔离 memory（doc/web 共享），并写 ask 存取审计；
+    v3：检索记忆与知识全共享（无 client/project 隔离），并写 ask 存取审计；
     client：来源客户端（可选，缺省从 clientInfo 自动识别）；
     LLM 不可用时返回 {"error": "LLM_DISABLED", "message": 配置指引}。
     English: Knowledge-base RAG Q&A (retrieve → build context → guarded generation), returning answer and sources;
-    v2: retrieval isolates memory by the current (client, project) (doc/web shared); an ask access-audit is emitted;
-    client: source client (optional; auto-detected from clientInfo when omitted);
+    v3: retrieval is fully shared over memories and knowledge (no client/project isolation); an ask
+    access-audit is emitted; client: source client (optional; auto-detected from clientInfo when omitted);
     returns {"error": "LLM_DISABLED", "message": setup guidance} when the LLM is unavailable."""
     err = _check_identity(ctx, client, project)
     if err:
@@ -277,7 +263,11 @@ def create_mcp_server(service: KBService) -> MCPServer:
     Injecting the service also overrides the module-level singleton, so MCP tools and REST share the same KBService."""
     global _service
     _service = service
-    mcp = MCPServer(name="kb")
+    # v3（2026-08-31）：MCPServer instructions 承载全局接入规约——任何客户端挂载 MCP 即自动
+    # 注入 AI 上下文（跨客户端全局提示词，无需 skill/客户端全局规则）；中英双语按系统语言选一套。
+    # 核心：不要求先做健康探测、反馈极简（记了/没记+原因）、记忆全共享。
+    mcp = MCPServer(name="kb",
+                    instructions=mcp_instructions())
     for fn in (write_memory, search_memory, read_memory, update_memory,
                delete_memory, add_document, add_webpage, ask_kb):
         mcp.tool()(fn)

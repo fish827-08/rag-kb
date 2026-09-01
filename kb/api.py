@@ -206,11 +206,9 @@ class MemoryUpdate(BaseModel):
 
 class SearchRequest(BaseModel):
     """检索请求；query 必填，top_k/mode 带默认值，type/tag 可选过滤。
-    agent_id：A 节点强制隔离——memory 只返回归属该 Agent 的，doc/web 共享。
-    client：来源客户端（可选）。
+    agent_id/client/project：v3 仅用于审计归类，不参与隔离（记忆与知识全共享）。
     English: Search request; query is required, top_k/mode have defaults, and type/tag are optional filters.
-    agent_id: A-node mandatory isolation — memory records only return those owned by the calling agent,
-    doc/web chunks are shared. client: source client (optional)."""
+    agent_id/client/project: v3 audit-bucketing only — memories and knowledge are fully shared."""
     query: str
     top_k: int = Field(default=5, ge=1)
     mode: Literal["hybrid", "vector", "keyword"] = "hybrid"
@@ -240,9 +238,9 @@ class AskRequest(BaseModel):
     """问答请求；question 必填。
     English: Ask request; question is required."""
     question: str
-    agent_id: str = "default"          # A 节点：问答检索按该 Agent 隔离 memory
-    client: str = "HTTP"               # 来源客户端；REST 未显式传时默认 HTTP
-    project: str | None = None         # 项目名（可选，仅用于审计文件名归类）
+    agent_id: str = "default"
+    client: str = "HTTP"
+    project: str | None = None  # 项目名（可选，v3 仅用于审计文件名归类）
 
     @field_validator("agent_id", "client", "project")
     @classmethod
@@ -397,7 +395,7 @@ def _wrap_api_key(app, settings):
 
     流程：
       1) settings.api_key 为空 → 直通（降级模式，等同 v1.x 行为）
-      2) 白名单 GET /api/v1/healthz → 放行（存活探针）
+      2) 白名单 GET /api/v1/healthz 与别名 GET /health → 放行（存活探针）
       3) 取 key：Authorization: Bearer <key> 优先，其次 X-API-Key: <key>
       4) 缺失/不匹配 → 401 JSON {"error":"UNAUTHORIZED","message":"missing or invalid api key"}
          （Content-Type: application/json; charset=utf-8；不区分缺失与错误，防探测）
@@ -409,7 +407,8 @@ def _wrap_api_key(app, settings):
     English: API-Key auth middleware (N19/TASK-0062): pure ASGI; empty key passes through, non-empty validates
     Bearer/X-API-Key. Same pattern as _wrap_sse_charset / _wrap_request_log (pure functional wrapping, no FastAPI
     dependency injection, ensuring coverage of the mounted /mcp sub-app and the /dashboard static mount).
-    Flow: 1) empty settings.api_key → pass through (legacy mode); 2) whitelist GET /api/v1/healthz → allow (liveness);
+    Flow: 1) empty settings.api_key → pass through (legacy mode); 2) whitelist GET /api/v1/healthz and its
+    alias GET /health → allow (liveness);
     3) extract key: Authorization: Bearer <key> first, then X-API-Key: <key>;
     4) missing/mismatch → 401 JSON {"error":"UNAUTHORIZED","message":"missing or invalid api key"}
     (Content-Type: application/json; charset=utf-8; no distinction between missing and wrong, to prevent probing);
@@ -430,8 +429,8 @@ def _wrap_api_key(app, settings):
             return
         method = scope.get("method", "")
         path = scope.get("path", "")
-        # 白名单：GET /api/v1/healthz（存活探针，无敏感数据）
-        if method == "GET" and path == "/api/v1/healthz":
+        # 白名单：GET /api/v1/healthz 及其别名 /health（存活探针，无敏感数据）
+        if method == "GET" and path in ("/api/v1/healthz", "/health"):
             await app(scope, receive, send)
             return
         # 取 key：Authorization: Bearer <key> 优先
@@ -578,7 +577,7 @@ def create_app(settings: Settings | None = None,
                           project=project)
         if r is None:
             raise HTTPException(status_code=404,
-                                detail={"error": "NOT_FOUND", "message": "记录不存在或无权访问"})
+                                detail={"error": "NOT_FOUND", "message": "记录不存在"})
         return r.model_dump()
 
     @app.patch("/api/v1/memories/{record_id}")
@@ -590,7 +589,7 @@ def create_app(settings: Settings | None = None,
                              agent_id=agent_id, client=client, project=project)
         if r is None:
             raise HTTPException(status_code=404,
-                                detail={"error": "NOT_FOUND", "message": "记录不存在或无权访问"})
+                                detail={"error": "NOT_FOUND", "message": "记录不存在"})
         return r.model_dump()
 
     @app.delete("/api/v1/memories/{record_id}")
@@ -600,13 +599,14 @@ def create_app(settings: Settings | None = None,
         if not kb.delete_memory(record_id, agent_id=agent_id, client=client,
                                 project=project):
             raise HTTPException(status_code=404,
-                                detail={"error": "NOT_FOUND", "message": "记录不存在或无权访问"})
+                                detail={"error": "NOT_FOUND", "message": "记录不存在"})
         return {"ok": True}
 
     @app.post("/api/v1/search")
     def search(body: SearchRequest) -> dict:
-        """混合检索；A 节点按 agent_id 强制隔离 memory（doc/web 共享）。
-        English: Hybrid retrieval with A-node mandatory memory isolation by agent_id (doc/web shared)."""
+        """混合检索（v3：记忆与知识全共享，无 client/project 隔离；身份仅审计）。
+        English: Hybrid retrieval (v3: memories and knowledge fully shared without
+        client/project isolation; identity is audit-bucketing only)."""
         results = kb.search(body.query, top_k=body.top_k, mode=body.mode,
                             type=body.type, tag=body.tag,
                             agent_id=body.agent_id, client=body.client,
@@ -720,8 +720,11 @@ def create_app(settings: Settings | None = None,
             action=action, days=days, limit=limit)
         return {"items": items, "total": len(items)}
 
+    @app.get("/health")
     @app.get("/api/v1/healthz")
     def healthz() -> dict:
+        # /health 为 /api/v1/healthz 的别名（复用同一处理函数）：部分 agent/探针习惯探测 /health，
+        # 避免 404 误判“服务未启动”。鉴权白名单同步豁免（见 _wrap_api_key）。
         return {"status": "ok", **kb.stats()}
 
     @app.post("/api/v1/monitor/summary")

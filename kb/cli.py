@@ -172,6 +172,55 @@ def _service() -> KBService:
     return KBService(get_settings())
 
 
+# ---- serve 启动健壮性：端口预检与 kb.pid 自管理（任务 #2）----
+
+def _pid_file() -> Path:
+    """kb.pid 路径：当前工作目录（经 start_kb.bat 启动时即仓库根）。"""
+    return Path.cwd() / "kb.pid"
+
+
+def is_port_in_use(host: str, port: int) -> bool:
+    """端口占用预检：getaddrinfo 解析 host 确定地址族（IPv4/IPv6 均支持），
+    取首个结果试绑，绑定失败即视为已被占用。
+
+    背景：pythonw 无控制台，端口被占时绑定失败完全静默，进程活着但不监听，
+    形成“挂死空壳”。启动前先预检，被占立刻报错退出而非制造空壳。
+    无法解析（如地址非法）时保守按“已占用”处理，宁可拒绝启动也不留空壳。
+    注意：预检与真正绑定之间存在 TOCTOU 残余窗口（期间被别的进程抢占），
+    由 start_kb.bat 的健康轮询兜底，此处只防典型的双实例竞跑。
+    """
+    import socket
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return True  # 无法解析，保守拒绝启动
+    if not infos:
+        return True
+    family, _, _, _, addr = infos[0]
+    with socket.socket(family, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(addr)
+        except OSError:
+            return True
+    return False
+
+
+def write_pid_file() -> None:
+    """由服务进程自身写入工作区根 kb.pid（当前进程 PID，供 stop_kb.bat 使用）。"""
+    _pid_file().write_text(f"{os.getpid()}\n", encoding="utf-8")
+
+
+def remove_pid_file() -> None:
+    """退出时清理 kb.pid；仅当内容确为本进程 PID 时才删除，避免误删另一实例的记录。"""
+    pid_path = _pid_file()
+    try:
+        if pid_path.exists() and \
+                pid_path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            pid_path.unlink()
+    except OSError:
+        pass  # 清理失败不阻断退出（stop_kb.bat 另有端口/命令行兜底）
+
+
 @app.command()
 def add(content: str,
         tags: str = typer.Option("", "--tags", help="逗号分隔的标签"),
@@ -180,7 +229,7 @@ def add(content: str,
         agent: str = typer.Option("default", "--agent", help="Agent 身份（兼容参数，v2 不再参与隔离）"),
         client: str = typer.Option("CLI", "--client", help="来源客户端（默认 CLI）"),
         project: str | None = typer.Option(None, "--project", help="项目名；缺省自动取当前目录名（默认桶用 - 显式指定）")):
-    """写入一条记忆（归属 (client, project)，之后仅同客户端同项目可检索/改/删）。"""
+    """写入一条记忆（v3：全共享，client/project 仅审计归类，任何客户端/任务均可读）。"""
     svc = _service()
     project = project if project is not None else (Path.cwd().name or "-")
     r = svc.add_memory(
@@ -197,7 +246,7 @@ def search(query: str,
            agent: str = typer.Option("default", "--agent", help="Agent 身份（兼容参数）"),
            client: str = typer.Option("CLI", "--client", help="来源客户端（默认 CLI）"),
            project: str | None = typer.Option(None, "--project", help="项目名；缺省自动取当前目录名")):
-    """混合检索（v2：memory 按当前 (client, project) 隔离，doc/web 共享）。"""
+    """混合检索（v3：记忆与知识全共享，无 (client, project) 隔离）。"""
     project = project if project is not None else (Path.cwd().name or "-")
     hits = _service().search(query, top_k=top_k, mode=mode, agent_id=agent,
                              client=client, project=project)
@@ -282,7 +331,7 @@ def ask(
 
     LLM 不可用时仍输出检索命中（标注"仅检索未生成"），退出码 1。
     When the LLM is unavailable, still prints retrieval hits (marked "retrieval only"), exit code 1.
-    A 节点：按 agent 隔离 memory（doc/web 共享）。
+    A 节点 legacy 说明已在 v3（2026-08-31）移除：检索不再按 client/project 隔离。
     """
     from kb.service import LLMDisabledError
     svc = _service()
@@ -331,6 +380,14 @@ def serve():
     import uvicorn
     from kb.api import create_app, exposure_warning
     s = get_settings()
+    # 端口占用预检：先于一切重初始化（设备检测/模型加载），被占立刻中文报错退出，
+    # 杜绝“进程活着但不监听”的双实例竞跑空壳（任务 #2）
+    if is_port_in_use(s.api_host, s.api_port):
+        console.print(f"[red]端口 {s.api_port} 已被占用，可能已有实例在运行。"
+                      f"请先停止已有实例（Windows：scripts\\windows\\stop_kb.bat；"
+                      f"Linux：systemctl stop kb 或 kill 对应进程），"
+                      f"确认端口释放后重试。[/red]")
+        raise typer.Exit(code=1)
     # 终端交互式设备检测（显式配置/runtime.json/询问），结果注入 settings
     s.device = resolve_device(s, interactive=True)
     # N29 启动安全警告：非回环监听 + 未鉴权 → 终端醒目横幅（日志侧由 lifespan 记 warning）
@@ -340,7 +397,13 @@ def serve():
         console.print(f"[bold red]{warn}[/bold red]")
         console.print(f"[bold red]{'!' * 68}[/bold red]\n")
     app = create_app(s, enable_watcher=True)
-    uvicorn.run(app, host=s.api_host, port=s.api_port)
+    # kb.pid 由服务进程自身管理：启动前写入（真实存活到此处才写，不再由
+    # start_kb.bat 猜写）；无论正常退出还是异常，退出时清理，不留指向死进程的旧 pid。
+    write_pid_file()
+    try:
+        uvicorn.run(app, host=s.api_host, port=s.api_port)
+    finally:
+        remove_pid_file()
 
 
 @app.command(name="mcp")

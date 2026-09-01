@@ -51,36 +51,26 @@ class HybridRetriever:
                project: str = "") -> list[dict]:
         """mode: hybrid/vector/keyword；每路取 3*top_k 候选；
         type/tag 过滤在融合后进行（过滤后不足 top_k 属正常）；
-        (client, project) 隔离（v2 spec 2.3）：memory 记录仅返回归属该
-        client+project 的，doc_chunk/web_chunk（共享知识库）不受隔离；
-        agent_id 仅作兼容冗余不参与过滤；
+        v3（2026-08-31）：所有记忆（memory）与知识（doc/web）全共享，不再按
+        (client, project) 隔离——任何客户端/任务均可检索全部记录；
+        client/project/agent_id 仅作审计与兼容冗余，不参与过滤；
         输出 [{id, content, score, type, source, tags, created_at, agent_id}]，
         score 为融合分。
         English: mode: hybrid/vector/keyword; each route takes 3*top_k candidates;
-        type/tag filtering happens after fusion; (client, project) isolation (v2 spec 2.3):
-        memory records only return those owned by the matching client+project, while
-        doc_chunk/web_chunk (shared knowledge base) are not isolated; agent_id is a
-        compatibility redundancy and does not filter; output is
-        [{id, content, score, type, source, tags, created_at, agent_id}]."""
+        type/tag filtering happens after fusion;
+        v3: all memories and shared knowledge (doc/web) are fully shared without
+        (client, project) isolation — every client/task can retrieve any record;
+        client/project/agent_id are audit/compatibility only and never filter;
+        output is [{id, content, score, type, source, tags, created_at, agent_id}]."""
         candidate = 3 * top_k
         if mode in ("hybrid", "vector"):
             vec = self.embedder.embed_query(query)
-            # 改进项 3：隔离下推到 Chroma where——memory 按 (client, project) 查、
-            # doc/web 共享知识单独查，两段候选按相似度降序合并恢复全局排名
-            # （RRF rank 语义与原单次查询一致；跨客户端记忆不再挤占候选池）。
-            # 默认桶（project=""）无法用 where 表达（Chroma 1.5.9 拒绝空串值且
-            # 缺键不匹配），仅 client 下推，项目精确过滤留在融合后 Python 侧。
-            mem_where: dict = {"$and": [{"type": RecordType.MEMORY.value},
-                                        {"client": client}]}
-            if project:
-                mem_where["$and"].append({"project": project})
-            shared_where = {"type": {"$in": [RecordType.DOC_CHUNK.value,
-                                             RecordType.WEB_CHUNK.value]}}
-            mem_hits = self.store.query(vec, top_k=candidate, where=mem_where)
-            shared_hits = self.store.query(vec, top_k=candidate, where=shared_where)
-            merged = sorted(mem_hits + shared_hits, key=lambda x: x[1], reverse=True)
-            # 按 id 去重保留最高分：真实 Chroma 两段结果（memory / doc+web）天然不相交，
-            # 此步为防御（降级实现/测试替身可能返回重叠集）；插入序即分数降序
+            # v3：一次全量查询取全局候选（memory + doc/web 同池），按相似度降序；
+            # 原 v2 的 (client, project) where 拆段已移除
+            merged = sorted(self.store.query(vec, top_k=candidate),
+                            key=lambda x: x[1], reverse=True)
+            # 按 id 去重保留最高分（防御：降级实现/测试替身可能返回重叠集）；
+            # 插入序即分数降序
             seen: dict[str, tuple] = {}
             for rec, s in merged:
                 if rec.id not in seen:
@@ -89,10 +79,8 @@ class HybridRetriever:
         else:
             vector_hits = []
         if mode in ("hybrid", "keyword"):
-            # 改进项 3：BM25 排序前过滤不可见 memory（filter 不改变 BM25 分数）
-            keyword_hits = self.bm25.search(
-                query, top_n=candidate,
-                filter_fn=lambda rid: self._visible(rid, client, project))
+            # v3：BM25 全量检索，不再按 (client, project) 排序前过滤
+            keyword_hits = self.bm25.search(query, top_n=candidate)
         else:
             keyword_hits = []
         # N25 稀疏第三路（A3.5 spec §3.3）：仅 hybrid 且 sparse_enabled 且组件
@@ -217,11 +205,8 @@ class HybridRetriever:
                 continue
             if tag and tag not in rec.tags:
                 continue
-            # v2 (client, project) 隔离：个人记忆（memory）只返回归属该
-            # client+project 的；共享知识（doc_chunk/web_chunk）对所有客户端可见
-            if rec.type == RecordType.MEMORY and (
-                    rec.client != client or (rec.project or "") != (project or "")):
-                continue
+            # v3（2026-08-31）：无 (client, project) 隔离——memory 与 doc/web
+            # 全共享，任何客户端/任务均可读；隔离过滤已移除
             results.append({
                 "id": rec.id,
                 "content": rec.content,
@@ -247,17 +232,3 @@ class HybridRetriever:
 
             threading.Thread(target=_touch, daemon=True).start()
         return results
-
-    def _visible(self, record_id: str, client: str, project: str) -> bool:
-        """检索隔离可见性（改进项 3，v2 spec 2.3）：memory 仅 (client, project)
-        归属者可见，doc/web 共享可见；元信息缺失（旧语料/未知 id）不拦截（防御）。
-        English: Retrieval isolation visibility (improvement #3, v2 spec 2.3): memory
-        records visible only to their (client, project) owner, doc/web chunks shared;
-        records without meta info are not blocked (defensive fallback)."""
-        meta = self.bm25.meta_of(record_id)
-        if meta is None:
-            return True
-        rec_client, rec_project, rec_type = meta
-        if rec_type != RecordType.MEMORY.value:
-            return True
-        return rec_client == client and (rec_project or "") == (project or "")

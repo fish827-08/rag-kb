@@ -1,6 +1,6 @@
-"""记忆范围重构验收测试（v2 spec：2026-08-30）。
+"""记忆范围 v3 验收测试（2026-08-31 spec：去除 (client, project) 隔离，记忆全共享）。
 
-覆盖：写入归属 (client, project)、检索隔离、读/改/删归属校验、默认桶、
+覆盖：跨客户端/项目写入与检索共享、读/改/删无归属校验、默认桶共享、
 共享知识开放、旧数据兼容、主键服务端生成、审计文件名 client__project、
 REST/CLI audit 查询、身份字段规约。
 """
@@ -19,33 +19,28 @@ def svc(env_isolated, monkeypatch):
     return KBService()
 
 
-# ---- 1 写入归属 (client, project) 与检索隔离 ----
+# ---- 1 写入归属 (client, project) 与检索全共享 ----
 
-def test_写入归属_检索隔离(svc):
+def test_记忆跨客户端与项目全共享(svc):
     a = svc.add_memory("甲的记忆：预算三百万", client="TraeWork", project="proj-a")
     b = svc.add_memory("乙的记忆：成员五人", client="TraeWork", project="proj-b")
-    # 同客户端不同项目：各检索只看到自己的 memory
-    ha = svc.search("预算", client="TraeWork", project="proj-a")
-    hb = svc.search("预算", client="TraeWork", project="proj-b")
-    assert any(r["id"] == a.id for r in ha)
-    assert not any(r["id"] == b.id for r in ha)
-    assert any(r["id"] == b.id for r in hb)
-    assert not any(r["id"] == a.id for r in hb)
-    # 不同客户端同项目也隔离
-    hc = svc.search("预算", client="Cursor", project="proj-a")
-    assert not any(r["id"] == a.id for r in hc)
+    # v3：全共享——任何 (client, project) 组合都能检索到全部记忆
+    for cli, prj in (("TraeWork", "proj-a"), ("TraeWork", "proj-b"),
+                     ("Cursor", "proj-a"), ("Cursor", "other")):
+        ha = svc.search("预算", client=cli, project=prj)
+        assert any(r["id"] == a.id for r in ha), f"{cli}/{prj} 应检索到 a"
+        assert any(r["id"] == b.id for r in ha), f"{cli}/{prj} 应检索到 b"
 
 
-def test_默认桶_无project归属该客户端(svc):
+def test_默认桶_任意客户端可检索(svc):
     r = svc.add_memory("默认桶记忆", client="CLI")  # project 空 → 默认桶
     assert r.project == ""
     assert svc.search("默认桶记忆", client="CLI")[0]["id"] == r.id
-    # 同客户端带项目检索不到默认桶记录
+    # v3：任何 client/project 均可检索默认桶记录
     hits = svc.search("默认桶记忆", client="CLI", project="kb")
-    assert not any(x["id"] == r.id for x in hits)
-    # 不同客户端默认桶检索不到
+    assert any(x["id"] == r.id for x in hits)
     hits2 = svc.search("默认桶记忆", client="Cursor")
-    assert not any(x["id"] == r.id for x in hits2)
+    assert any(x["id"] == r.id for x in hits2)
 
 
 def test_主键服务端生成(svc):
@@ -54,26 +49,29 @@ def test_主键服务端生成(svc):
     assert len(r.id) == 32  # uuid4().hex
 
 
-# ---- 2 读 / 改 / 删 归属校验 ----
+# ---- 2 读 / 改 / 删（v3：无归属校验，任何人可操作）----
 
-def test_读_memory_他人不可读(svc):
+def test_读_memory_任何人可读(svc):
     a = svc.add_memory("私有记忆", client="TraeWork", project="proj-a")
     assert svc.get_memory(a.id, client="TraeWork", project="proj-a") is not None
-    assert svc.get_memory(a.id, client="TraeWork", project="proj-b") is None
-    assert svc.get_memory(a.id, client="Cursor", project="proj-a") is None
+    # v3：跨客户端/项目均可读
+    assert svc.get_memory(a.id, client="TraeWork", project="proj-b") is not None
+    assert svc.get_memory(a.id, client="Cursor", project="proj-a") is not None
 
 
-def test_改_他人不可改(svc):
+def test_改_任何人可改(svc):
     a = svc.add_memory("原始内容", client="TraeWork", project="proj-a")
-    assert svc.update_memory(a.id, "被乙改", client="TraeWork",
-                             project="proj-b") is None
-    assert svc.store.get(a.id).content == "原始内容"  # 未变更
+    # v3：跨客户端/项目可更新
+    r = svc.update_memory(a.id, "被乙改", client="TraeWork",
+                          project="proj-b")
+    assert r is not None
+    assert svc.store.get(a.id).content == "被乙改"
 
 
-def test_删_他人不可删(svc):
+def test_删_任何人可删(svc):
     a = svc.add_memory("待删记忆", client="TraeWork", project="proj-a")
-    assert svc.delete_memory(a.id, client="Cursor", project="proj-a") is False
-    assert svc.store.get(a.id) is not None
+    assert svc.delete_memory(a.id, client="Cursor", project="proj-a") is True
+    assert svc.store.get(a.id) is None
 
 
 # ---- 3 共享知识（doc/web）全部可见 ----
@@ -86,9 +84,9 @@ def test_共享文档所有客户端可见(svc, tmp_path):
     assert hits and hits[0]["type"] == "doc_chunk"
 
 
-# ---- 4 MCP 工具层隔离（v2：无 agent_id 入参）----
+# ---- 4 MCP 工具层（v3：全共享，无 FORBIDDEN）----
 
-def test_mcp工具_双键隔离(svc):
+def test_mcp工具_全共享(svc):
     from kb.mcp import write_memory, search_memory, read_memory
     from kb.mcp import update_memory, delete_memory
     r = write_memory("MCP 甲私有")  # 直调：client 兜底 default、project 默认桶
@@ -96,15 +94,16 @@ def test_mcp工具_双键隔离(svc):
     # 无身份参数即可读写（默认桶）
     assert read_memory(r["id"])["content"] == "MCP 甲私有"
     assert search_memory("MCP 甲私有")[0]["id"] == r["id"]
-    # 显式不同项目 → FORBIDDEN
-    assert read_memory(r["id"], project="other")["error"] == "FORBIDDEN"
-    assert update_memory(r["id"], "x", project="other")["error"] == "FORBIDDEN"
-    assert delete_memory(r["id"], project="other")["error"] == "FORBIDDEN"
-    # 带 project 写入 → 归属该桶，仅该桶可检索
+    # v3：跨 project 读/改/删均可（无 FORBIDDEN）
+    assert read_memory(r["id"], project="other")["content"] == "MCP 甲私有"
+    upd = update_memory(r["id"], "被跨项目改", project="other")
+    assert upd["content"] == "被跨项目改"
+    assert delete_memory(r["id"], project="other") == {"ok": True}
+    # 带 project 写入 → 任意 project 均可检索
     rp = write_memory("MCP 项目私有", project="proj-a")
     assert search_memory("MCP 项目私有", project="proj-a")[0]["id"] == rp["id"]
-    assert not any(x["id"] == rp["id"]
-                   for x in search_memory("MCP 项目私有", project="proj-b"))
+    assert any(x["id"] == rp["id"]
+               for x in search_memory("MCP 项目私有", project="proj-b"))
 
 
 def test_default桶_审计文件名(svc):
@@ -118,7 +117,7 @@ def test_default桶_审计文件名(svc):
     reset_access_logger()
 
 
-# ---- 5 存取审计闭环（v2：client__project 文件名）----
+# ---- 5 存取审计闭环（client__project 文件名）----
 
 def test_存取审计_json行(svc):
     from kb.audit import reset_access_logger
@@ -161,9 +160,9 @@ def test_审计开关关闭不落盘(env_isolated, monkeypatch):
     reset_access_logger()
 
 
-# ---- 6 REST 层隔离与 audit 查询（v2）----
+# ---- 6 REST 层全共享与 audit 查询 ----
 
-def test_rest_隔离与audit查询(env_isolated, monkeypatch):
+def test_rest_全共享与audit查询(env_isolated, monkeypatch):
     from fastapi.testclient import TestClient
     from kb.api import create_app
     from kb.audit import reset_access_logger
@@ -173,21 +172,17 @@ def test_rest_隔离与audit查询(env_isolated, monkeypatch):
             "content": "REST 甲私有", "client": "HTTP", "project": "proj-a"})
         assert r1.status_code == 200
         rid = r1.json()["id"]
-        # 同 project 可读（不解体 agent_id）
+        # v3：不同 project 读 → 200（全共享）
         assert c.get(f"/api/v1/memories/{rid}",
                      params={"client": "HTTP",
-                             "project": "proj-a"}).status_code == 200
-        # 不同 project 读 → 404
-        assert c.get(f"/api/v1/memories/{rid}",
-                     params={"client": "HTTP",
-                             "project": "proj-b"}).status_code == 404
-        # 检索隔离
+                             "project": "proj-b"}).status_code == 200
+        # 检索共享
         ra = c.post("/api/v1/search", json={
             "query": "REST 甲私有", "client": "HTTP", "project": "proj-a"})
         rb = c.post("/api/v1/search", json={
             "query": "REST 甲私有", "client": "HTTP", "project": "proj-b"})
         assert any(x["id"] == rid for x in ra.json()["results"])
-        assert not any(x["id"] == rid for x in rb.json()["results"])
+        assert any(x["id"] == rid for x in rb.json()["results"])
         # audit 查询端点（client/project 过滤）
         aud = c.get("/api/v1/audit", params={"client": "HTTP"})
         assert aud.status_code == 200
@@ -212,7 +207,7 @@ def test_audit_参数校验(env_isolated):
                      params={"client": "HTTP"}).status_code == 200
 
 
-# ---- 7 身份字段规约（v2：client/project，agent_id 仅兼容）----
+# ---- 7 身份字段规约（v3：client/project 仅审计归类）----
 
 def test_身份字段校验_有效与非法():
     from kb.service import validate_client, validate_project
@@ -254,7 +249,7 @@ def test_rest_身份规约_非法字段422(env_isolated):
         assert c.post("/api/v1/memories", json={
             "content": "x", "client": "pytest",
             "project": "bad/project"}).status_code == 422
-        # 不传 identity 字段（默认 client=HTTP、project 空默认桶）仍可用
+        # 不传 identity 字段（默认 client=HTTP、project 空）仍可用
         legacy = c.post("/api/v1/memories", json={"content": "旧调用"})
         assert legacy.status_code == 200
 

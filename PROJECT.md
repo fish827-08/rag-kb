@@ -55,6 +55,11 @@
 - **A4 易用性已交付**（2026-08-28，N28，CLI 优先；**Web UI 砍掉**——评估报告定论，spec：`2026-08-28-a4-cli-design.md`）：
   - `kb stats`：类型分布 / 访问热度 top / 陈旧分布（纯读）
   - `kb ask`：终端 RAG 问答，LLM 缺席时降级输出检索命中（退出码 1）
+- **v3 记忆全共享已收口**（2026-08-31，spec：`docs/superpowers/specs/2026-08-31-memory-share-refactor-design.md`）：
+  - 取消 (client, project) 隔离：所有记忆/知识全共享，跨 agent/任务可读同一份用户偏好
+  - client/project 降级为**审计归类与元数据**，不隔离读写（MCP/REST/CLI/检索全部同步）
+  - 验证协议定稿：小改动只跑相关测试、核心架构改变才全量、B 线冻结不测（AGENTS.md §0）
+  - 测试：375 项全绿（`tests/`，隔离断言已反转测试隔离语义）
 
 ### ② agent-orchestra — B1/B2/B3 收口后转入冻结维护（2026-08-28）
 
@@ -99,7 +104,7 @@ rag-kb/
 ├── ROADMAP.md           # 项目发展总线设计书（人类入口，树形路线+进度）
 ├── README.md            # kb 产品说明（快速开始/MCP 挂载/端点速查）
 ├── kb/                  # ① kb 服务源码（见设计文档 4.2；含 reranker/sparse/eval 等 A3.5/A4 模块）
-├── tests/               # kb 验收测试（367 项，含 eval_zh_50.jsonl 评测数据集）
+├── tests/               # kb 验收测试（375 项，含 eval_zh_50.jsonl 评测数据集）
 ├── orchestra/           # ② 协作系统（board.py + 协议 + skill + 245 项测试）
 │   └── docs/superpowers/  # orchestra 设计文档与实施计划
 ├── docs/superpowers/    # kb 设计文档（specs）与节点计划（plans）
