@@ -14,8 +14,11 @@ def rrf_fuse(*ranked_lists, top_k: int) -> list[tuple[str, float]]:
     """score(d) = Σ 1/(RRF_K + rank_i(d))，rank 从 1 起；按融合分降序取 top_k。
 
     N25：可变参数（2 路或 3 路，路数由稀疏开关决定），双路行为与原实现一致。
+    N32（2026-09-01）：hybrid 默认路径已改走 weighted_fuse，本函数保留供
+    兼容引用（既有测试直接调用）与明细对比。
     English: score(d) = Σ 1/(RRF_K + rank_i(d)), rank starting at 1; take the top_k by fused score descending.
     N25: variadic args (2 or 3 routes depending on the sparse toggle); dual-route behavior matches the original.
+    N32: hybrid now defaults to weighted_fuse; this function is kept for the existing tests and comparison.
     """
     scores: dict[str, float] = {}
     for ranked in ranked_lists:
@@ -23,6 +26,50 @@ def rrf_fuse(*ranked_lists, top_k: int) -> list[tuple[str, float]]:
             scores[rid] = scores.get(rid, 0.0) + 1 / (RRF_K + rank)
     ranked_fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     return ranked_fused[:top_k]
+
+
+def _minmax_norm(ranked: list[tuple[str, float]]) -> dict[str, float]:
+    """把一路分数独立 min-max 归一化到 [0,1]（N32）。
+
+    该路 max==min 时：非零记 1.0（唯一候选视为相关），全零记 0.0。
+    English: Min-max normalize one route's scores to [0,1] (N32); when
+    max==min: 1.0 if non-zero (a sole candidate counts as relevant), else 0.0."""
+    if not ranked:
+        return {}
+    scores = [s for _, s in ranked]
+    lo, hi = min(scores), max(scores)
+    if hi == lo:
+        val = 1.0 if hi != 0.0 else 0.0
+        return {rid: val for rid, _ in ranked}
+    span = hi - lo
+    return {rid: (s - lo) / span for rid, s in ranked}
+
+
+def weighted_fuse(*ranked_lists, top_k: int) -> list[tuple[str, float]]:
+    """归一化评分加权融合：每路独立 min-max 归一化后均权平均，保留真实分数区分度。
+
+    N32（2026-09-01）取代 hybrid 默认路径的 RRF 排名融合：
+    RRF 把融合分压缩到 ~0.001 噪声级——「双路第 1」与「双路第 15」仅差万分之几，
+    含外语/专有名词的真实相关记录在 top_k 截断时被无关记录挤出（中文 query
+    查不到英文歌名/项目专有名词）。加权融合后每路分数信息完整保留：
+    score(d) = Σ norm_i(d) / 生效路数，不再按位次抹平。
+    N33（2026-09-01）按"生效路数"均权：文档缺席某路（如跨语言记录在 BM25 路
+    无词面重叠必然 0 分）则不再计入分母。原先统一 ÷ 总路数会把向量分系统性
+    砍半——中文 query 下英文/日文记忆的 1.0 归一化分被 /2 稀释到 0.5 以下，
+    被同语言双路命中的记录挤出 top_k。改为 ÷ 出现路数后：单路出现得原分，
+    双路同现仍等效均权（同语言场景零行为变化）。
+    English: Score-weighted fusion — normalize each route then average over the
+    routes a record actually appears in (N32/N33). The min-max normalized score
+    keeps real separation; dividing by total route count systematically halved
+    cross-language records (which always miss the BM25 route), pushing them out
+    of top_k — the N33 fix averages over present routes only."""
+    norms: dict[str, list[float]] = {}
+    for ranked in ranked_lists:
+        for rid, norm in _minmax_norm(ranked).items():
+            norms.setdefault(rid, []).append(norm)
+    fused = [(rid, sum(vals) / len(vals)) for rid, vals in norms.items()]
+    fused.sort(key=lambda x: x[1], reverse=True)
+    return fused[:top_k]
 
 
 class HybridRetriever:
@@ -62,7 +109,7 @@ class HybridRetriever:
         (client, project) isolation — every client/task can retrieve any record;
         client/project/agent_id are audit/compatibility only and never filter;
         output is [{id, content, score, type, source, tags, created_at, agent_id}]."""
-        candidate = 3 * top_k
+        candidate = max(30, 3 * top_k)  # N32：候选窗放宽，缓解小 top_k 下相关记录早截断
         if mode in ("hybrid", "vector"):
             vec = self.embedder.embed_query(query)
             # v3：一次全量查询取全局候选（memory + doc/web 同池），按相似度降序；
@@ -99,11 +146,13 @@ class HybridRetriever:
                 sparse_hits = []
 
         if mode == "hybrid":
+            # N32（2026-09-01）：hybrid 默认改归一化评分加权融合（保留真实分数
+            # 区分度；RRF 排名融合会把相关记录与噪声记录压到同一个噪声带上）。
             if sparse_hits:
-                fused = rrf_fuse(vector_hits, keyword_hits, sparse_hits,
-                                 top_k=candidate)
+                fused = weighted_fuse(vector_hits, keyword_hits, sparse_hits,
+                                      top_k=candidate)
             else:
-                fused = rrf_fuse(vector_hits, keyword_hits, top_k=candidate)
+                fused = weighted_fuse(vector_hits, keyword_hits, top_k=candidate)
         elif mode == "vector":
             fused = sorted(vector_hits, key=lambda x: x[1], reverse=True)[:candidate]
         else:  # keyword（BM25 不受衰减影响，A3 spec §3.1）
