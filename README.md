@@ -6,7 +6,7 @@
 [![Glama MCP score](https://glama.ai/mcp/servers/fish827-08/rag-kb/badges/score.svg)](https://glama.ai/mcp/servers/fish827-08/rag-kb)
 [English](README_EN.md) | 中文
 
-**本地优先、完全离线可用的 Agent 记忆与知识服务**——REST + MCP 双协议，混合检索（向量 + BM25/RRF），文档/网页入库与 RAG 问答；无 LLM 时存取与检索完整可用。
+**本地优先、完全离线可用的 Agent 记忆与知识服务**——REST + MCP 双协议，混合检索（向量 + BM25 归一化加权融合），文档/网页入库与 RAG 问答；无 LLM 时存取与检索完整可用。
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
@@ -14,7 +14,7 @@
 
 | 子系统 | 一句话定位 | 状态 |
 |---|---|---|
-| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品，开发主线） | v2.0.0 生产可用 |
+| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品，开发主线，当前测试开发阶段） | 测试开发中 |
 | **agent-orchestra** | 基于 kb 共享任务板的跨任务多 Agent 协作系统（❄️ 维护模式，自用脚手架） | B1-B3 收口冻结 |
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
@@ -23,7 +23,7 @@
 
 Windows 单进程常驻（`python -m kb serve`），REST + MCP 双协议，向 Claude Code /
 Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、混合检索
-（向量 + BM25/RRF 融合）与 RAG 问答。
+（向量 + BM25 归一化加权融合）与 RAG 问答。
 
 **无 LLM 时存取与检索完整可用**——记忆写入、文档入库、混合检索不依赖任何大模型；
 配置本地 Ollama 或云端 API 后，`/ask` 问答能力自动启用。
@@ -31,7 +31,7 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 ## 核心特性
 
 - **单进程常驻**：一个 `python -m kb serve` 同时提供 REST API 与 MCP 端点，无需额外组件
-- **混合检索**：BGE-M3 向量检索 + BM25 关键词检索，RRF 融合排序，中文分词友好
+- **混合检索**：BGE-M3 向量检索 + BM25 关键词检索，归一化加权融合排序（每路 min-max 归一化后按生效路数均权，N32/N33），中文分词友好
   - 可选精排：`KB_RERANK_ENABLED=true` 启用 bge-reranker-v2-m3 交叉重排（默认关）
   - 可选三路：`KB_SPARSE_ENABLED=true` 启用 BGE-M3 稀疏向量第三路（默认关，失败自动降级双路）
 - **记忆管理**：写入 / 更新 / 删除 / 列表，支持 namespace、tags、type 过滤
@@ -268,7 +268,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask `
 | `KB_SENSITIVE_NAMESPACES` | 空 | 逗号分隔的敏感 namespace，命中强制本地回答不出网 |
 | `KB_API_KEY` | 空 | 空=不鉴权（本地回环零摩擦）；非空=启用 Bearer/X-API-Key 鉴权；orchestra 客户端自动带 `X-API-Key` 头 |
 | `KB_RERANK_ENABLED` / `KB_RERANK_MODEL` / `KB_RERANK_TOP_N` | `false` / `BAAI/bge-reranker-v2-m3` / `20` | 检索精排（A3.5）：融合候选送 CrossEncoder 重排，默认关 |
-| `KB_SPARSE_ENABLED` | `false` | 稀疏第三路（A3.5）：BGE-M3 稀疏向量 + 倒排索引参与 RRF 融合，默认关 |
+| `KB_SPARSE_ENABLED` | `false` | 稀疏第三路（A3.5）：BGE-M3 稀疏向量 + 倒排索引参与归一化加权融合，默认关 |
 
 ## CLI 速查（无需启动服务）
 
