@@ -6,11 +6,15 @@
 [![Glama MCP score](https://glama.ai/mcp/servers/fish827-08/rag-kb/badges/score.svg)](https://glama.ai/mcp/servers/fish827-08/rag-kb)
 [English](README_EN.md) | 中文
 
+**本地优先、完全离线可用的 Agent 记忆与知识服务**——REST + MCP 双协议，混合检索（向量 + BM25/RRF），文档/网页入库与 RAG 问答；无 LLM 时存取与检索完整可用。
+
+<!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
+
 本仓库含两个子系统（[ROADMAP](ROADMAP.md)）：
 
 | 子系统 | 一句话定位 | 状态 |
 |---|---|---|
-| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品，开发主线） | v1.0.1 生产可用 |
+| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品，开发主线） | v2.0.0 生产可用 |
 | **agent-orchestra** | 基于 kb 共享任务板的跨任务多 Agent 协作系统（❄️ 维护模式，自用脚手架） | B1-B3 收口冻结 |
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
