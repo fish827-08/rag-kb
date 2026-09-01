@@ -30,28 +30,29 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 
 1. **MCP（首选）**：如果当前环境配置了 kb 的 MCP 服务器，直接用 MCP 工具。
 2. **HTTP（MCP 不可用时兜底）**：当 MCP 工具不存在、调用报连接失败或超时时，改用 REST 端点（地址同上）；成功调用后优先回 MCP。
-3. 接入前先确认服务在跑：请求 `GET http://127.0.0.1:8000/api/v1/healthz`，返回 200 即正常。
-   - **有代理时用 `curl --noproxy "*"`**（`HTTP_PROXY`/`HTTPS_PROXY` 会把 localhost 请求也转发导致连接失败，
-     误判服务未启动）；PowerShell 可用 `Invoke-RestMethod`（默认不走代理直连本机）。
+3. **接入前无需探测**：kb 是常驻服务，默认在正常运行。直接调用工具/端点即可，一切正常就继续工作；
+   只有调用真正报**连接失败**时，才确认是否被**代理**拦截 localhost（改用 `curl --noproxy "*"` /
+   `Invoke-RestMethod` 重试），确认真的未启动才提示用户启动服务。
+   - 已挂载 MCP 的客户端：全局接入规约（何时写、查重、反馈格式）由服务端 instructions 自动注入，无需本段。下面的规约主要供未挂载 MCP 时的 HTTP 兜底使用。
 
-### 三、MCP 工具（8 个，身份由环境承载，无 agent_id）
+### 三、MCP 工具（8 个，身份仅审计，无 agent_id）
 
-> 身份约定（2026-08-30 v2）：**你不需要自报身份**——`client`（来源客户端）由服务端从
-> MCP 握手 clientInfo 自动识别（框架级，无法伪造）；`project`（项目/任务归属）由连接配置
-> 声明（不传=该客户端的**默认桶**）。记录主键由服务端生成。你只需专注存储与查询记忆。<br>
+> 身份约定（2026-08-31 v3）：**记忆与知识全共享，你无需自报身份**——`client`（来源客户端）
+> 如传则由服务端从 MCP 握手 clientInfo 自动识别（框架级，无法伪造）；`project`（项目/任务）
+> 仅用于**审计归类**，不隔离读写。记录主键由服务端生成。你只需专注存储与查询记忆，不传身份也可完整使用。<br>
 > - `client`：通常不用传——自动识别；如显式传，须为合法客户端名
 >   （字母/数字/中文/下划线/连字符/空格/点，≤64）。
-> - `project`（可选）：项目/任务归属；CLI 自动取当前目录名，REST 显式传，MCP 由连接配置声明。
+> - `project`（可选）：仅审计归类；不传不影响任何读写。
 
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `write_memory` | `content: str`, `tags?: list[str]`, `project?: str`, `client?: str` | 写入一条记忆短文本（归属当前 client+project/默认桶），返回 `{id}` |
-| `search_memory` | `query: str`, `top_k?: int=5`, `project?: str`, `client?: str` | 混合检索（向量+关键词融合）；memory 仅返回归属当前 (client, project) 的，doc/web 共享；返回命中列表 `{id, content, score, type, source}` |
-| `read_memory` | `record_id: str`, `project?: str`, `client?: str` | 按 ID 读单条记忆完整内容；他人 memory 返回 `FORBIDDEN` |
-| `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str` | 更新记忆内容（自动重新嵌入）；非归属返回 `FORBIDDEN` |
-| `delete_memory` | `record_id: str`, `project?: str`, `client?: str` | 删除单条记忆；非归属返回 `FORBIDDEN` |
-| `add_document` | `path: str`, `project?: str`, `client?: str` | 导入本地文档（PDF/DOCX/MD/TXT/Office），切分入库（共享知识） |
-| `add_webpage` | `url: str`, `project?: str`, `client?: str` | 抓取网页正文切分入库（共享知识） |
+| `write_memory` | `content: str`, `tags?: list[str]`, `project?: str`, `client?: str` | 写入一条记忆短文本（client/project 仅审计归类），返回 `{id}` |
+| `search_memory` | `query: str`, `top_k?: int=5`, `project?: str`, `client?: str` | 混合检索（向量+关键词融合）；**记忆与知识全共享**，不按 client/project 过滤；返回命中列表 `{id, content, score, type, source}` |
+| `read_memory` | `record_id: str`, `project?: str`, `client?: str` | 按 ID 读单条记忆完整内容；仅不存在时 404/报错，无归属限制 |
+| `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str` | 更新记忆内容（自动重新嵌入）；无归属限制 |
+| `delete_memory` | `record_id: str`, `project?: str`, `client?: str` | 删除单条记忆；无归属限制 |
+| `add_document` | `path: str`, `project?: str`, `client?: str` | 导入本地文档（PDF/DOCX/MD/TXT/Office），切分入库 |
+| `add_webpage` | `url: str`, `project?: str`, `client?: str` | 抓取网页正文切分入库 |
 | `ask_kb` | `question: str`, `project?: str`, `client?: str` | 基于知识库的 RAG 问答，返回 `{answer, sources}`；未配 LLM 时返回 `LLM_DISABLED` |
 
 > 存取审计：每次 write/search/read/update/delete/ask/ingest 都会在服务端
@@ -62,18 +63,18 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 
 > 注：MCP 工具仅暴露上表参数（`write_memory` 无 `namespace`/`source`）；`namespace` 等更细参数仅 HTTP 端点支持（见第四节）。
 
-### 四、HTTP 兜底端点（MCP 不可用时用；v2 无 agent_id）
+### 四、HTTP 兜底端点（MCP 不可用时用；v3 全共享，身份仅审计）
 
-> 身份约定：`client`（默认 `HTTP`）标明来源客户端；`project`（可选）标明项目归属；
-> memory 按 (client, project) 强制隔离、doc/web 共享。
+> 身份约定：`client`（默认 `HTTP`）与 `project`（可选）均**仅用于审计归类**——
+> 记忆与知识全共享，不传或不匹配完全不影响读写、检索。
 
 - 健康检查：`GET /api/v1/healthz`
 - 写入记忆：`POST /api/v1/memories`，JSON `{"content": "…", "tags": ["偏好"], "source": "…", "namespace": "…", "client": "TraeWork", "project": "kb"}`
-- 读单条：`GET /api/v1/memories/{id}?project=kb`（他人 project → 404）
-- 更新：`PATCH /api/v1/memories/{id}?project=kb`，`{"content": "…"}`（非归属 → 404）
-- 删除：`DELETE /api/v1/memories/{id}?project=kb`（非归属 → 404）
+- 读单条：`GET /api/v1/memories/{id}?project=kb`（record 不存在 → 404）
+- 更新：`PATCH /api/v1/memories/{id}?project=kb`，`{"content": "…"}`（record 不存在 → 404）
+- 删除：`DELETE /api/v1/memories/{id}?project=kb`（record 不存在 → 404）
 - 列表：`GET /api/v1/memories?type=&tag=&q=&limit=`
-- 混合检索：`POST /api/v1/search`，`{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}`（mode: hybrid/vector/keyword；memory 仅返回归属当前 client+project 的）
+- 混合检索：`POST /api/v1/search`，`{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}`（mode: hybrid/vector/keyword；**记忆与知识全共享**，不按 client/project 过滤）
 - 文档入库：`POST /api/v1/documents`（multipart `file` 或 JSON `{"path": "本地路径", "client": "TraeWork", "project": "kb"}`）
 - 网页入库：`POST /api/v1/ingest/web`，`{"url": "…"}`
 - RAG 问答：`POST /api/v1/ask`，`{"question": "…", "client": "TraeWork", "project": "kb"}`
@@ -82,9 +83,9 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 curl 示例（PowerShell）：
 
 ```powershell
-# 写入（client 默认 HTTP；project 可选=项目归属，缺省默认桶）
+# 写入（client 默认 HTTP；project 可选=审计归类）
 curl -X POST http://127.0.0.1:8000/api/v1/memories -H "Content-Type: application/json" -d '{"content": "用户偏好深色主题", "tags": ["偏好"], "client": "TraeWork", "project": "kb"}'
-# 检索（只返回当前客户端+项目的 memory + 全部共享知识）
+# 检索（v3：记忆与知识全共享，不分客户端/项目）
 curl -X POST http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/json" -d '{"query": "用户界面偏好", "top_k": 5, "client": "TraeWork", "project": "kb"}'
 # 问答
 curl -X POST http://127.0.0.1:8000/api/v1/ask -H "Content-Type: application/json" -d '{"question": "用户喜欢什么主题？", "client": "TraeWork", "project": "kb"}'
@@ -110,8 +111,9 @@ curl -X GET "http://127.0.0.1:8000/api/v1/audit?client=TraeWork&project=kb&limit
 
 不写：纯寒暄、临时计算过程、可由代码/文档直接查到的实现细节（除非需跨会话记忆）。
 
-**对用户提示**：写入/更新记忆成功时，只向用户轻提一句（如"已记住你的偏好"），
-**不要展示**工具名、记录 ID、JSON、检索命中详情等操作细节；查重未命中与命中同理静默处理。
+**对用户提示（极简）**：写入/更新记忆成功时，只向用户轻提一句（如"已记住你的偏好"）；
+**失败**才说明原因（如"没记：与已有记忆重复 / 内容敏感 / 格式不支持"）。
+**不要展示**：健康检查过程、工具名、记录 ID、JSON、检索命中详情等操作细节；查重未命中与命中同理静默处理。
 
 **检索时机**：任务开始、回答涉及历史决策/偏好、跨会话接力时，先 `search_memory` 主动召回，不要等被问到。
 
@@ -120,8 +122,8 @@ curl -X GET "http://127.0.0.1:8000/api/v1/audit?client=TraeWork&project=kb&limit
 
 ### 六、注意
 
-- 服务未启动时（healthz 失败）：先确认是否因**代理**拦截 localhost（改用 `curl --noproxy "*"` /
-  `Invoke-RestMethod` 重试），确认真的未启动才提示启动 kb 服务（`python -m kb serve`）；不要臆造结果。
+- 服务不可达（调用报连接失败）：先确认是否因**代理**拦截 localhost（改用 `curl --noproxy "*"` /
+  `Invoke-RestMethod` 重试），确认真的未启动才提示启动 kb 服务（`python -m kb serve`）；不要臆造结果，也不要无事先做健康检查。
 - 若服务启用了鉴权（`KB_API_KEY` 非空），所有 HTTP 请求需带 `Authorization: Bearer <key>`。
 - `namespace` 仅 HTTP 端点支持（MCP 工具不含该参数）；命中敏感配置的 namespace 时，`ask` 强制本地回答不出网。
 - `add_document`/`add_webpage` 入库后可被 `search_memory`/`ask_kb` 检索到；文件格式不支持会返回 `UNSUPPORTED_FORMAT`。

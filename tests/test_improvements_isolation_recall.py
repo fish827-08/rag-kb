@@ -1,8 +1,8 @@
-"""改进项 3 验证：检索隔离下推到 ChromaDB where 与 BM25 排序前过滤。
+"""记忆范围 v3 检索验证：记忆与知识全共享，候选池全局。
 
-核心场景：大量其他客户端的相似记忆不再挤占候选池——下推前 candidate=3*top_k
-（top_k=5 → 15）会被 25 条他人记忆占满，过滤后自己的记忆消失；下推后
-向量路与 BM25 路在取候选阶段就只剩自己的 memory + 共享 doc/web。
+核心场景：v3（2026-08-31）移除 (client, project) 隔离后，所有 memory 与
+doc/web 同池检索——自己的记忆与"他人"的记忆都能被任何客户端召回；
+Chroma 全量单查 + BM25 全量检索（默认无 filter_fn）。
 """
 import pytest
 
@@ -17,7 +17,7 @@ def svc(env_isolated):
     return KBService()
 
 
-def test_三种模式_隔离下推_不被他人记忆挤掉(svc):
+def test_三种模式_记忆全共享同池检索(svc):
     a = svc.add_memory("联合预算机密 甲专属标记", client="client-a", project="proj-a")
     b_ids = [
         svc.add_memory(f"联合预算机密 乙填充内容 {i}",
@@ -25,14 +25,19 @@ def test_三种模式_隔离下推_不被他人记忆挤掉(svc):
         for i in range(25)
     ]
     for mode in ("keyword", "vector", "hybrid"):
-        hits = svc.search("联合预算机密", top_k=5, mode=mode,
-                          client="client-a", project="proj-a")
-        ids = [r["id"] for r in hits]
-        assert a.id in ids, f"mode={mode}：自己的记忆被他人候选挤掉"
-        assert not any(bid in ids for bid in b_ids), f"mode={mode}：泄露他人记忆"
+        # 任意 client/project 视角结果完全一致（隔离过滤已移除）
+        hits_a = svc.search("联合预算机密", top_k=10, mode=mode,
+                            client="client-a", project="proj-a")
+        ids_a = [r["id"] for r in hits_a]
+        hits_b = svc.search("联合预算机密", top_k=10, mode=mode,
+                            client="client-b", project="proj-b")
+        assert [r["id"] for r in hits_b] == ids_a, \
+            f"mode={mode}：检索结果不应随 client/project 变化"
+        # 全共享同池：client-a 视角可召回他人（client-b）记忆
+        assert any(x in ids_a for x in b_ids), f"mode={mode}：同池应召回他人记忆"
 
 
-def test_bm25_filter_fn_隔离过滤():
+def test_bm25_全量检索不隔离():
     from kb.bm25 import BM25Index
     from kb.models import Record, RecordType
     idx = BM25Index()
@@ -42,17 +47,9 @@ def test_bm25_filter_fn_隔离过滤():
                     type=RecordType.DOC_CHUNK)
     idx.add_many([mine, other, shared])
 
-    def visible(rid: str) -> bool:
-        meta = idx.meta_of(rid)
-        if meta is None:
-            return True
-        c, p, t = meta
-        if t != RecordType.MEMORY.value:
-            return True  # doc/web 共享
-        return c == "c-a" and p == "p-a"
-
-    ids = [h[0] for h in idx.search("预算", top_n=10, filter_fn=visible)]
+    # v3：BM25 全量检索（默认 filter_fn=None），他人 memory 与共享 doc 均命中
+    ids = [h[0] for h in idx.search("预算", top_n=10)]
     assert mine.id in ids
-    assert other.id not in ids   # 他人 memory 在排序前被剔除
-    assert shared.id in ids      # 共享 doc 不被隔离
+    assert other.id in ids   # v3 全共享：他人 memory 不剔除
+    assert shared.id in ids  # 共享 doc 同样命中
     assert idx.meta_of("不存在") is None

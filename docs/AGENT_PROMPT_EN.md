@@ -29,34 +29,36 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
 
 1. **MCP (preferred)**: if the current environment has kb's MCP server configured, use the MCP tools directly.
 2. **HTTP (fallback when MCP unavailable)**: when MCP tools don't exist, fail to connect, or time out, use the REST endpoints (same address); after a successful call, prefer MCP again.
-3. Before starting, confirm the service is up: `GET http://127.0.0.1:8000/api/v1/healthz` returning 200 means it is healthy.
-   - **If a proxy is set, use `curl --noproxy "*"`** (`HTTP_PROXY`/`HTTPS_PROXY` may forward even localhost requests,
-     failing the connection and making you wrongly think the service is down); in PowerShell use `Invoke-RestMethod`
-     (connects to localhost directly, bypassing the proxy by default).
+3. **No pre-probing needed**: kb is a resident service, normally running. Call tools/endpoints directly and keep
+   working when things are normal; only when a call actually reports a **connection failure**, verify whether a
+   **proxy** is intercepting localhost (retry with `curl --noproxy "*"` / `Invoke-RestMethod`), and only then
+   suggest starting the service if it is truly down.
+   - Clients with kb MCP mounted get the global conventions (when to write, dedupe, feedback format) injected
+     automatically via server `instructions`; the rest of this guide mainly serves the HTTP fallback path.
 
-### 3. MCP tools (8, identity comes from the environment — no agent_id)
+### 3. MCP tools (8, identity is audit-only — no agent_id)
 
-> **Identity contract (v2, 2026-08-30)**: **You do NOT self-report identity** — `client` (source client)
-> is auto-detected from the MCP clientInfo handshake (framework-level, cannot be spoofed); `project`
-> (project/task bucket) comes from the connection config (omitted = this client's **default bucket**).
-> The record primary key is generated server-side. You only store and query memories.
+> **Identity contract (v3, 2026-08-31)**: **Memory and knowledge are fully shared; you do NOT
+> need to self-report identity** — `client` (source client) is auto-detected from the MCP clientInfo
+> handshake when passed (framework-level, cannot be spoofed); `project` (project/task) is **audit-only
+> metadata** and never isolates reads/writes. The record primary key is generated server-side.
+> You simply store and query memories — everything works without passing identity at all.
 > - `client`: usually omit it — auto-detected; if passed, must be a valid client name
 >   (letters/digits/CJK/underscore/hyphen/space/dot, ≤64 chars).
-> - `project` (optional): project/task bucket; CLI auto-takes the current dir name, REST passes it,
->   MCP declares it in the connection config.
-> - Memories (`memory`) are **only visible within the same (client, project)** — `search_memory`
->   returns only what your client+project wrote; reading/updating/deleting another's memory is
->   rejected (`FORBIDDEN`). Shared knowledge (document/web chunks) is visible to **all** clients.
+> - `project` (optional): audit categorization only; omitting it changes nothing for reads/writes.
+> - **All memories and knowledge are fully shared (2026-08-31 v3)** — `search_memory` returns
+>   every record regardless of client/project; reading/updating/deleting has no ownership check
+>   (no `FORBIDDEN`).
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `write_memory` | `content: str`, `tags?: list[str]`, `project?: str`, `client?: str` | Write a short memory (owned by current client+project / default bucket); returns `{id}` |
-| `search_memory` | `query: str`, `top_k?: int=5`, `project?: str`, `client?: str` | Hybrid retrieval; `memory` only returns those owned by the current (client, project), doc/web shared; returns hits `{id, content, score, type, source}` |
-| `read_memory` | `record_id: str`, `project?: str`, `client?: str` | Read a single memory's full content by ID; another (client, project)'s memory → `FORBIDDEN` |
-| `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str` | Update memory content (auto re-embed); non-owner → `FORBIDDEN` |
-| `delete_memory` | `record_id: str`, `project?: str`, `client?: str` | Delete a single memory; non-owner → `FORBIDDEN` |
-| `add_document` | `path: str`, `project?: str`, `client?: str` | Import a local document (PDF/DOCX/MD/TXT/Office), chunked into the store (shared knowledge) |
-| `add_webpage` | `url: str`, `project?: str`, `client?: str` | Fetch a web page's body and chunk it into the store (shared knowledge) |
+| `write_memory` | `content: str`, `tags?: list[str]`, `project?: str`, `client?: str` | Write a short memory (client/project are audit-only); returns `{id}` |
+| `search_memory` | `query: str`, `top_k?: int=5`, `project?: str`, `client?: str` | Hybrid retrieval; memory and knowledge are fully shared — no client/project filtering; returns hits `{id, content, score, type, source}` |
+| `read_memory` | `record_id: str`, `project?: str`, `client?: str` | Read a single memory's full content by ID; no ownership restriction |
+| `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str` | Update memory content (auto re-embed); no ownership restriction |
+| `delete_memory` | `record_id: str`, `project?: str`, `client?: str` | Delete a single memory; no ownership restriction |
+| `add_document` | `path: str`, `project?: str`, `client?: str` | Import a local document (PDF/DOCX/MD/TXT/Office), chunked into the store |
+| `add_webpage` | `url: str`, `project?: str`, `client?: str` | Fetch a web page's body and chunk it into the store |
 | `ask_kb` | `question: str`, `project?: str`, `client?: str` | RAG Q&A; returns `{answer, sources}`; returns `LLM_DISABLED` when no LLM is configured |
 
 > Access audit: every write/search/read/update/delete/ask/ingest writes a JSON line to
@@ -67,18 +69,18 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
 
 > Note: MCP tools only expose the parameters above; finer params like `namespace` are HTTP-only (see §4).
 
-### 4. HTTP fallback endpoints (when MCP is unavailable; v2 — no agent_id)
+### 4. HTTP fallback endpoints (when MCP is unavailable; v3 — fully shared, identity audit-only)
 
-> Identity contract: `client` (default `HTTP`) and optional `project`; `memory` is strictly isolated by
-> (client, project), doc/web shared.
+> Identity contract: `client` (default `HTTP`) and optional `project` are **audit-only** —
+> memory and knowledge are fully shared; omitting/mismatching them never affects reads, writes or search.
 
 - Health check: `GET /api/v1/healthz`
 - Write memory: `POST /api/v1/memories`, JSON `{"content": "…", "tags": ["偏好"], "source": "…", "namespace": "…", "client": "TraeWork", "project": "kb"}`
-- Read one: `GET /api/v1/memories/{id}?project=kb` (another project's memory → 404)
-- Update: `PATCH /api/v1/memories/{id}?project=kb`, `{"content": "…"}` (non-owner → 404)
-- Delete: `DELETE /api/v1/memories/{id}?project=kb` (non-owner → 404)
+- Read one: `GET /api/v1/memories/{id}?project=kb` (record missing → 404)
+- Update: `PATCH /api/v1/memories/{id}?project=kb`, `{"content": "…"}` (record missing → 404)
+- Delete: `DELETE /api/v1/memories/{id}?project=kb` (record missing → 404)
 - List: `GET /api/v1/memories?type=&tag=&q=&limit=`
-- Hybrid search: `POST /api/v1/search`, `{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}` (mode: hybrid/vector/keyword; `memory` only returns those owned by the current client+project)
+- Hybrid search: `POST /api/v1/search`, `{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}` (mode: hybrid/vector/keyword; memory and knowledge are fully shared — no client/project filtering)
 - Document ingestion: `POST /api/v1/documents` (multipart `file` or JSON `{"path": "本地路径", "client": "TraeWork", "project": "kb"}`)
 - Web ingestion: `POST /api/v1/ingest/web`, `{"url": "…"}`
 - RAG Q&A: `POST /api/v1/ask`, `{"question": "…", "client": "TraeWork", "project": "kb"}`
@@ -115,8 +117,8 @@ Within the above, during the session proactively identify and write the followin
 
 Do NOT write: small talk, temporary computation, or implementation details directly obtainable from code/docs (unless needed across sessions).
 
-**Telling the user**: when a memory is written/updated, mention it to the user in one light sentence (e.g., "Got it — saved your preference").
-**Do NOT show** tool names, record IDs, JSON, hit details, etc.; duplicate check hits or misses are handled quietly either way.
+**Telling the user (keep it minimal)**: on a successful write/update, mention it in one light sentence (e.g., "Got it — saved your preference"); on failure, state the reason (e.g., "Not saved: duplicate of an existing memory / sensitive content / unsupported format").
+**Do NOT show**: health-check process, tool names, record IDs, JSON, hit details; duplicate check hits or misses are handled quietly either way.
 
 **When to retrieve**: at task start, when answering involves past decisions/preferences, or on cross-session handoff — run `search_memory` proactively; don't wait to be asked.
 
@@ -124,8 +126,8 @@ Do NOT write: small talk, temporary computation, or implementation details direc
 
 ### 6. Notes
 
-- When the service is down (healthz fails): first rule out a **proxy** blocking localhost (retry with `curl --noproxy "*"`
-  or `Invoke-RestMethod`); only tell the user to start kb (`python -m kb serve`) once it is truly down — don't fabricate results.
+- Service unreachable (a call reports a connection failure): first rule out a **proxy** blocking localhost (retry with `curl --noproxy "*"`
+  or `Invoke-RestMethod`); only tell the user to start kb (`python -m kb serve`) once it is truly down — don't fabricate results, and don't probe health first.
 - If auth is enabled (`KB_API_KEY` non-empty), every HTTP request needs `Authorization: Bearer <key>`.
 - `namespace` is HTTP-only (MCP tools don't take it); namespaces matching the sensitive config force local answers for `ask` (no egress).
 - After `add_document`/`add_webpage`, content is searchable via `search_memory`/`ask_kb`; unsupported formats return `UNSUPPORTED_FORMAT`.

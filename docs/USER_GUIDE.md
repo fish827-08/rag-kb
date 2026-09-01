@@ -357,7 +357,7 @@ venv\Scripts\python.exe orchestra\board.py mount-idle worker-1
 | 性能调优 | `KB_DEVICE=cuda/cpu`；`KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` 切分参数 |
 | 局域网/多 Agent 访问鉴权 | `KB_API_KEY=<≥32随机字符>` 启用 Bearer/X-API-Key 鉴权（见 5.1） |
 | 记忆治理 | `KB_DEDUP_ENABLED`（去重）/ `KB_DECAY_ENABLED`（衰减）/ `KB_FRESHNESS_ENABLED`（新鲜度），均默认关（见 3.5） |
-| 多客户端/项目隔离 | 隔离键 = `(client, project)`：memory 只对本客户端+本项目可见，doc/web 共享知识全可见；AI 不自报身份（见 5.3） |
+| 记忆全共享 | v3（2026-08-31）：所有记忆/知识全共享、不按 (client, project) 隔离读写；client/project 仅审计归类（见 5.3） |
 | Agent 存取审计 | `KB_ACCESS_AUDIT_ENABLED`（默认开）：每次存取写 `logs/agent-audit/<客户端>__<项目>.log` JSON 行；查询：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 `kb audit --client <客户端>`（见 5.3） |
 
 完整键名见 [`.env.example`](../.env.example)。
@@ -408,23 +408,19 @@ MCP 配置带 key 示例（本机自用，**勿提交入库**）：
 
 仓库内 `.mcp.json` 模板保持无 key（JSON 不支持注释，说明落本手册）；健康探针 `GET /api/v1/healthz` 永远无需 key。
 
-### 5.3 记忆隔离与存取审计（v2：client + project 双键，2026-08-30）
+### 5.3 记忆全共享与存取审计（v3：client + project 仅审计归类，2026-08-31）
 
-**身份隔离**（多客户端/多项目各自记忆不串）：
+**记忆全共享**（本地单用户定位，跨 agent/任务共享同一份记忆）：
 
-- **隔离键 = `(client, project)` 双键**，身份由**环境承载、AI 不自报**：
-  - `client`（来源客户端）：MCP 自动从握手 clientInfo 识别（TraeWork / Claude Code / Cursor，框架级可信）；
-    REST 默认 `HTTP`；CLI 默认 `CLI`
-  - `project`（项目/任务归属）：MCP 由连接配置声明（`.mcp.json` 连接级）；CLI 自动取当前目录名；
-    REST 显式传。**不传 = 该客户端的默认桶**
-  - 不再有 `agent_id` 入参——记录主键由服务端生成（uuid），AI 无需（也不应）自报身份
-- **身份字段规约（v2）**：MCP 与 REST 校验 `client`/`project` 格式——
-  - `project`：仅字母/数字/中文/下划线/连字符，1~64 字符；`client` 额外允许空格与点（如 `Claude Code`）
-  - 非法值直接拒绝：REST 422，MCP `INVALID_ARGUMENT`
-- **个人记忆（memory）按 (client, project) 强制隔离**：检索只搜得到本客户端+本项目的，
-  读/改/删别的 (client, project) 记忆被拒（REST 404 / MCP `FORBIDDEN`）
-- **共享知识（doc/web chunk）全可见**：任何客户端入库的文档/网页，所有客户端都能检索
-- 旧数据（无 project/client）自动回落默认桶/`default`，无需迁移
+- **所有记忆（memory）与知识（doc/web chunk）全共享**：任何客户端、任何任务、任何 AI 均可
+  检索 / 读取 / 更新 / 删除全部记录——不再按 (client, project) 隔离读写，跨 agent、跨任务
+  能读到同一份用户偏好与决策，不因来源不同而丢失记忆
+- **v2 隔离已取消**（2026-08-31）：实测 (client, project) 双键隔离在本地单用户场景不可行——
+  框架识别 client 再准，项目/任务归属仍靠连接/目录承载，读不到隔离键时记忆整体不可见；
+  鉴权边界仍由 `KB_API_KEY` 承担，未来如需多租户再引入正式租户模型
+- **client / project 仍可传**，仅用于**审计归类与元数据**（标注这条记录从哪个客户端/项目写入），
+  不影响任何读写可见性；格式校验保留（非法值 REST 422 / MCP `INVALID_ARGUMENT`）
+- 旧数据（v2 时期按项目隔离存储的记录）无需迁移，v3 起全部可检索
 
 **存取审计**（谁在哪个客户端/项目下存了什么/读了什么）：
 

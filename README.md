@@ -31,7 +31,7 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
   - 可选精排：`KB_RERANK_ENABLED=true` 启用 bge-reranker-v2-m3 交叉重排（默认关）
   - 可选三路：`KB_SPARSE_ENABLED=true` 启用 BGE-M3 稀疏向量第三路（默认关，失败自动降级双路）
 - **记忆管理**：写入 / 更新 / 删除 / 列表，支持 namespace、tags、type 过滤
-- **多客户端/项目隔离（v2）**：隔离键 = `(client, project)`，身份由环境承载、AI 不自报——client 从 MCP clientInfo 自动识别（框架级可信），project 由连接/目录承载（缺省=该客户端默认桶）；个人记忆只对本客户端+本项目可见（读/改/删他人被拒），文档/网页共享知识全客户端可见；主键服务端生成
+- **记忆全共享（v3）**：所有记忆/知识与任何客户端、任务、AI 全共享——本地单用户定位，跨 agent、跨任务读到同一份用户记忆；client/project 仅用于审计归类与元数据（不再隔离读写）；主键服务端生成
 - **存取审计**：每次写/读/改/删/检索/问答记 JSON 到 `logs/agent-audit/<客户端>__<项目>.log`（按 client+project 分文件）；用户可查：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 CLI `kb audit --client <客户端>`
 - **知识入库**：本地文档（txt/md/pdf/docx 等）上传或路径导入，网页正文抓取入库
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
@@ -270,7 +270,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask `
 
 ```powershell
 python -m kb add "记忆内容" --tags 偏好 --client TraeWork                       # 写入（project 缺省自动取当前目录名）
-python -m kb search "查询词" --client TraeWork                                 # 混合检索（只回本客户端+本项目的 memory）
+python -m kb search "查询词" --client TraeWork                                 # 混合检索（v3：全共享，不分客户端/项目）
 python -m kb stats                            # 统计：类型分布 / 访问热度 / 陈旧分布
 python -m kb ask "问题" --client TraeWork      # 终端 RAG 问答（LLM 不可用时输出检索命中）
 python -m kb audit --client TraeWork --days 7   # 查某客户端/项目存过/读过什么
@@ -299,7 +299,7 @@ venv\Scripts\python.exe orchestra\board.py new-worker worker-1
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（339 项，含 eval_zh_50.jsonl 检索评测数据集）
+tests/         kb 验收测试（375 项，含 eval_zh_50.jsonl 检索评测数据集）
 orchestra/     多 Agent 协作系统（board.py CLI + 协议三件套 + skill + 245 项测试）
 docs/          设计文档、节点计划、用户使用手册
 kb_data/       kb 运行数据（gitignore）
