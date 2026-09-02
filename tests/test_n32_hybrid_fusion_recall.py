@@ -57,6 +57,65 @@ def test_weighted_fuse_单元素路():
     assert dict(weighted_fuse([("zz", 0.0)], top_k=1))["zz"] == pytest.approx(0.0)
 
 
+def test_bm25_无词面重叠记录不返回():
+    """N33 修复：与查询无分词重叠的记录（如跨语言记录）不返回——
+    否则被 weighted_fuse 当作"该路出现"计入分母，把向量分 ÷2 稀释。
+    按词面重叠过滤而非分数 > 0：小语料下 IDF=0 时有重叠记录也 0 分。"""
+    from kb.bm25 import BM25Index, tokenize
+    from kb.models import Record
+    idx = BM25Index()
+    idx.rebuild([
+        Record(content="用户喜欢养猫，偏好猫咪"),     # 有词面重叠
+        Record(content="项目例会每周五下午三点"),       # 无词面重叠
+        Record(content="The user likes cats"),         # 跨语言 → 无重叠
+    ])
+    hits = idx.search("用户喜欢什么宠物", top_n=10)
+    hit_ids = {h[0] for h in hits}
+    qtoks = set(tokenize("用户喜欢什么宠物"))
+    # 所有返回的记录必须有词面重叠
+    for rid, _ in hits:
+        assert qtoks & set(idx._docs[rid]), \
+            "无词面重叠的记录不应出现在 BM25 结果中"
+    # 跨语言记录不在结果中
+    en_rid = [rid for rid, toks in idx._docs.items()
+              if "user" in toks][0]
+    assert en_rid not in hit_ids, "跨语言记录不应出现在 BM25 结果中"
+
+
+def test_跨语言记录有同语言竞争时不被稀释():
+    """N33 真实场景：当部分记录在 BM25 路有词面重叠而跨语言记录无重叠时，
+    跨语言记录的向量分不得被 ÷2 稀释——此前 BM25 返回全部 top_n（含 0 分
+    的跨语言记录），导致 weighted_fuse 把跨语言记录当作"BM25 路出现"
+    计入分母。"""
+    from kb.bm25 import BM25Index
+    from kb.retriever import weighted_fuse
+    from kb.models import Record
+    idx = BM25Index()
+    idx.rebuild([
+        Record(content="用户喜欢养猫，偏好猫咪"),
+        Record(content="项目例会每周五下午三点"),
+        Record(content="worker-2 状态：空闲"),
+        Record(content="The user likes cats and poker games"),  # 跨语言
+    ])
+    # 中文 query：只有中文记录有 BM25 命中，英文记录无词面重叠
+    kw = idx.search("用户喜欢什么宠物", top_n=10)
+    # 取英文记录 id（包含 "user"、"likes" token 的记录）
+    en_rid = [rid for rid, toks in idx._docs.items()
+              if "user" in toks and "likes" in toks][0]
+    zh_rid = [rid for rid, toks in idx._docs.items()
+              if "用户" in toks][0]
+    # 英文记录不应出现在 BM25 结果中（无词面重叠）
+    assert en_rid not in [h[0] for h in kw], \
+        "跨语言记录（无词面重叠）不应出现在 BM25 结果中"
+
+    # 模拟向量路：两条记录都语义相关，英文略高
+    vec = [(zh_rid, 0.85), (en_rid, 0.90)]
+    out = dict(weighted_fuse(vec, kw, top_k=2))
+    # 英文记录只在向量路出现 → 融合分 = 归一化向量分（不 ÷2）
+    assert out[en_rid] == pytest.approx(1.0), \
+        f"跨语言记录不应被稀释，期望 ~1.0，实际 {out[en_rid]}"
+
+
 # ---- 集成：复刻用户报告的外语/专有名词召回场景 ----
 
 @pytest.fixture

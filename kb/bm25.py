@@ -90,9 +90,28 @@ class BM25Index:
                filter_fn=None) -> list[tuple[str, float]]:
         """返回 (record_id, bm25分数) 降序；空索引返回 []。
 
+        无词面重叠的记录不返回（N33 修复）：跨语言记录（如中文 query 下纯英文
+        记忆）与查询无任何分词重叠，BM25 分数恒为 0。若此类记录留在 keyword 路，
+        weighted_fuse 会按"生效路数"均权时把它当作"该路出现"计入分母，把向量分
+        ÷2 稀释——N33 声称按生效路数均权可防止稀释，但实际前提是跨语言记录
+        不出现在 keyword 路的候选列表中。此前 BM25 返回全部 top_n（含 0 分记录），
+        导致 N33 的前提不成立。本修复按 token 重叠过滤，确保跨语言记录缺席
+        keyword 路。
+        注意：不能按分数 > 0 过滤——小语料下词项出现在恰好半数文档时 IDF = 0
+        （log(1) = 0），此时有词面重叠的记录分数也是 0，按分数过滤会误剔。
         filter_fn(record_id)->bool（可选）在排序前过滤（改进项 3：检索隔离下推——
         BM25 分数由全语料 DF 决定，过滤只剔除不可见记录，不改变剩余记录分数）。
         English: Return (record_id, bm25 score) descending; an empty index returns [].
+        Records with no lexical overlap are excluded (N33 fix): cross-language records
+        (e.g. a pure-English memory under a Chinese query) share no tokens with the query
+        and always score 0. Leaving them in the keyword route makes weighted_fuse count
+        the route as "present" in the denominator, halving the vector score — N33 claimed
+        averaging over present routes fixes this, but only holds when cross-language
+        records are absent from the keyword candidate list. Previously BM25 returned all
+        top_n (including 0-score records), violating that premise. This fix filters by
+        token overlap, not by score: when a term appears in exactly half the corpus the
+        IDF is 0 (log(1)=0), so records with genuine overlap also score 0, and a score
+        filter would wrongly exclude them.
         Optional filter_fn(record_id)->bool filters before ranking (improvement #3:
         isolation pushdown — BM25 scores depend on corpus-wide DF, so filtering only
         drops invisible records without altering the scores of the rest)."""
@@ -101,6 +120,7 @@ class BM25Index:
         query_tokens = tokenize(query)
         if not query_tokens:
             return []
+        query_token_set = set(query_tokens)
         scores = self._bm25.get_scores(query_tokens)
         if filter_fn is None:
             ranked = sorted(zip(self._docs.keys(), scores),
@@ -110,6 +130,11 @@ class BM25Index:
                 ((rid, s) for rid, s in zip(self._docs.keys(), scores)
                  if filter_fn(rid)),
                 key=lambda x: x[1], reverse=True)
+        # 按词面重叠过滤：无重叠的记录（跨语言等）不返回，否则融合时被当作
+        # "该路出现"稀释向量分。不能用分数 > 0 过滤——小语料下 IDF 可能为 0
+        # 导致有重叠的记录也 0 分
+        ranked = [(rid, s) for rid, s in ranked
+                  if query_token_set & set(self._docs.get(rid, []))]
         return [(rid, float(score)) for rid, score in ranked[:top_n]]
 
     # ---- 语料持久化（N27，A3.5 spec §3.4）----
