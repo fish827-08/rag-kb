@@ -1,0 +1,6 @@
+[INFO] Stopping kb serve ...
+[OK] killed PID 25704
+[OK] killed PID 32788
+
+[DONE] kb stopped. Verify: netstat -ano | findstr :8025
+�밴���������. . .

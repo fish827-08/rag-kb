@@ -1,0 +1,2 @@
+RAG KB test document v2.
+The quick brown fox jumps over the lazy dog again.

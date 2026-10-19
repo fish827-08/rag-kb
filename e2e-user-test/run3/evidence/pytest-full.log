@@ -1,0 +1,13 @@
+........................................................................ [ 17%]
+........................................................................ [ 34%]
+........................................................................ [ 51%]
+........................................................................ [ 69%]
+........................................................................ [ 86%]
+.........................................................                [100%]
+============================== warnings summary ===============================
+venv\lib\site-packages\jieba\_compat.py:18
+  C:\Users\Ê¥Óð\Desktop\temp\tempCode\rag-kb\venv\lib\site-packages\jieba\_compat.py:18: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+    import pkg_resources
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+417 passed, 1 warning in 47.35s
