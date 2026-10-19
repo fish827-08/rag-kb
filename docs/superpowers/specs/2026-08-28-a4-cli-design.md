@@ -22,7 +22,6 @@
 ### 1.3 非目标
 
 - 不做 Web UI / TUI 框架（rich 表格够用）
-- 不做 `kb board`（orchestra 看板属 B 线维护模式，不扩）
 - 不做交互式 REPL（用户终端主要与 agent 交流，kb CLI 是工具不是会话端）
 
 ## 2. 命令设计

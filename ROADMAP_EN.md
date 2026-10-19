@@ -4,26 +4,26 @@
 > Tree-shaped, from root to leaves.
 > AI assistants: read AGENTS.md + PROJECT.md (implementation details); this file is the human-facing bus view.
 >
-> Last updated: 2026-10-19 ｜ Bus version: v3.1 (B-line frozen to maintenance, A-line is the only development mainline; v2.0.0 delivery hardening shipped)
+> Last updated: 2026-10-19 ｜ Bus version: v3.2 (kb single mainline; v2.0.0 delivery hardening shipped)
 
 ## 0. Vision (one sentence)
 
-Local-first, completely free Agent memory & knowledge service: **kb memory service is the core product** (main development); the orchestra collaboration system is in **maintenance mode** (personal scaffold, no new features).
+Local-first, completely free Agent memory & knowledge service: **kb is the core product**, giving Claude Code / Cursor / custom Agents memory writes, document & web ingestion, and hybrid retrieval; fully usable for storage and retrieval without an LLM.
 
-> **2026-08-27 strategic adjustment** (per the root-folder 《Evaluation Report》 consensus + user decision): development focus is on A-line kb core (retrieval quality / forgetting / ecosystem compliance); B-line orchestra stays personal-use (automation is sufficient for personal collaboration), new features frozen (B4 adaptive not done, B3 model tiering cancelled).
+> **2026-08-27 strategic adjustment** (per the root-folder 《Evaluation Report》 consensus + user decision): development focus is the kb core (retrieval quality / memory governance / usability / ecosystem compliance); the cross-Agent collaboration subsystem is no longer self-built. If that direction restarts, evaluate A2A protocol compatibility rather than building from scratch.
 
 ## 1. Bus Tree (branches + routes + progress)
 
 Legend: ✅ done | 🚧 in progress/upcoming | 🔲 queued (top-down priority) | ❌ cancelled
 
 ```
-rag-kb production-grade local multi-Agent system
+rag-kb —— local Agent memory & knowledge service
 │
-├── 🧠 Main Line A: kb memory service (resident foundation, never down)
+├── 🧠 Mainline: kb memory service (resident foundation)
 │   │
 │   ├── A1 Service stability ……………………………… ✅ shipped
 │   │   ├── ✅ v1.0.1 hotfix (param validation 422 / SSE charset)
-│   │   ├── ✅ v1.0.2 JSON charset (dual-worker experiment delivery)
+│   │   ├── ✅ v1.0.2 JSON charset (TASK-0003/0038/0045)
 │   │   ├── ✅ A1.1 watcher missing-dir tolerance (TASK-0005, 2026-08-25)
 │   │   └── ✅ A1.2 structured logging (N17-N18 all delivered: config/middleware/endpoints/docs, TASK-0011~0016/0027)
 │   │
@@ -39,7 +39,7 @@ rag-kb production-grade local multi-Agent system
 │   │   └── 🔲 MCP official Registry / awesome-mcp-servers submission (awaiting user)
 │   │
 │   ├── A3 Memory governance (forget/decay/dedup) N21-N23 … ✅ delivered (2026-08-28, TASK-0066~0076)
-│   │   ├── ✅ spec set up (dual-layer: no-LLM rule TTL+similarity dedup / LLM smart consolidation)
+│   │   ├── ✅ spec set up (dual-layer: no-LLM rules + LLM consolidation framework)
 │   │   ├── ✅ access-frequency decay (λ=0.02) + freshness weight (β=0.05, cap 1.3×) — default off, zero behavior change
 │   │   └── ✅ semantic dedup (threshold 0.92, 409 block) + kb forget/dedup CLI + governance audit log
 │   │
@@ -50,127 +50,80 @@ rag-kb production-grade local multi-Agent system
 │   │   └── ✅ N+1 query fix (store.get_many batch) + BM25 corpus persistence
 │   │
 │   ├── A4 Usability (CLI first)…………………… ✅ delivered (2026-08-28, N28; Web UI cancelled — eval-report conclusion)
-│   │   └── ✅ kb stats (type distribution/hot records/stale distribution) + kb ask (terminal RAG; LLM-absent degrades to retrieval hits)
+│   │   └── ✅ kb stats (type/hot/stale distribution) + kb ask (terminal RAG; LLM-absent degrades to retrieval hits)
 │   │
 │   └── A5 v2.0.0 delivery hardening ………………………… ✅ shipped (2026-10-19)
 │       ├── ✅ lightweight default model bge-small-zh-v1.5 + lazy embedder/healthz state
 │       ├── ✅ actionable 503 on embedding failure + atomic same-source replacement + URL document deletion + blank-query 422
 │       ├── ✅ Windows one-click start/stop scripts (.env port / no console prompt hang / three-pass stop)
-│       └── ✅ user-perspective E2E 28/28 + 34/34; full regression 417 green (orchestra frozen, not counted)
-│
-├── 🤖 Main Line B: orchestra collaboration (❄️ maintenance mode — frozen since 2026-08-27, personal scaffold)
-│   │
-│   ├── ✅ v1 MVP: task board + single/dual worker parallelism (real-machine verified)
-│   │
-│   ├── B1 P0 three-role loop ………………………… ✅ shipped (difficulty ★☆☆)
-│   │   ├── ✅ B1.1 designer role (designer-prompt.md + first run, TASK-0007)
-│   │   ├── ✅ B1.2 worker registry (register/workers cmds, TASK-0006)
-│   │   ├── ✅ B1.3 kb message window (protocol live; command-ized TASK-0009)
-│   │   ├── ✅ B1.4 batch kickoff + round fuse (protocol v1.2, ≤5 rounds per wake, TASK-0018/0020 field-validated)
-│   │   ├── ✅ B1.5 restart control (protocol v1.1 live, first application accepted)
-│   │   ├── ✅ B1.6 task-branch mode (first three-branch merge; worktree physical isolation, TASK-0025, protocol v1.3)
-│   │   ├── 🚧 B1.7 coordinator skill (relay mechanism: coordinator-prompt.md wake + relay-state section; skill-ization pending)
-│   │   ├── ✅ B1.8 simple dashboard (watch + HTML /dashboard + nav page, TASK-0010/0014/0019)
-│   │   └── ✅ B1.9 local monitor agent (on-demand, qwen3:4b digest into monitor channel, TASK-0017/0021)
-│   │
-│   ├── B2 P1 bidirectional feedback loop ……………………… ✅ shipped (2026-08-26, difficulty ★★☆)
-│   │   ├── ✅ three feedback nodes (pre-execution/summary/milestone) → precheck/review field-validated (FBK-0001~0003)
-│   │   ├── ✅ structured feedback types (feedback.py: objection/risk/clarify w/ required fields + iron rules, TASK-0032)
-│   │   └── ✅ per-node round quotas (2-2-5 hard gate + over-limit arbitration + comm:feedback archive, TASK-0033; dynamic in B3)
-│   │
-│   ├── B3 P2 cost refinement ……………………… ✅ frozen-shipped (2026-08-27, difficulty ★★★; 5/6 landed, model tiering cancelled)
-│   │   ├── ✅ staged context slicing (protocol v1.6 §14.1, three-role prompts, TASK-0051/0052)
-│   │   ├── ✅ rolling window (keep recent 3 rounds, older auto-digested, §14.2)
-│   │   ├── ✅ dynamic round quota (simple 3/medium 5/complex 8, b3.py + card link + watch rounds column + DispatchAgent warning, TASK-0053/0054/0060/0058)
-│   │   ├── ✅ relation window (≤5 related cards, 6th archived as summary, relation.py, TASK-0055)
-│   │   └── ✅ auto incremental digest (every 2 rounds to kb, resume on interrupt, TASK-0053/0054)
-│   │
-│   ├── B3+ Scheduler/monitor architecture ………………………… ✅ delivered (2026-08-26, dialogue-finalized)
-│   │   ├── ✅ DispatchAgent 4 anomaly rules (pool shortfall/claimed timeout/done backlog/open FBK no verdict, TASK-0048)
-│   │   ├── ✅ comm:dispatch broadcast + list-comm support (TASK-0049/0057)
-│   │   ├── ✅ LLM-decoupled degradation + plain-text default off (monitor_llm=off/auto, TASK-0059/0065) → fully usable without local LLM by default
-│   │   └── ✅ coordinator loop resident auto-verify (merge→test→verify→push, incl. open-FBK block & auto broadcast)
-│   │
-│   └── B4 P3 adaptive optimization ……………………… ❌ cancelled (2026-08-27 strategic shift; if restarted, evaluate A2A protocol compat rather than self-build)
-│       (round-threshold self-learning/complexity prediction/cost-quality balance/experience reuse all cancelled along with it)
-│
-│   ── ❄️ B-line maintenance discipline (since 2026-08-27):
-│       bug fixes only + keep tests green + docs sync; coordinator loop/dashboard/message window keep running;
-│       no new features, no protocol extension, no performance optimization. A-line tasks may keep using B-line collaboration (dogfooding).
-│
-│   ── 🔧 B5 mount-residency refactor (2026-08-28 user instruction restarted B-line dev, the exception to maintenance freeze):
-│       separate branch feature/orchestra-mount; B5-0~B5-4 delivered (mount.py mount-state module + 6 CLIs +
-│       mount-loop protocol + sub/parent coordinator layering + robotic-arm heartbeat monitoring, orchestra 240 tests green);
-│       B5-5 real-machine experiment awaiting human verification before merge to main.
+│       └── ✅ user-perspective E2E 28/28 + 34/34; full regression 395 green
 │
 ├── 🌱 Side lines (start on demand, no mainline resources)
-│   ├── 🔲 L2 terminal REPL (interactive point at system terminal, backup)
-│   └── 🔲 local stats worker (qwen3 daily report/dashboard stats, depends on B1.2)
+│   └── 🔲 L2 terminal REPL (interactive point at system terminal, backup)
 │
 └── ❌ Cancelled
-    └── Qdrant (violates zero-resident-constraint)
+    ├── Qdrant (violates zero-resident-constraint)
+    └── Web UI (eval-report conclusion; A4 shipped as CLI)
 ```
 
 ## 2. Current Progress (where you are)
 
 ```
-Main A: A1 ✅ → A2 auth ✅ → A2.5 ecosystem 🚧 (only MCP Registry left, user action)
+A1 ✅ → A2 auth ✅ → A2.5 ecosystem 🚧 (only MCP Registry left, user action)
         → A3 memory governance ✅ → A3.5 retrieval quality ✅ → A4 usability ✅ (CLI shipped, Web UI cancelled)
         → A5 v2.0.0 delivery hardening ✅ (2026-10-19)
-        —— all in-plan A-line nodes done; new needs: update design docs first, then initiate
-Main B: ❄️ maintenance mode (B1/B2/B3/B3+ frozen-shipped, B4 cancelled) — 2026-08-27 strategic shift
+        —— all in-plan nodes done; new needs: update design docs first, then initiate
 ```
 
-**Current position** (2026-10-19): **v2.0.0 delivery hardening shipped** — lightweight default model, actionable embedding failures, atomic same-source replacement, Windows one-click scripts and the Agensi standalone skill package all landed; user-perspective E2E 28/28 + 34/34, `tests/` full regression 417 green, manual acceptance pending. A2.5 only MCP Registry submission remains (user action). B-line ❄️ maintenance, tests frozen. Strategy basis: root-folder 《Evaluation Report》 dual reports + user decision.
+**Current position** (2026-10-19): **v2.0.0 delivery hardening shipped** — lightweight default model, actionable embedding failures, atomic same-source replacement, Windows one-click scripts and the Agensi standalone skill package all landed; user-perspective E2E 28/28 + 34/34, `tests/` full regression 395 green, manual acceptance pending. A2.5 only MCP Registry submission remains (user action). Strategy basis: root-folder 《Evaluation Report》 dual reports + user decision.
 
 ## 3. Priority Principles (why this order)
 
-1. **Foundation first**: kb is every agent's shared memory & task board — if it's unstable everything fails → A1 ranks first
-2. **Demand first**: multi-agent kickoff immediately hits "shouting for communication, unclear identity, restart collisions" → B1 registry/message-window/restart-control done first
-3. **Easy to hard**: B1(★) → B2(★★) → B3(★★★) → B4(★★★★), each stage verified before advancing (at least a week stable)
-4. **Hard & low-frequency later**: P3 adaptive, Web UI are nice-to-haves, do last
-5. **Cost grows with capability**: each upgrade must land matching cost control (B1 round fuse, B2 feedback quotas, B3 context management) — forbid "capability up, cost flying"
+1. **Foundation first**: kb is every Agent's shared memory layer — if it's unstable everything fails → A1 ranks first
+2. **Zero extra residents**: one resident process (`python -m kb serve`), no Qdrant or standalone vector service → lower install/ops cost
+3. **Retrieval quality over feature count**: cross-language/proper-noun recall and reproducible evals first → A3.5
+4. **Usability last but mandatory**: CLI (stats/ask/eval) first, Web UI explicitly cancelled → A4
+5. **Ecosystem compliance in parallel**: LICENSE, bilingual README, secret governance, skill package → A2.5
+6. **Fully usable without a local LLM**: storage/retrieval never depend on an LLM; monitor plain-text mode default off
 
-## 4. Four Iron Rules Across All Stages
+## 4. Four Iron Rules Across the Project
 
-1. **Task-level context isolation**: agent holds only the current single-task context at a time; switching clears it; no cross-task accumulation
-2. **Round hard limit**: max rounds per task/discussion node; force truncation to arbitration on exceed; no infinite debate
-3. **Memory auto-persist**: on completion/termination/round-exceed, key conclusions auto-written to kb, agent context cleared — **stateless Agent + stateful knowledge base**
-4. **Incremental loading**: discussions don't fully retain history; core conclusions retrieved by kb search
+1. **Local-first**: data and models stay on the machine; fully usable offline
+2. **Zero extra resident services**: no Qdrant/standalone vector DB or other extra processes
+3. **No LLM required for storage & retrieval**: the LLM only enhances `/ask`
+4. **Design docs before code**: specs are the single source of truth; new needs update the spec first, advanced via node gates
 
 ## 5. Stage Acceptance Criteria
 
 | Stage | Acceptance |
 |---|---|
 | A1 stable | 7×24 resident no crash; logs debug-able; known bugs zeroed |
-| B1 P0 | full three-role single-task chain: human→coordinator→designer split→worker exec→designer accept→coordinator deliver; no role overreach, no round overrun, key info in kb |
-| B2 P1 | worker feedback drives plan improvement; never over quota; feedback traceable |
-| B3 P2 | same-complexity token total 40%+ lower than B2; interrupted tasks resume context from kb |
-| B4 P3 | task success up, token continuous improvement, key params no manual tuning |
+| A2 auth | with a key configured, keyless requests are rejected; empty key stays zero-friction; REST/MCP/CLI all pass |
+| A3 governance | decay/dedup/freshness default off with zero behavior change; stats and audit visible when enabled |
+| A3.5 retrieval quality | 50-QA eval reproducible; rerank/sparse do not regress metrics; failures degrade gracefully |
+| A4 usability | `kb stats/ask/eval` usable; ask degrades to retrieval hits without an LLM |
+| A5 delivery hardening | a new user can install and run per README; E2E passes; full suite green; skill zip self-contained |
 
 ## 6. Risks & Pitfalls
 
-| Stage | Core risk | Mitigation |
-|---|---|---|
-| B1 | role boundaries blur; coordinator meddles in tech | coordinator has no tech-tool permissions; tech judgment all via designer |
-| B2 | feedback spam becomes infinite debate | structured feedback (objection without alternative auto-rejected) + hard rounds |
-| B3 | auto-digest loses key info | core decisions/params/acceptance keep required tags; post-digest validation |
-| B4 | over-optimization rigidity | keep manual intervention entry; monthly strategy calibration |
-| All | worker restart kills others' DB writes | restart right only to coordinator (B1.5 protocol) |
+| Core risk | Mitigation |
+|---|---|
+| Insufficient VRAM/RAM | default `bge-small-zh-v1.5` (~92MB); `KB_DEVICE=cpu` on OOM |
+| Swapping embed models breaks dimensions | confirm the DB is empty before switching; the service reuses the build model |
+| Embedding model unavailable | 503 `EMBED_MODEL_UNAVAILABLE` (REST/MCP); healthz exposes `embedder.state/error` |
+| Same-source re-import loses old data | compute vectors first, then atomic replace; keep old data on failure |
+| Windows start/stop leftovers | three-pass stop (PID + port + command line); non-interactive CPU fallback under pythonw |
+| Dependency bloat | only packages listed in design doc §3; new deps need a rationale + spec update |
 
 ## 7. Detailed Plan Index
 
 | Bus node | Detailed plan doc |
 |---|---|
-| A1.1 / B1.2-B1.7 | `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` |
 | A1.2 logging | `docs/superpowers/specs/2026-08-24-logging-design.md` (N17-N18) |
 | A2-A4 | `docs/superpowers/plans/2026-08-24-p2-roadmap.md` |
-| B2 | `docs/superpowers/specs/2026-08-26-b2-feedback-design.md` (shipped, 2026-08-26) |
-| B3 | `docs/superpowers/specs/2026-08-26-b3-cost-control-design.md` (in progress, 5/6) |
 | A2 | `docs/superpowers/specs/2026-08-26-p2-auth-design.md` (delivered, 2026-08-27) |
 | A3.5 | `docs/superpowers/specs/2026-08-28-a35-retrieval-quality-design.md` (delivered, 2026-08-28) |
 | A4 | `docs/superpowers/specs/2026-08-28-a4-cli-design.md` (delivered, 2026-08-28; Web UI cancelled) |
-| B4 | spec after B3 ships (design-then-code) |
-| coordinator relay | `orchestra/coordinator-prompt.md` (wake prompt + relay-state section, sole coordinator handoff entry) |
-| project status/relay | `PROJECT.md` (AI handoff entry) |
-| usage | `docs/USER_GUIDE.md` (human entry) |
+| A5 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` §3.1 (2026-10-19 lightweight-first revision) |
+| Project status/relay | `PROJECT.md` (AI handoff entry) |
+| Usage | `docs/USER_GUIDE.md` (human entry) |

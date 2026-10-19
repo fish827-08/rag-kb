@@ -6,24 +6,19 @@
 >
 > English: [PROJECT_EN.md](PROJECT_EN.md)
 
-## 1. 项目是什么（两个独立子系统）
+## 1. 项目是什么
 
 ```
 ┌─────────────────────────────────────────────────┐
 │  rag-kb 仓库（本仓库，Windows 本地优先）          │
 │                                                 │
-│  ① kb —— 本地 Agent 记忆与知识服务（核心产品）    │
+│  kb —— 本地 Agent 记忆与知识服务                  │
 │     python -m kb serve 常驻，REST + MCP 双协议    │
 │     向 AI 助手提供记忆写入/混合检索/文档网页摄取    │
-│                                                 │
-│  ② orchestra —— 跨任务 AI 协作系统（实验系统）    │
-│     kb 当共享任务板，协调者 AI 拆卡分发            │
-│     worker AI（任意模型的其他 TraeWork 任务）领卡   │
 └─────────────────────────────────────────────────┘
 ```
 
-> **交付边界（2026-10-19）**：kb 是唯一对外交付物；orchestra 是作者自用的实验脚手架，
-> 不随 kb 安装、不进入 Agensi skill 包、测试冻结不跑（AGENTS.md 验证协议）。
+> **交付边界（2026-10-19）**：kb 是唯一产品与对外交付物。
 > kb 默认嵌入模型为轻量 `BAAI/bge-small-zh-v1.5`（约 92MB），显式可换 BGE-M3。
 
 - **设计原则**：本地优先、完全免费、断网可用；显存预算 6GB（默认 bge-small；选 BGE-M3 时与 qwen3:4b 共 4.3GB）
@@ -31,7 +26,7 @@
 
 ## 2. 当前进度（看板）
 
-### ① kb 记忆服务 — v2.0.0 交付加固（P1/P2 主线持续迭代）
+### kb 记忆服务 — v2.0.0 交付加固（P1/P2 主线持续迭代）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
@@ -41,7 +36,7 @@
 | M4（N13-N16） | 文档摄取（pdf/docx/md/txt）、网页抓取、目录监听、README | ✅ 2026-08-24 |
 | v1.0.1 hotfix | top_k/mode/空内容校验 → 422、MCP 入口校验、SSE charset | ✅ 2026-08-24 |
 
-- 测试基线：**417 项全绿**（2026-10-19 全量回归；历史：A3.5+A4 新增 68 项：reranker/sparse/eval/perf/cli 五个测试文件，分支 `feature/a-line-remaining`）
+- 测试基线：**395 项全绿**（2026-10-19 全量回归；历史：A3.5+A4 新增 68 项：reranker/sparse/eval/perf/cli 五个测试文件，分支 `feature/a-line-remaining`）
 - 基准：混合检索 26ms、/ask 端到端 ~2s（本地 qwen3:4b）
 - tag：`node-01`~`node-16`、`v1.0.0`、`v1.0.1`（均已推 Gitee）
 - v1.0.2：JSON charset 已修复（TASK-0003/0038/0045 交付，含测试断言）
@@ -62,8 +57,8 @@
 - **v3 记忆全共享已收口**（2026-08-31，spec：`docs/superpowers/specs/2026-08-31-memory-share-refactor-design.md`）：
   - 取消 (client, project) 隔离：所有记忆/知识全共享，跨 agent/任务可读同一份用户偏好
   - client/project 降级为**审计归类与元数据**，不隔离读写（MCP/REST/CLI/检索全部同步）
-  - 验证协议定稿：小改动只跑相关测试、核心架构改变才全量、B 线冻结不测（AGENTS.md §0）
-  - 测试：417 项全绿（2026-10-19 全量回归，隔离断言已反转测试隔离语义）
+  - 验证协议定稿：小改动只跑相关测试、核心架构改变才全量（AGENTS.md §0）
+  - 测试：395 项全绿（2026-10-19 全量回归，隔离断言已反转测试隔离语义）
 - **混合检索融合修复收口**（2026-09-01，N32/N33，回归测试 `tests/test_n32_hybrid_fusion_recall.py` 7 项）：
   - hybrid 默认融合从 RRF 排名融合改为**归一化评分加权融合**（每路 min-max 归一化后按**生效路数**均权，候选池放宽 `max(3×top_k, 30)`）
   - 解决跨语言/专有名词召回：中文 query 查不到英文歌名（Poker Face）、纯英文/日文记忆缺席 BM25 路时不再被 ÷总路数稀释挤出 top_k；同语言场景零行为变化
@@ -74,42 +69,21 @@
   - 入库原子性：同 source 重复导入改为“先算向量再替换”，失败不丢旧数据；文档删除支持 URL 查询参数
   - 参数校验：空白搜索/提问 422；`kb eval` 强制隔离治理开关，评测结果可复现
   - Windows 一键脚本：`.env` 端口解析、pythonw 无控制台不卡 GPU 询问、PID+端口+命令行三路停止
-  - 独立 skill 包：`skills/kb-memory/` + `scripts/build_skill_package.py`（zip 根 `SKILL.md`，不含 orchestra/测试/密钥），打包校验 7 项
+  - 独立 skill 包：`skills/kb-memory/` + `scripts/build_skill_package.py`（zip 根 `SKILL.md`，不含测试/密钥），打包校验 7 项
   - 用户视角 E2E：基础 28/28 + 补充 34/34（隔离实例验证鉴权/坏模型/CLI/MCP stdio/skill 包），报告见 `e2e-user-test/测试报告-第三轮.md`
 
-### ② agent-orchestra — B1/B2/B3 收口后转入冻结维护（2026-08-28）
-
-| 里程碑 | 内容 | 状态 |
-|---|---|---|
-| MVP（T1-T10） | board.py CLI 6 命令、协议三件套、orchestra-worker skill、20 项单测 | ✅ 2026-08-24 |
-| 真机实验 | worker-1（另一 TraeWork 任务）TDD 实现 list-pending 子命令，全链路 pending→verified | ✅ 2026-08-24 |
-| B1 三角色闭环 | 交流窗/批量模式（v1.2）/看板（watch+HTML+导航页）/监控Agent（按需）/worktree 隔离（v1.3）/registry 6 成员 | ✅ 2026-08-26 |
-| 包化分层 | board.py 拆为 client/cards/registry/comm/worktree/watch/feedback 等模块（TASK-0028~0031） | ✅ 2026-08-26 |
-| B2 反馈闭环 | FBK 卡三类型铁律 + 动态配额 + 超限仲裁 + comm:feedback 归档（协议 v1.4；FBK-0001~0006 六次实战） | ✅ 2026-08-26 |
-| 调度监测架构 | DispatchAgent 四规则检测 + comm:dispatch 播报 + LLM 解耦降级 + 协调者循环常驻自动核验（协议 v1.5） | ✅ 2026-08-26 |
-| B3 成本管控 | 协议 v1.6 §14 + b3.py（动态配额/rounds/summary 四标签）+ relation 关联窗口 + 中断恢复 + watch 轮次列 + 轮次告警（5/6，模型分级待拆） | 🚧 2026-08-27 |
-| B5 挂载常驻 | mount.py 6 CLI + 心跳/TTL/streak/失联检测（B5-0~B5-4 已交付，真机验证通过）；**AI 自主循环未通过**（AI 客户端请求-响应模式无法自主轮询，需外部脚本驱动）；结论见设计文档 §12 | ✅ 2026-08-29 验证收口 |
-
-- 测试：**240 项全绿**（`orchestra/tests/`，含 relation 15 + b3 22 + client auth 7 + mount 30 + coordinator_loop 失联检测 3 等；B5 挂载常驻在独立分支 `feature/orchestra-mount`）
-- 任务板：TASK-0001~0065 共 65 卡（63 verified；0056/0063 重复卡作废记录）
-- 协调者循环：**常驻自动核验运转中**（60 秒/轮：done 卡 merge→test→verify→push；open FBK 阻塞 + 新 FBK 自动广播）
-- 协调者接力：**coordinator-prompt.md 已立唤醒提示词 + 接力状态节**（每次收口后必须更新），交接唯一入口
-- skill 已装本机 `~\.trae-cn\skills\orchestra-worker\`（**硬链接**，git checkout 后可能断链需重装）
-
-### ③ 发展总线 — v3（2026-08-27 战略调整：A 线唯一主线，B 线冻结维护）
+### 发展总线 — kb 单主线（2026-08-27 战略调整）
 
 项目总线见 **[ROADMAP.md](ROADMAP.md)**（树形路线+进度，人类入口）。战略调整后单主线：
 
 | 主线 | 当前阶段 | 下一步 |
 |---|---|---|
-| **A：kb 记忆服务**（**唯一开发主线**，2026-08-27 战略调整） | **规划内节点全部交付**：A1/A2/A3 ✅，A3.5+A4 ✅（分支 `feature/a-line-remaining`，N24-N28，584 项全绿待合入）；A2.5 仅剩 MCP Registry 提交（待用户操作） | 新需求先修订设计文档再立项（AGENTS.md §6） |
-| **B：orchestra 协作**（❄️ 维护模式） | B1/B2/B3/B3+ 全部收口冻结；B4 取消；B5 挂载常驻例外推进（独立分支） | 仅修 bug + 测试绿 + 文档同步；自用照常（协调者循环/看板/交流窗）；A 线任务继续用它协作开发 |
+| **kb 记忆服务**（唯一开发主线） | **规划内节点全部交付**：A1/A2/A3 ✅，A3.5+A4 ✅（分支 `feature/a-line-remaining`，N24-N28）；A2.5 仅剩 MCP Registry 提交（待用户操作） | 新需求先修订设计文档再立项（AGENTS.md §6） |
 | 支线 | — | 冻结（评估报告建议：不做 Web UI/多用户/商业化；A4 Web UI 已正式砍掉） |
 
-- **战略调整（2026-08-27，依据《评估报告》双报告 + 用户决策）**：A 线 kb 为核心产品（"个人开发者的本地记忆 MCP server"），B 线 orchestra 冻结维护（自用脚手架）；远期若重启跨 Agent 方向，评估 A2A 协议兼容而非自建
+- **战略调整（2026-08-27，依据《评估报告》双报告 + 用户决策）**：kb 为核心产品（"个人开发者的本地记忆 MCP server"）；远期跨 Agent 方向评估 A2A 协议兼容而非自建
 - **LICENSE Apache-2.0 已补**（评估报告 P0 最高优先级项，法律合规闭环）
-- 协议 **v1.6**（B 线冻结前最终版）：任务分支/worktree 隔离、交流窗、反馈节点（三类型/动态配额）、B3 成本管控纪律（§14）、调度监测
-- 运行形态：**协调者循环常驻**（60 秒/轮，done 卡自动 merge→test→verify→push）；**monitor 纯文本模式默认 off**——本地无 LLM 完整可用
+- 运行形态：**monitor 纯文本模式默认 off**——本地无 LLM 完整可用
 
 ## 3. 目录导览
 
@@ -119,10 +93,8 @@ rag-kb/
 ├── PROJECT.md           # 本文档（接力必读第 2 份）
 ├── ROADMAP.md           # 项目发展总线设计书（人类入口，树形路线+进度）
 ├── README.md            # kb 产品说明（快速开始/MCP 挂载/端点速查）
-├── kb/                  # ① kb 服务源码（见设计文档 4.2；含 reranker/sparse/eval 等 A3.5/A4 模块）
-├── tests/               # kb 验收测试（417 项，含 eval_zh_50.jsonl 评测数据集）
-├── orchestra/           # ② 协作系统（board.py + 协议 + skill + 245 项测试）
-│   └── docs/superpowers/  # orchestra 设计文档与实施计划
+├── kb/                  # kb 服务源码（见设计文档 4.2；含 reranker/sparse/eval 等 A3.5/A4 模块）
+├── tests/               # kb 验收测试（395 项，含 eval_zh_50.jsonl 评测数据集）
 ├── docs/superpowers/    # kb 设计文档（specs）与节点计划（plans）
 ├── skills/kb-memory/    # kb 接入规约 skill（Anthropic 开格式、客户端无关；AGENT_PROMPT 的可触发封装，安装见 scripts/README.md）
 ├── kb_data/             # kb 运行数据（ChromaDB + runtime.json，gitignore）
@@ -136,43 +108,28 @@ rag-kb/
 # 启动 kb 服务（常驻，先于一切 MCP 挂载）
 python -m kb serve                    # 默认 127.0.0.1:8000
 
-# kb 测试 / orchestra 测试（venv 内）
-venv\Scripts\python.exe -m pytest tests/ -q            # 417 项
-venv\Scripts\python.exe -m pytest orchestra/tests/ -q  # 245 项
-
-# orchestra 任务板（协调者工具）
-venv\Scripts\python.exe orchestra\board.py status        # 一行一卡看板
-venv\Scripts\python.exe orchestra\board.py add --assignee worker-1 --title ... --goal ... --input ... --constraints ... --acceptance ...
-venv\Scripts\python.exe orchestra\board.py verify TASK-0001 --pass|--reject --note 原因
-venv\Scripts\python.exe orchestra\board.py new-worker worker-1   # 生成 worker 引导语
+# kb 测试（venv 内）
+venv\Scripts\python.exe -m pytest tests/ -q            # 395 项
 ```
 
 ## 5. 接手指南（新 AI 按此行动）
 
 1. **读规则**：AGENTS.md（角色分工、红线、节点门禁制）
 2. **读状态**：本文档 + 当前正在实施的设计文档（见第 6 节索引）
-3. **验证环境**：`python -m kb serve` 能启动、两套测试全绿、git 状态干净
+3. **验证环境**：`python -m kb serve` 能启动、测试全绿、git 状态干净
 4. **确认角色**：你是开发 AI（写实现）还是文档/测试 AI（写验收/核验）？按 AGENTS.md 第 5 节职责行动
-5. **协作开发**（orchestra 流程）：
-   - 协调者任务：用户提需求 → 你拆卡（board.py add，五字段齐+assignee）→ 用户开 worker 任务粘贴 new-worker 引导语 → worker 领卡执行 → 你核验（diff+测试+真服务复验）→ verify 流转 → 统一提交
-   - 你当 worker（被粘贴引导语时）：加载 orchestra-worker skill → 查卡 → 单卡单轮 → 回写 → 停止
-6. **接续总线**：读 `ROADMAP.md` 确认当前位置（当前活跃：A1 稳定性 + B1 P0），按对应计划节点走 TDD + 节点门禁制
+5. **接续总线**：读 `ROADMAP.md` 确认当前位置，按对应计划节点走 TDD + 节点门禁制
 
 ## 6. 文档索引（唯一有效集）
 
 | 文档 | 内容 |
 |---|---|
 | `ROADMAP.md` | **项目发展总线设计书**（人类入口：树形路线+进度+优先级） |
-| `docs/USER_GUIDE.md` | **用户使用手册**（人类用户入口：安装/挂载/协作流程/FAQ） |
+| `docs/USER_GUIDE.md` | **用户使用手册**（人类用户入口：安装/挂载/FAQ） |
 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | kb 唯一设计（需求/架构/API/基准） |
 | `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | kb 节点计划 N1-N16（全部 ✅） |
-| `orchestra/docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md` | orchestra 设计 |
-| `orchestra/docs/superpowers/plans/2026-08-24-agent-orchestra-mvp.md` | orchestra 实施计划（全部 ✅） |
 | `docs/superpowers/specs/2026-08-24-logging-design.md` | 日志设计（总线 A1.2，N17-N18） |
 | `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | kb 功能路线（总线 A2-A4） |
-| `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` | orchestra v2 迭代计划（总线 B1 载体） |
-| `orchestra/protocol.md` + `worker-prompt.md` + `coordinator-prompt.md` | 协作协议三件套（v1.1：分支/重启管控/交流窗） |
-| `orchestra/EXPERIMENT.md` | 真机实验指引（可复用作下次实验模板） |
 
 ## 7. 环境备忘（详见 AGENTS.md 第 7 节）
 

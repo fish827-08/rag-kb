@@ -11,18 +11,15 @@
 1. [总览](#1-总览)
 2. [kb 服务：安装与启动](#2-kb-服务安装与启动)
 3. [kb 服务：日常使用](#3-kb-服务日常使用)
-4. [orchestra：多 Agent 协作](#4-orchestra多-agent-协作)
-5. [配置参考](#5-配置参考)
+4. [配置参考](#4-配置参考)
+5. [维护命令](#5-维护命令)
 6. [常见问题与故障排查](#6-常见问题与故障排查)
 
 ---
 
 ## 1. 总览
 
-本仓库两个子系统，一句话说清：
-
-- **kb**：一个跑在你电脑上的"AI 记忆库"服务。你的 AI 助手（TraeWork / Claude Code / Cursor）挂载它之后，就有了跨会话的长期记忆——写入的记忆、入库的文档，下次对话随时可查。
-- **agent-orchestra**：让多个 AI 助手协作开发的"任务板"。一个 AI 当协调者拆活，其他 AI 当干活的 worker，通过 kb 上的任务卡交接，你只负责发指令和验收。
+**kb**：一个跑在你电脑上的"AI 记忆库"服务。你的 AI 助手（TraeWork / Claude Code / Cursor）挂载它之后，就有了跨会话的长期记忆——写入的记忆、入库的文档，下次对话随时可查。
 
 **日常使用最小集**：kb 服务保持运行 → AI 客户端挂载 MCP → 对话即可。
 
@@ -247,114 +244,7 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/governance/config
 > `python -m kb audit`、`python -m kb eval`。`kb eval` 使用独立临时库并显式关闭
 > dedup/decay/freshness，不受 `.env` 治理配置影响，结果可复现。
 
-## 4. orchestra：多 Agent 协作（实验，独立子系统）
-
-> **边界说明**：orchestra 是作者自用的实验脚手架，不属于 kb 产品交付物，
-> 不随独立 skill 包发布，也不是使用 kb 的前置依赖。本节仅对想尝试多 Agent
-> 协作的用户保留；只使用 kb 的读者可跳过。
-
-### 4.1 它解决什么问题
-
-不同 AI 会话之间互相不知道对方在干什么。orchestra 用 kb 当**共享任务板**：
-任务卡片就是 kb 里的记录，所有 AI 都能看到同一块板——协调者拆卡、worker 领卡干活、
-干完回写、协调者核验。**每个 AI 只在被唤醒时干活，平时挂载零消耗。**
-
-### 4.2 三种角色
-
-| 角色 | 谁 | 干什么 |
-|---|---|---|
-| **你** | 人类 | 提需求、开 worker 任务、最终验收 |
-| **协调者** | 一个 AI 任务（如本会话） | 把需求拆成任务卡、分派给 worker、核验结果、提交代码 |
-| **worker** | 其他 AI 任务（模型任选） | 领卡 → 执行 → 回写结果 → 停止，**单卡单轮** |
-
-### 4.3 标准流程（五步）
-
-**第 1 步：向协调者提需求**
-
-在协调者任务里直接说，例如："给 orchestra 加一个 list-pending 子命令"。
-协调者会拆卡（每张卡含标题/目标/输入/约束/验收标准五字段）并分派 assignee。
-
-**第 2 步：开 worker 任务**
-
-新开一个 TraeWork 任务（同一项目下，模型任选——这正是要验证的"任意模型当 worker"），
-粘贴协调者给你的引导语，或自行运行：
-
-```powershell
-venv\Scripts\python.exe orchestra\board.py new-worker worker-1
-```
-
-把命令输出的引导语原样发给那个新任务。worker 会自动：查卡 → 认领 → 干活 → 回写 → 停止。
-
-**第 3 步：观察进度**
-
-在协调者任务（或任意终端）运行：
-
-```powershell
-venv\Scripts\python.exe orchestra\board.py status          # 看板：一行一卡
-venv\Scripts\python.exe orchestra\board.py show TASK-0001  # 看某张卡的详情与结果
-venv\Scripts\python.exe orchestra\board.py list-pending    # 只看待办
-```
-
-**第 4 步：多卡接力**
-
-worker 单卡单轮纪律：干完一张卡就停。在 worker 任务里发"**继续**"，它领下一张。
-
-**第 5 步：回协调者验收**
-
-worker 全部完成后，回协调者任务说"**核验**"。协调者会独立检查（代码 diff、跑全量
-测试、真服务复验），通过则 verify 流转（pending → claimed → done → verified）并统一
-提交推送；不通过会 reject 退回重做。
-
-### 4.4 多 worker 并行
-
-现在就支持：
-
-1. 协调者拆卡时按 assignee 分配（worker-1 改 A 文件、worker-2 写 B 文档、worker-3 跑测试）
-2. 你开 N 个任务，各自粘贴对应 worker 的 `new-worker` 引导语
-3. 各 worker 并行领自己的卡，互不干扰
-
-**已知限制（MVP 阶段，诚实版）**：
-
-- 唤醒靠你手动发消息（无自动调度）
-- 无依赖图——卡片的先后顺序靠协调者拆卡时控制
-- **并行卡不要改同一个文件**（拆卡时协调者会避开）
-- 多 worker 并行尚未真机实测（单 worker 已验证通过），首次并行建议先小规模试
-
-### 4.5 协作纪律（协议红线，worker 与协调者共同遵守）
-
-- 单卡单轮：一次唤醒只做一张卡，做完停止
-- 不轮询、不闲聊：挂载状态零消耗，只在被唤醒时行动
-- 卡片字段有字符上限，结果写不下的落文件、卡里写路径
-- worker 不直接 git commit/推送——统一由协调者核验后提交
-- 测试纪律：先写验收测试（红）→ 实现（绿）→ 全量回归
-
-### 4.6 挂载常驻模式（B5，新增）
-
-让 worker/designer 完成任务后**挂载监听**（空闲 15 分钟自动停机、有新卡自动继续），子协调者**持续挂载**，父协调者**按需唤醒**：
-
-```powershell
-# 挂载（worker/designer 默认 TTL=900 即 15 分钟；子协调者 --ttl 0 常驻）
-venv\Scripts\python.exe orchestra\board.py mount worker-1 --role worker --ttl 900
-venv\Scripts\python.exe orchestra\board.py mount designer-1 --role designer --ttl 900
-venv\Scripts\python.exe orchestra\board.py mount subcoordinator --role subcoordinator --ttl 0
-
-# 心跳 / 退出 / 看板 / 失联检测
-venv\Scripts\python.exe orchestra\board.py heartbeat worker-1
-venv\Scripts\python.exe orchestra\board.py unmount worker-1 --reason 空闲超时
-venv\Scripts\python.exe orchestra\board.py mount-status            # 一行一 agent
-venv\Scripts\python.exe orchestra\board.py mount-check --threshold 300
-
-# 挂载循环内由 worker/designer 自行调用
-venv\Scripts\python.exe orchestra\board.py mount-claim worker-1 --topic kb-A3
-venv\Scripts\python.exe orchestra\board.py mount-idle worker-1
-```
-
-- **挂载循环**：worker/designer 挂载后自循环——查卡 → 有卡领卡干活回写 → `mount-idle`；无卡 `heartbeat`+sleep 60s；累计空闲满 TTL `unmount` 停机。
-- **连续相关≤5**：同"主题"卡连续做到第 5 张，写 summary 后 `unmount` 上下文重置（防上下文膨胀）。
-- 父协调者不挂载：用户唤醒后建"拆卡卡"（assignee=subcoordinator）派活，见 `orchestra/parent-coordinator-prompt.md`。
-- 完整协议见 `orchestra/protocol.md` §15 与 `orchestra/docs/superpowers/specs/2026-08-28-orchestra-mount-design.md`。
-
-## 5. 配置参考
+## 4. 配置参考
 
 复制 `.env.example` 为 `.env` 后按需填写（`.env` 不入库，密钥只放本机）：
 
@@ -365,10 +255,10 @@ venv\Scripts\python.exe orchestra\board.py mount-idle worker-1
 | 云端问答降级 | `.env` 填 `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL`（**任意 OpenAI 兼容服务商**，通用三键，不绑定 DeepSeek）；`KB_LLM_MODE=auto`（本地优先，云端降级） |
 | 隐私隔离 | `KB_SENSITIVE_NAMESPACES=私人笔记` 等逗号分隔，命中强制本地回答不出网 |
 | 性能调优 | `KB_DEVICE=cuda/cpu`；`KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` 切分参数 |
-| 局域网/多 Agent 访问鉴权 | `KB_API_KEY=<≥32随机字符>` 启用 Bearer/X-API-Key 鉴权（见 5.1） |
+| 局域网/多 Agent 访问鉴权 | `KB_API_KEY=<≥32随机字符>` 启用 Bearer/X-API-Key 鉴权（见 4.1） |
 | 记忆治理 | `KB_DEDUP_ENABLED`（去重）/ `KB_DECAY_ENABLED`（衰减）/ `KB_FRESHNESS_ENABLED`（新鲜度），均默认关（见 3.5） |
-| 记忆全共享 | v3（2026-08-31）：所有记忆/知识全共享、不按 (client, project) 隔离读写；client/project 仅审计归类（见 5.3） |
-| Agent 存取审计 | `KB_ACCESS_AUDIT_ENABLED`（默认开）：每次存取写 `logs/agent-audit/<客户端>__<项目>.log` JSON 行；查询：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 `kb audit --client <客户端>`（见 5.3） |
+| 记忆全共享 | v3（2026-08-31）：所有记忆/知识全共享、不按 (client, project) 隔离读写；client/project 仅审计归类（见 4.3） |
+| Agent 存取审计 | `KB_ACCESS_AUDIT_ENABLED`（默认开）：每次存取写 `logs/agent-audit/<客户端>__<项目>.log` JSON 行；查询：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 `kb audit --client <客户端>`（见 4.3） |
 
 完整键名见 [`.env.example`](../.env.example)。
 
@@ -379,7 +269,7 @@ venv\Scripts\python.exe orchestra\board.py mount-idle worker-1
 - **兜底**：`docs/AGENT_PROMPT.md` 纯文本提示词，复制粘贴给任意 Agent 即接入，
   不依赖 skill 机制。两处内容一致，同步更新。
 
-### 5.1 API Key 鉴权（N19）
+### 4.1 API Key 鉴权（N19）
 
 本地回环默认零摩擦（`KB_API_KEY` 为空 = 不鉴权）。当需要把 kb 暴露到局域网、手机挂 MCP、或多 Agent 并行访问时，建议启用鉴权：
 
@@ -388,19 +278,17 @@ venv\Scripts\python.exe orchestra\board.py mount-idle worker-1
 3. 所有客户端请求需携带 key（二选一）：
    - `Authorization: Bearer <key>`（推荐，MCP 客户端 headers 配置）
    - `X-API-Key: <key>`（脚本/ curl 便捷）
-4. 唯一白名单：`GET /api/v1/healthz`（存活探针，协调者/监控无 key 可探活）
+4. 唯一白名单：`GET /api/v1/healthz`（存活探针，无需 key）
 5. 缺失或错误 key 均返回 `401 {"error":"UNAUTHORIZED","message":"missing or invalid api key"}`（不区分，防探测）
 
 空 key 时所有既有行为完全不变（v1.x 兼容）；key 比较用 `hmac.compare_digest` 防时序攻击。
 
-### 5.2 客户端适配（N20：启用鉴权后各客户端如何带 key）
+### 4.2 客户端适配（N20：启用鉴权后各客户端如何带 key）
 
 | 客户端 | 配法 |
 |---|---|
-| **orchestra 命令行**（`orchestra/board.py` 等） | 零改动自动适配：客户端从环境变量 `KB_API_KEY` 读取（其次仓库根 `.env`），非空自动加 `X-API-Key` 头，空则不鉴权；收到 401 会提示“检查 KB_API_KEY” |
 | **MCP 客户端**（Claude Code / Cursor / TraeWork） | 连接配置加 `headers`（真实 key 不写进提交入库的 `.mcp.json`，本机另存或用环境变量/本地覆盖）： |
 | **REST 脚本 / curl** | 加头 `X-API-Key: <key>` 或 `Authorization: Bearer <key>`（二选一，Bearer 优先） |
-| **看板 `/dashboard`** | 启用 key 后看板前端需配置 key 才能加载数据（手动填入） |
 
 MCP 配置带 key 示例（本机自用，**勿提交入库**）：
 
@@ -418,7 +306,7 @@ MCP 配置带 key 示例（本机自用，**勿提交入库**）：
 
 仓库内 `.mcp.json` 模板保持无 key（JSON 不支持注释，说明落本手册）；健康探针 `GET /api/v1/healthz` 永远无需 key。
 
-### 5.3 记忆全共享与存取审计（v3：client + project 仅审计归类，2026-08-31）
+### 4.3 记忆全共享与存取审计（v3：client + project 仅审计归类，2026-08-31）
 
 **记忆全共享**（本地单用户定位，跨 agent/任务共享同一份记忆）：
 
@@ -447,11 +335,11 @@ MCP 配置带 key 示例（本机自用，**勿提交入库**）：
   kb audit --client TraeWork --project kb --action write --days 7 --limit 100
   ```
 
-## 6. 维护命令（forget / dedup）
+## 5. 维护命令（forget / dedup）
 
 N23a 新增两个维护 CLI（`python -m kb forget` / `dedup`），默认 **dry-run 安全优先**（只输出候选不修改数据），直接调用存储层遍历，不经过 REST/服务层。
 
-### 6.1 forget — 扫描陈旧未命中记忆
+### 5.1 forget — 扫描陈旧未命中记忆
 
 ```bash
 # 预览超 90 天未命中的记录（dry-run 默认开启，不删除）
@@ -466,7 +354,7 @@ python -m kb forget --stale --days 90 --no-dry-run
 - `--dry-run/--no-dry-run`：默认 dry-run（仅输出候选表：记录ID/内容摘要/最后命中时间/天数）；`--no-dry-run` 需输入 `yes` 确认后才删除
 - 天数计算：`last_accessed` 为空时用 `created_at` 替代（从未命中=创建时间）
 
-### 6.2 dedup — 扫描语义重复对
+### 5.2 dedup — 扫描语义重复对
 
 ```bash
 # 预览相似度 > 0.85 的重复对（dry-run 默认开启，不修改）
@@ -480,7 +368,7 @@ python -m kb dedup --threshold 0.90 --dry-run
 - `--dry-run/--no-dry-run`：默认 dry-run（输出候选对表：记录A/记录B/相似度/内容摘要）；`--no-dry-run` 暂未实现自动合并（N23c 智能层 consolidation 后续实现），提示人工审核后手动处理
 - 逐条计算 embedding 后两两比较余弦相似度，记录数较多时耗时随 O(n²) 增长
 
-## 7. 常见问题与故障排查
+## 6. 常见问题与故障排查
 
 **Q：healthz 访问不通？**
 服务没起来。检查：终端是否还开着、端口是否被占（`netstat -ano | findstr 8000`）、
@@ -522,9 +410,6 @@ kb 已在启动时强制 UTF-8 编解码并把 Windows 控制台切到 65001，�
 
 **Q：想把记忆库清空重来？**
 停止服务后删除 `kb_data/chroma` 目录再重启（不可逆，先备份）。
-
-**Q：worker 领了卡不动/卡在 claimed？**
-在 worker 任务里发"继续"唤醒它；若确认该任务已废，让协调者在看板上处理退卡。
 
 ---
 

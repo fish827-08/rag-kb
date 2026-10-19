@@ -5,30 +5,21 @@
 >
 > Last updated: 2026-10-19 ｜ Maintainer: docs/test AI (per AGENTS.md role split) ｜ Updated with every milestone/node
 
-## 1. What This Project Is (two independent subsystems)
+## 1. What This Project Is
 
 ```
 ┌─────────────────────────────────────────────────┐
 │  rag-kb repo (this repo, Windows local-first)    │
 │                                                 │
-│  ① kb —— local Agent memory & knowledge service  │
-│     (core product)                              │
+│  kb —— local Agent memory & knowledge service    │
 │     python -m kb serve resident; REST + MCP      │
 │     dual protocol                               │
 │     memory write / hybrid retrieval / doc-web    │
 │     ingestion for AI assistants                 │
-│                                                 │
-│  ② orchestra —— cross-task AI collaboration     │
-│     (experimental)                              │
-│     kb as shared task board; coordinator AI      │
-│     splits cards; worker AIs (any model, other   │
-│     TraeWork tasks) claim and execute           │
 └─────────────────────────────────────────────────┘
 ```
 
-> **Delivery boundary (2026-10-19)**: kb is the only external deliverable. agent-orchestra
-> is the author's experimental scaffolding — it is not installed with kb, is excluded from
-> the Agensi skill package, and its tests are frozen (AGENTS.md validation protocol).
+> **Delivery boundary (2026-10-19)**: kb is the only product and external deliverable.
 > The default embedding model is the lightweight `BAAI/bge-small-zh-v1.5` (~92MB).
 
 - **Design principles**: local-first, completely free, offline-capable; GPU budget 6GB (default bge-small; BGE-M3 + qwen3:4b = 4.3GB when opted in)
@@ -36,7 +27,7 @@
 
 ## 2. Current Progress (dashboard)
 
-### ① kb memory service — v2.0.0 delivery hardening (P1/P2 continuous iteration)
+### kb memory service — v2.0.0 delivery hardening (P1/P2 continuous iteration)
 
 | Milestone | Content | Status |
 |---|---|---|
@@ -46,7 +37,7 @@
 | M4 (N13-N16) | doc ingestion (pdf/docx/md/txt), web fetch, dir watcher, README | ✅ 2026-08-24 |
 | v1.0.1 hotfix | top_k/mode/empty-content validation → 422, MCP entry validation, SSE charset | ✅ 2026-08-24 |
 
-- Test baseline: **417 green** (full regression on 2026-10-19; historically +68 added by A3.5+A4: reranker/sparse/eval/perf/cli five test files, branch `feature/a-line-remaining`)
+- Test baseline: **395 green** (full regression on 2026-10-19; historically +68 added by A3.5+A4: reranker/sparse/eval/perf/cli five test files, branch `feature/a-line-remaining`)
 - Bench: hybrid search 26ms, /ask end-to-end ~2s (local qwen3:4b)
 - Tags: `node-01`~`node-16`, `v1.0.0`, `v1.0.1` (all pushed to Gitee)
 - v1.0.2: JSON charset fixed (TASK-0003/0038/0045, with test asserts)
@@ -78,43 +69,22 @@
   - Windows one-click scripts: `.env` port parsing, non-interactive CPU fallback under
     pythonw, three-pass stop (PID + port + venv-scoped command line)
   - Standalone skill package: `skills/kb-memory/` + `scripts/build_skill_package.py`
-    (SKILL.md at zip root; no orchestra, tests, runtime data or secrets)
+    (SKILL.md at zip root; no tests, runtime data or secrets)
   - User-perspective E2E: baseline 28/28 + supplemental 34/34 (isolated auth/bad-model
     instances, CLI, MCP stdio, skill zip); report at `e2e-user-test/测试报告-第三轮.md`
 
-### ② agent-orchestra — frozen to maintenance after B1/B2/B3 (2026-08-28)
-
-| Milestone | Content | Status |
-|---|---|---|
-| MVP (T1-T10) | board.py CLI 6 cmds, protocol trio, orchestra-worker skill, 20 unit tests | ✅ 2026-08-24 |
-| Real-machine exp. | worker-1 (another TraeWork task) TDD'd list-pending subcommand, full pending→verified chain | ✅ 2026-08-24 |
-| B1 three-role loop | message window/batch mode (v1.2)/dashboard (watch+HTML+nav)/monitor agent (on-demand)/worktree isolation (v1.3)/registry 6 members | ✅ 2026-08-26 |
-| Packaging | board.py split into client/cards/registry/comm/worktree/watch/feedback modules (TASK-0028~0031) | ✅ 2026-08-26 |
-| B2 feedback loop | FBK card 3-type iron rules + dynamic quota + over-limit arbitration + comm:feedback archive (protocol v1.4; FBK-0001~0006 six drills) | ✅ 2026-08-26 |
-| Scheduling/monitor arch | DispatchAgent 4 rules + comm:dispatch broadcast + LLM decoupling + coordinator loop resident auto-verify (protocol v1.5) | ✅ 2026-08-26 |
-| B3 cost control | protocol v1.6 §14 + b3.py (dynamic quota/rounds/summary tags) + relation window + interrupt recovery + watch rounds column + round warning (5/6, model tiering pending) | 🚧 2026-08-27 |
-| B5 mount residency | mount.py mount-state module (6 CLIs) + mount-loop protocol + sub/parent coordinator layering + robotic-arm heartbeat monitoring (separate branch `feature/orchestra-mount`, B5-0~B5-4 delivered) | 🚧 2026-08-28 |
-
-- Tests: **245 green** (`orchestra/tests/`; incl. relation 15 + b3 22 + client auth 7 + mount 30 + coordinator_loop lost-contact 3 etc.; B5 on separate branch `feature/orchestra-mount`)
-- Task board: TASK-0001~0065, 65 cards (63 verified; 0056/0063 duplicate cards voided)
-- Coordinator loop: **resident auto-verify running** (60s/round: done cards merge→test→verify→push; open-FBK block + auto new-FBK broadcast)
-- Coordinator relay: **coordinator-prompt.md wake prompt + relay-state section established** (must update after every closeout), sole handoff entry
-- Skills installed locally `~\.trae-cn\skills\orchestra-worker\` (**hard links**, may break after checkout; reinstall needed)
-
-### ③ Development bus — v3 (2026-08-27 strategic shift: A-line only mainline, B-line frozen)
+### Development bus — kb single mainline (2026-08-27 strategic shift)
 
 Project bus: **[ROADMAP.md](ROADMAP.md)**. Single mainline after shift:
 
 | Mainline | Current stage | Next |
 |---|---|---|
-| **A: kb memory service** (only development mainline, 2026-08-27 shift) | **all in-plan nodes delivered**: A1/A2/A3 ✅, A3.5+A4 ✅ (branch `feature/a-line-remaining`, N24-N28, 584 green awaiting merge); A2.5 only MCP Registry submission left (user action) | new needs: update design docs then initiate (AGENTS.md §6) |
-| **B: orchestra** (❄️ maintenance) | B1/B2/B3/B3+ frozen-shipped; B4 cancelled; B5 mount residency exception (separate branch) | bug fixes + tests green + docs sync; keep running for personal use; A-line keeps using it for collaboration |
+| **kb memory service** (only development mainline) | **all in-plan nodes delivered**: A1/A2/A3 ✅, A3.5+A4 ✅ (branch `feature/a-line-remaining`, N24-N28); A2.5 only MCP Registry submission left (user action) | new needs: update design docs then initiate (AGENTS.md §6) |
 | Side lines | — | frozen (eval-report: no Web UI/multi-user/commercialization; A4 Web UI officially cancelled) |
 
-- **Strategic shift (2026-08-27, per 《Evaluation Report》 dual reports + user decision)**: A-line kb is the core product ("individual dev's local memory MCP server"), B-line orchestra maintenance (personal scaffold); if cross-Agent direction restarts, evaluate A2A protocol compat rather than self-build
+- **Strategic shift (2026-08-27, per 《Evaluation Report》 dual reports + user decision)**: kb is the core product ("individual dev's local memory MCP server"); if the cross-Agent direction restarts, evaluate A2A protocol compat rather than self-build
 - **LICENSE Apache-2.0 added** (eval-report P0 top item, legal-compliance closed)
-- Protocol **v1.6** (last pre-freeze version): task-branch/worktree isolation, message window, feedback nodes (3-type/dynamic quota), B3 cost-control discipline (§14), scheduler monitoring
-- Runtime shape: **coordinator loop resident** (60s/round, done cards auto merge→test→verify→push); **monitor plain-text default off** — fully usable without local LLM
+- Runtime shape: **monitor plain-text default off** — fully usable without local LLM
 
 ## 3. Directory Guide
 
@@ -124,11 +94,9 @@ rag-kb/
 ├── PROJECT.md           # this doc (handoff read #2)
 ├── ROADMAP.md           # project bus (human entry, tree+progress)
 ├── README.md            # kb product doc (quick start/MCP mount/endpoint cheat-sheet)
-├── kb/                  # ① kb service source (see design doc 4.2; incl. reranker/sparse/eval)
-├── tests/               # kb acceptance tests (417, incl. eval_zh_50.jsonl dataset)
+├── kb/                  # kb service source (see design doc 4.2; incl. reranker/sparse/eval)
+├── tests/               # kb acceptance tests (395, incl. eval_zh_50.jsonl dataset)
 ├── scripts/             # one-click start/stop scripts (windows/ + linux/ reserved)
-├── orchestra/           # ② collaboration system (board.py + protocol + skill + 245 tests)
-│   └── docs/superpowers/  # orchestra design docs & plans
 ├── docs/superpowers/    # kb design docs (specs) & node plans (plans)
 ├── kb_data/             # kb runtime data (ChromaDB + runtime.json, gitignored)
 ├── _archive/            # old learning-project archive (do not reference)
@@ -142,43 +110,28 @@ rag-kb/
 python -m kb serve                    # default 127.0.0.1:8000
 # or one-click: scripts\windows\start_kb.bat / start_kb_console.bat / stop_kb.bat
 
-# kb tests / orchestra tests (inside venv)
-venv\Scripts\python.exe -m pytest tests/ -q            # 417
-venv\Scripts\python.exe -m pytest orchestra/tests/ -q  # 245
-
-# orchestra task board (coordinator tools)
-venv\Scripts\python.exe orchestra\board.py status        # one-line-per-card board
-venv\Scripts\python.exe orchestra\board.py add --assignee worker-1 --title ... --goal ... --input ... --constraints ... --acceptance ...
-venv\Scripts\python.exe orchestra\board.py verify TASK-0001 --pass|--reject --note reason
-venv\Scripts\python.exe orchestra\board.py new-worker worker-1   # generate worker wake prompt
+# kb tests (inside venv)
+venv\Scripts\python.exe -m pytest tests/ -q            # 395
 ```
 
 ## 5. Handoff Guide (new AI act per this)
 
 1. **Read rules**: AGENTS.md (role split, red lines, node-gate system)
 2. **Read status**: this doc + the design doc currently in implementation (Chapter 6 index)
-3. **Verify environment**: `python -m kb serve` starts, both test suites green, git clean
+3. **Verify environment**: `python -m kb serve` starts, tests green, git clean
 4. **Confirm role**: are you the dev AI (write impl) or docs/test AI (write acceptance/verify)? Act per AGENTS.md §5
-5. **Collaborative dev** (orchestra flow):
-   - As coordinator: user request → you split cards (board.py add, 5 fields + assignee) → user opens worker task with new-worker prompt → worker claims → you verify (diff+test+real-service re-verify) → verify transition → unified commit
-   - As worker (when pasted a wake prompt): load orchestra-worker skill → look up card → one card one round → write back → stop
-6. **Continue the bus**: read `ROADMAP.md` for current position (currently active: see bus §2), follow the plan nodes with TDD + node-gate
+5. **Continue the bus**: read `ROADMAP.md` for current position (currently active: see bus §2), follow the plan nodes with TDD + node-gate
 
 ## 6. Document Index (only valid set)
 
 | Doc | Content |
 |---|---|
 | `ROADMAP.md` | **project dev bus** (human entry: tree+routes+progress) |
-| `docs/USER_GUIDE.md` | **user manual** (human user entry: install/mount/collab flow/FAQ) |
+| `docs/USER_GUIDE.md` | **user manual** (human user entry: install/mount/FAQ) |
 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | kb only design (req/arch/API/bench) |
 | `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | kb node plan N1-N16 (all ✅) |
-| `orchestra/docs/superpowers/specs/2026-08-24-agent-orchestra-mvp-design.md` | orchestra design |
-| `orchestra/docs/superpowers/plans/2026-08-24-agent-orchestra-mvp.md` | orchestra plan (all ✅) |
 | `docs/superpowers/specs/2026-08-24-logging-design.md` | logging design (bus A1.2, N17-N18) |
 | `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | kb feature route (bus A2-A4) |
-| `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` | orchestra v2 iteration plan (bus B1 carrier) |
-| `orchestra/protocol.md` + `worker-prompt.md` + `coordinator-prompt.md` | collab protocol trio (v1.1: branch/restart-control/message window) |
-| `orchestra/EXPERIMENT.md` | real-machine experiment guide (reusable as next template) |
 
 ## 7. Environment Notes (see AGENTS.md §7)
 

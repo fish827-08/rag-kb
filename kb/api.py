@@ -120,7 +120,7 @@ def _normalize_level(level: str | None) -> str | None:
     return lvl
 
 
-# ---- 根路径极简导航页（N19）：纯字符串 HTML，无模板依赖，配色与看板一致 ----
+# ---- 根路径极简导航页（N19）：纯字符串 HTML，无模板依赖 ----
 _NAV_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -148,7 +148,6 @@ _NAV_HTML = """<!DOCTYPE html>
     <div class="head"><h1>kb 记忆服务</h1></div>
     <div class="body">
       <a href="/api/v1/healthz">API 状态</a>
-      <a href="/dashboard/">agent-orchestra 看板（实验，非 kb 功能）</a>
       <a href="/docs">REST API 文档（Swagger）</a>
     </div>
   </div>
@@ -410,7 +409,7 @@ def _wrap_api_key(app, settings):
     """API Key 鉴权中间件（N19/TASK-0062）：纯 ASGI，空 key 直通，非空校验 Bearer/X-API-Key。
 
     与 _wrap_sse_charset / _wrap_request_log 同模式（纯函数式包装，不依赖 FastAPI
-    依赖注入，确保覆盖 mount 的 /mcp 子应用与 /dashboard 静态挂载）。
+    依赖注入，确保覆盖 mount 的 /mcp 子应用）。
 
     流程：
       1) settings.api_key 为空 → 直通（降级模式，等同 v1.x 行为）
@@ -425,7 +424,7 @@ def _wrap_api_key(app, settings):
     补 charset（本中间件自身也显式声明 charset=utf-8，双保险）。
     English: API-Key auth middleware (N19/TASK-0062): pure ASGI; empty key passes through, non-empty validates
     Bearer/X-API-Key. Same pattern as _wrap_sse_charset / _wrap_request_log (pure functional wrapping, no FastAPI
-    dependency injection, ensuring coverage of the mounted /mcp sub-app and the /dashboard static mount).
+    dependency injection, ensuring coverage of the mounted /mcp sub-app).
     Flow: 1) empty settings.api_key → pass through (legacy mode); 2) whitelist GET /api/v1/healthz and its
     alias GET /health → allow (liveness);
     3) extract key: Authorization: Bearer <key> first, then X-API-Key: <key>;
@@ -795,8 +794,8 @@ def create_app(settings: Settings | None = None,
 
     @app.get("/api/v1/config")
     def get_config() -> dict:
-        """前端只读配置（TASK-0021）：仅暴露看板需要的最小字段（monitor_autotimer）。
-        English: Frontend read-only config (TASK-0021): exposes only the minimal fields the dashboard needs (monitor_autotimer)."""
+        """客户端只读配置（TASK-0021）：仅暴露最小字段（monitor_autotimer）。
+        English: Client read-only config (TASK-0021): exposes only the minimal field (monitor_autotimer)."""
         return {"monitor_autotimer": kb.settings.monitor_autotimer}
 
     @app.get("/api/v1/governance/stats")
@@ -828,8 +827,8 @@ def create_app(settings: Settings | None = None,
 
     @app.get("/")
     def root() -> HTMLResponse:
-        """根路径极简导航页（N19）：纯字符串 HTML，无模板依赖；样式与看板一致。
-        English: Minimal root navigation page (N19): plain-string HTML, no template dependency; styling matches the dashboard."""
+        """根路径极简导航页（N19）：纯字符串 HTML，无模板依赖。
+        English: Minimal root navigation page (N19): plain-string HTML, no template dependency."""
         return HTMLResponse(_NAV_HTML)
 
     @app.get("/api/v1/logs")
@@ -897,13 +896,6 @@ def create_app(settings: Settings | None = None,
     # MCP streamable http 端点挂载在 /mcp（子路径 "/"，即完整路径 /mcp/）；
     # 外包 SSE charset 中间件，保证 text/event-stream 响应头带 charset=utf-8
     app.mount("/mcp", _wrap_sse_charset(mcp_app))
-    # HTML 看板静态挂载（TASK-0014 集成项）：kb 同源提供 /dashboard，浏览器同源策略免 CORS；
-    # 目录不存在时静默跳过（orchestra/dashboard 仅本仓库存在，不影响 kb 独立部署）
-    dashboard_dir = Path(__file__).resolve().parent.parent / "orchestra" / "dashboard"
-    if dashboard_dir.is_dir():
-        from starlette.staticfiles import StaticFiles
-        app.mount("/dashboard", StaticFiles(directory=str(dashboard_dir), html=True),
-                  name="dashboard")
     # 鉴权中间件（N19/TASK-0062）：纯 ASGI，空 key 直通，非空校验 Bearer/X-API-Key；
     # 注册在 JSON charset 内层（401 响应向外经 JSON charset 补 charset）、访问日志内层
     app = _wrap_api_key(app, kb.settings)

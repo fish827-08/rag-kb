@@ -1,4 +1,4 @@
-# rag-kb — 本地 Agent 记忆服务 + 多 Agent 协作系统
+# rag-kb — 本地 Agent 记忆与知识服务
 
 <!-- mcp-name: io.github.fish827-08/kb-memory -->
 
@@ -10,12 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-本仓库含两个子系统（[ROADMAP](ROADMAP.md)）：
-
-| 子系统 | 一句话定位 | 状态 |
-|---|---|---|
-| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品，开发主线） | v2.0.0 · 自动化回归全绿，待人工验收 |
-| **agent-orchestra** | 基于 kb 共享任务板的跨任务多 Agent 协作系统（❄️ 维护模式，自用脚手架） | B1-B3 收口冻结 |
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.0.0 · 自动化回归全绿，待人工验收）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -217,7 +212,7 @@ KB_LLM_CLOUD_MODEL=deepseek-v4-flash       # 云端模型名
 
 ### 打包为独立 skill（Agensi / marketplace）
 
-`skills/kb-memory/` 是 **kb 的独立交付单元**，与仓库内的实验子系统完全解耦：
+`skills/kb-memory/` 是 **kb 的独立交付单元**，只依赖 kb 服务本身：
 包含标准 front matter 的 `SKILL.md`（包根）、MCP 配置模板 `mcp.json`、配置模板
 `env.example`、独立 README 与 LICENSE，覆盖「安装 → 启动 → 配置 → 验证 → 排障」全流程。
 
@@ -225,7 +220,7 @@ KB_LLM_CLOUD_MODEL=deepseek-v4-flash       # 云端模型名
 python scripts/build_skill_package.py        # 产物：dist/kb-memory-skill-<版本>.zip
 ```
 
-zip 内 `SKILL.md` 位于**包根目录**，不含 orchestra、测试、运行数据或任何密钥；
+zip 内 `SKILL.md` 位于**包根目录**，不含测试、运行数据或任何密钥；
 构建脚本会校验 front matter、自包含说明与敏感信息。可直接提交到 Agensi 这类
 skill marketplace，用户拿到包后按 `SKILL.md` 即可把本机 kb 接入自己的 Agent。
 
@@ -328,7 +323,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/memories \
 | `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` | 空 | 云端 LLM（可选）：**任意 OpenAI 兼容服务商**（DeepSeek / OpenAI / 通义 / 硅基流动等），仅填在本机 `.env` |
 | `KB_CHUNK_SIZE` / `KB_CHUNK_OVERLAP` | `500` / `100` | 文档切分参数 |
 | `KB_SENSITIVE_NAMESPACES` | 空 | 逗号分隔的敏感 namespace，命中强制本地回答不出网 |
-| `KB_API_KEY` | 空 | 空=不鉴权（本地回环零摩擦）；非空=启用 Bearer/X-API-Key 鉴权；orchestra 客户端自动带 `X-API-Key` 头 |
+| `KB_API_KEY` | 空 | 空=不鉴权（本地回环零摩擦）；非空=启用 Bearer/X-API-Key 鉴权 |
 | `KB_RERANK_ENABLED` / `KB_RERANK_MODEL` / `KB_RERANK_TOP_N` | `false` / `BAAI/bge-reranker-v2-m3` / `20` | 检索精排（A3.5）：融合候选送 CrossEncoder 重排，默认关 |
 | `KB_SPARSE_ENABLED` | `false` | 稀疏第三路（A3.5）：BGE-M3 稀疏向量 + 倒排索引参与归一化加权融合，默认关 |
 
@@ -347,30 +342,12 @@ python -m kb dedup --threshold 0.92           # 语义去重
 
 > `kb ask` 直连本地服务逻辑（不经 HTTP）；建议 `serve` 停止时使用，避免双进程写库竞争。
 
-## agent-orchestra — 多 Agent 协作系统（实验，独立于 kb 产品）
-
-> **子系统边界**：agent-orchestra 是作者自用的实验脚手架，`❄️ 维护模式`，
-> **不属于 kb 的对外交付物**，不随 skill 包发布，也不是运行 kb 的前置依赖；
-> 本 README 其余部分（安装、配置、MCP、REST、CLI）均只针对 kb。
-
-让多个 AI 助手（不同 TraeWork 任务 / Claude Code 会话，模型可不同）通过 kb 共享任务板
-协作开发：协调者 AI 拆卡分发，worker AI 领卡执行、单卡单轮、回写结果，协调者核验流转。
-
-```powershell
-# 前置：kb serve 已运行。开一个新 TraeWork 任务，粘贴以下引导语即可唤醒一个 worker：
-venv\Scripts\python.exe orchestra\board.py new-worker worker-1
-```
-
-完整使用方法（协调者怎么拆卡、多个 worker 怎么并行、协作纪律与已知限制）
-见 [用户使用手册](docs/USER_GUIDE.md) 第 4 节。
-
 ## 目录结构
 
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（417 项，含 eval_zh_50.jsonl 检索评测数据集）
-orchestra/     多 Agent 协作系统（board.py CLI + 协议三件套 + skill + 245 项测试）
+tests/         kb 验收测试（395 项，含 eval_zh_50.jsonl 检索评测数据集）
 docs/          设计文档、节点计划、用户使用手册
 kb_data/       kb 运行数据（gitignore）
 _archive/      旧学习项目归档（仅保留历史，禁止参考）

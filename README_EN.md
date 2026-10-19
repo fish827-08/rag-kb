@@ -24,16 +24,8 @@ API to unlock `/ask` (RAG question answering).
 
 > Chinese documentation: [README.md](README.md) (primary).
 
-This repository contains two subsystems ([ROADMAP](ROADMAP.md)):
-
-| Subsystem | Purpose | Status |
-|---|---|---|
-| **kb** | The shippable product: local memory & knowledge service | v2.0.0 — automated suite green; manual acceptance pending |
-| **agent-orchestra** | Experimental multi-agent collaboration scaffold built on kb (maintenance mode) | Frozen; not part of kb deliverables |
-
-> **Subsystem boundary**: agent-orchestra is the author's own experimental
-> scaffolding. It is **not** required to install, run, or use kb, and it is **not**
-> included in the standalone skill package.
+**kb** is the shippable product: a local, offline-capable memory & knowledge
+service (v2.0.0 — automated suite green; manual acceptance pending).
 
 ## Why kb
 
@@ -210,8 +202,8 @@ when not enabled.
 
 ### Standalone skill package (Agensi / marketplaces)
 
-`skills/kb-memory/` is kb's **standalone delivery unit**, fully decoupled from the
-experimental subsystem. It contains a standard `SKILL.md` at the package root, an
+`skills/kb-memory/` is kb's **standalone delivery unit**, depending only on the kb
+service itself. It contains a standard `SKILL.md` at the package root, an
 MCP config template (`mcp.json`), a config template (`env.example`), a README and
 the license — covering install → start → configure → verify → troubleshoot.
 
@@ -219,8 +211,8 @@ the license — covering install → start → configure → verify → troubles
 python scripts/build_skill_package.py        # output: dist/kb-memory-skill-<version>.zip
 ```
 
-The zip keeps `SKILL.md` at its **root** and excludes orchestra, tests, runtime
-data and any secrets. The build script validates front matter, self-containment
+The zip keeps `SKILL.md` at its **root** and excludes tests, runtime data and any
+secrets. The build script validates front matter, self-containment
 and accidental secret leakage.
 
 ## MCP Integration
@@ -340,17 +332,11 @@ python -m kb dedup --threshold 0.92
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (417, including eval_zh_50.jsonl)
+tests/         kb acceptance & regression tests (395, including eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
 docs/          design specs, node plans, user guides
-orchestra/     experimental collaboration scaffold (maintenance mode, not delivered)
 ```
-
-**agent-orchestra** is an experimental multi-agent collaboration system built on
-kb as a shared task board. It is frozen, maintained only as the author's own
-scaffolding, and is **not** part of kb's deliverables. Documentation is
-Chinese-only: [orchestra/protocol.md](orchestra/protocol.md).
 
 ## License
 
