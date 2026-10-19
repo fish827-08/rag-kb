@@ -106,8 +106,26 @@ cp skills/kb-memory/SKILL.md ~/.claude/skills/kb-memory/
   或手动覆盖该文件后确认大小与 `skills\kb-memory\SKILL.md` 一致，再重启客户端。
 - **自查**（PowerShell）：`(Get-Item "%USERPROFILE%\.trae-cn\skills\kb-memory\SKILL.md").Length` 应大于 0。
 
+## 构建独立 skill 包（Build the standalone skill package）
+
+```powershell
+python scripts/build_skill_package.py            # 产物：dist/kb-memory-skill-<版本>.zip
+python scripts/build_skill_package.py --out-dir tmp   # 指定输出目录
+```
+
+- zip **根目录**直接包含 `SKILL.md`、`README.md`、`mcp.json`、`env.example`、`LICENSE`；
+- 只包含 kb 接入所需内容，**不含 orchestra、测试、运行数据、任何密钥**；
+- 构建前自动校验：front matter 是否标准、安装/启动/配置/验证/排障是否齐备、
+  JSON 模板是否可解析、env 模板是否为空值、是否混入真实 API Key。
+
 ## 环境要求（Requirements）
 
-- Python 3.10+ 虚拟环境（`.venv` 或 `venv`），依赖已装（`pip install -e .`）
+- Python 3.10+ 虚拟环境（`.venv` 或 `venv`），依赖已装
+  （`pip install -r requirements.txt` + `pip install -e .`）
 - Windows 版依赖 `pythonw.exe`（后台模式）
-- 嵌入模型默认 BGE-M3（约 2GB，需提前下载缓存）
+- 嵌入模型默认 `BAAI/bge-small-zh-v1.5`（约 92MB，首次写入/检索时自动下载并缓存）；
+  可选 `BAAI/bge-m3`（约 2.2GB），通过 `KB_EMBED_MODEL` 切换
+- 端口：启动/停止脚本会解析仓库根 `.env` 的 `KB_API_PORT`（环境变量优先），
+  默认 `8000`；改端口后健康探测与停止脚本都会使用同一端口
+- 设备：非交互启动（`pythonw`/一键脚本/CI）不会弹出 GPU 询问，默认 `cpu`；
+  需要 GPU 时在 `.env` 显式设 `KB_DEVICE=cuda`
