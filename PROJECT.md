@@ -70,7 +70,7 @@
   - 参数校验：空白搜索/提问 422；`kb eval` 强制隔离治理开关，评测结果可复现
   - Windows 一键脚本：`.env` 端口解析、pythonw 无控制台不卡 GPU 询问、PID+端口+命令行三路停止
   - 独立 skill 包：`skills/kb-memory/` + `scripts/build_skill_package.py`（zip 根 `SKILL.md`，不含测试/密钥），打包校验 7 项
-  - 用户视角 E2E：基础 28/28 + 补充 34/34（隔离实例验证鉴权/坏模型/CLI/MCP stdio/skill 包），报告见 `e2e-user-test/测试报告-第三轮.md`
+  - 用户视角 E2E：基础 28/28 + 补充 34/34（隔离实例验证鉴权/坏模型/CLI/MCP stdio/skill 包）
 
 ### 发展总线 — kb 单主线（2026-08-27 战略调整）
 
