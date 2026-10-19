@@ -39,15 +39,3 @@ build/
 .qoder-credits/
 # 旧看板分享包（构建产物，不再入库）
 .trae-html-share-packages/
-# E2E 测试产物：隔离实例、仓库副本、运行时数据库、日志、临时输入与 pid 备份
-# （测试脚本、结果 JSON、evidence 与测试报告仍入库）
-e2e-user-test/**/isolation/
-e2e-user-test/**/repo/
-e2e-user-test/**/kb_data*/
-e2e-user-test/**/logs/
-e2e-user-test/*.log
-e2e-user-test/run2/*.log
-e2e-user-test/**/*.bin
-e2e-user-test/**/kb.pid*
-e2e-user-test/**/tmp/
-e2e-user-test/**/watch/

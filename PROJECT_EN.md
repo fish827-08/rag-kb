@@ -71,7 +71,7 @@
   - Standalone skill package: `skills/kb-memory/` + `scripts/build_skill_package.py`
     (SKILL.md at zip root; no tests, runtime data or secrets)
   - User-perspective E2E: baseline 28/28 + supplemental 34/34 (isolated auth/bad-model
-    instances, CLI, MCP stdio, skill zip); report at `e2e-user-test/测试报告-第三轮.md`
+    instances, CLI, MCP stdio, skill zip)
 
 ### Development bus — kb single mainline (2026-08-27 strategic shift)
 

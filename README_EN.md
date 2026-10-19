@@ -348,4 +348,3 @@ docs/          design specs, node plans, user guides
 - [docs/USER_GUIDE_EN.md](docs/USER_GUIDE_EN.md) — user guide (English)
 - [docs/AGENT_PROMPT_EN.md](docs/AGENT_PROMPT_EN.md) — plain-text agent prompt
 - [PROJECT.md](PROJECT.md) — AI handover / project status (Chinese)
-- [e2e-user-test/测试报告-第三轮.md](e2e-user-test/测试报告-第三轮.md) — user-perspective E2E report, round 3 (Chinese)

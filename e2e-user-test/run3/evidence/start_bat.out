@@ -1,7 +1,0 @@
-[INFO] Starting kb serve in background (no window) ...
-[INFO] Python: C:\Users\ʥ��\Desktop\temp\tempCode\rag-kb\venv\Scripts\pythonw.exe
-[INFO] Port  : 8025
-[INFO] process started, PID=34040
-[INFO] Waiting for health check: http://127.0.0.1:8025/api/v1/healthz
-[OK] kb serve started (healthz 200). Log: C:\Users\ʥ��\Desktop\temp\tempCode\rag-kb\logs\kb_serve.log
-[DONE] kb is running in background. Stop it with stop_kb.bat

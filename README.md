@@ -357,7 +357,6 @@ _archive/      旧学习项目归档（仅保留历史，禁止参考）
 
 - **用户使用手册（人类用户入口）**：[docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 - **AI 接力文档（AI 助手入口）**：[PROJECT.md](PROJECT.md)（项目状态 / 进度看板 / 接手指南）
-- **用户视角 E2E 测试报告（第三轮）**：[e2e-user-test/测试报告-第三轮.md](e2e-user-test/测试报告-第三轮.md)
 - 设计文档（需求、架构、API、里程碑）：`docs/superpowers/specs/2026-08-23-kb-memory-service-design.md`
 - P2 日志设计：`docs/superpowers/specs/2026-08-24-logging-design.md`
 - P2 路线图：`docs/superpowers/plans/2026-08-24-p2-roadmap.md`
