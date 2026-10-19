@@ -20,8 +20,8 @@ from kb.config import Settings, get_settings
 from kb.logging_setup import setup_logging
 from kb.monitor import MonitorAgent, run_once_summary
 from kb.mcp import create_mcp_server
-from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
-                        WebFetchError)
+from kb.service import (EmbeddingUnavailableError, KBService, LLMDisabledError,
+                        UnsupportedFormatError, WebFetchError)
 from kb.watcher import KBWatcher
 
 
@@ -148,8 +148,8 @@ _NAV_HTML = """<!DOCTYPE html>
     <div class="head"><h1>kb 记忆服务</h1></div>
     <div class="body">
       <a href="/api/v1/healthz">API 状态</a>
-      <a href="/dashboard/">HTML 看板</a>
-      <a href="/docs">MCP 端点文档</a>
+      <a href="/dashboard/">agent-orchestra 看板（实验，非 kb 功能）</a>
+      <a href="/docs">REST API 文档（Swagger）</a>
     </div>
   </div>
 </body>
@@ -218,6 +218,16 @@ class SearchRequest(BaseModel):
     client: str = "HTTP"
     project: str | None = None  # 项目名（可选，仅用于审计文件名归类）
 
+    @field_validator("query")
+    @classmethod
+    def query_not_blank(cls, v: str) -> str:
+        """拒绝空查询，避免空串被当作“匹配全部”污染 Agent 上下文。
+        English: Reject a blank query so it cannot be treated as "match all" and
+        pollute the agent context."""
+        if not v.strip():
+            raise ValueError("query 不能为空或纯空白")
+        return v
+
     @field_validator("agent_id", "client", "project")
     @classmethod
     def identity_fields_valid(cls, v: str | None, info) -> str | None:
@@ -241,6 +251,15 @@ class AskRequest(BaseModel):
     agent_id: str = "default"
     client: str = "HTTP"
     project: str | None = None  # 项目名（可选，v3 仅用于审计文件名归类）
+
+    @field_validator("question")
+    @classmethod
+    def question_not_blank(cls, v: str) -> str:
+        """拒绝空问题，避免无意义检索与 LLM 调用。
+        English: Reject a blank question to avoid pointless retrieval and LLM calls."""
+        if not v.strip():
+            raise ValueError("question 不能为空或纯空白")
+        return v
 
     @field_validator("agent_id", "client", "project")
     @classmethod
@@ -481,9 +500,11 @@ def create_app(settings: Settings | None = None,
     Unified error JSON: {"error": "<CODE>", "message": "<human-readable>"}.
     With enable_watcher=True (serve mode only) a directory-watch thread is started in lifespan; TestClient
     defaults to False and does not trigger it. Nothing starts when watch_dir is empty (""/".")."""
+    # 日志装配（N17）：**必须先于 KBService**——服务初始化期间也会产生日志
+    # （例如"库中模型与配置不一致，已沿用建库模型"这类启动告警），若晚于此处
+    # 则 handler 尚未就绪，关键 WARNING 会被无声丢弃。
+    setup_logging(settings)
     kb = KBService(settings)
-    # 日志装配（N17）：serve 与 TestClient 均经此处，双 handler + 轮转
-    setup_logging(kb.settings)
     # MCP 服务器与 REST 共享同一 KBService 单例；先建 streamable http 应用
     # （内部懒创建会话管理器，随后由主应用 lifespan 托管启停）
     mcp_server = create_mcp_server(kb)
@@ -533,6 +554,18 @@ def create_app(settings: Settings | None = None,
 
     app = FastAPI(title="kb memory service", lifespan=lifespan)
     app.state.kb = kb
+
+    @app.exception_handler(EmbeddingUnavailableError)
+    def embedding_exc_handler(request: Request, exc: EmbeddingUnavailableError):
+        """嵌入模型不可用 → 503 结构化错误（不再裸 500）。
+        English: Embedding model unavailable → structured 503 instead of a bare 500."""
+        return JSONResponse(status_code=503, content={
+            "error": "EMBED_MODEL_UNAVAILABLE",
+            "message": f"嵌入模型不可用：{exc.model_name}（{exc.cause}）",
+            "model": exc.model_name,
+            "hint": "检查 KB_EMBED_MODEL 是否正确；国内网络可设 "
+                    "HF_ENDPOINT=https://hf-mirror.com 后重试，缓存成功后断网可用。",
+        })
 
     @app.exception_handler(HTTPException)
     def http_exc_handler(request: Request, exc: HTTPException):
@@ -675,6 +708,16 @@ def create_app(settings: Settings | None = None,
     def delete_document(source: str) -> dict:
         """按 source 删除文档全部记录。
         English: Delete all records of a document by source."""
+        return {"deleted": kb.delete_document(source)}
+
+    @app.delete("/api/v1/documents")
+    def delete_document_by_query(source: str = Query(..., min_length=1)) -> dict:
+        """按查询参数删除文档（URL 等含斜杠的 source 必须走这里）。
+
+        示例：DELETE /api/v1/documents?source=https%3A%2F%2Fexample.com
+        English: Delete a document by query parameter. Sources containing slashes
+        (e.g. URLs) must use this route, since a path parameter cannot carry them.
+        """
         return {"deleted": kb.delete_document(source)}
 
     @app.post("/api/v1/ingest/web")

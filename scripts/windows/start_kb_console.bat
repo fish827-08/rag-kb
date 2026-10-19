@@ -18,7 +18,6 @@ if not defined PY (
     echo   Create it first:
     echo     python -m venv .venv
     echo     .\.venv\Scripts\Activate.ps1
-    echo     pip install -r requirements.txt
     echo     pip install -e .
     pause
     exit /b 1
@@ -27,9 +26,23 @@ if not defined PY (
 REM --- default HF mirror (if not set externally) ---
 if "%HF_ENDPOINT%"=="" set "HF_ENDPOINT=https://hf-mirror.com"
 
+REM --- resolve port: environment KB_API_PORT > .env KB_API_PORT > 8000 ---
+set "KB_PORT=8000"
+set "ENV_KB_PORT="
+if exist ".env" (
+    for /f "usebackq tokens=1,* delims==" %%A in (`findstr /b /c:"KB_API_PORT=" ".env" 2^>nul`) do set "ENV_KB_PORT=%%B"
+)
+if defined ENV_KB_PORT set "ENV_KB_PORT=%ENV_KB_PORT:"=%"
+if defined ENV_KB_PORT set "ENV_KB_PORT=%ENV_KB_PORT: =%"
+if defined ENV_KB_PORT set "KB_PORT=%ENV_KB_PORT%"
+if defined KB_API_PORT set "KB_PORT=%KB_API_PORT%"
+set "KB_PORT=%KB_PORT:"=%"
+set "KB_PORT=%KB_PORT: =%"
+if not defined KB_PORT set "KB_PORT=8000"
+
 echo [INFO] Virtualenv  : %PY%
 echo [INFO] HF_ENDPOINT : %HF_ENDPOINT%
-echo [INFO] Serving     : http://127.0.0.1:8000
+echo [INFO] Serving     : http://127.0.0.1:%KB_PORT%
 echo [INFO] Press Ctrl+C to stop.
 echo.
 

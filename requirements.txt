@@ -1,43 +1,53 @@
-# kb 项目依赖（设计文档第 3 节）。torch 已按本机 CUDA 预装，此处不重复指定版本。
-# 如需从零安装 CUDA 版 torch，见 AGENTS.md 第 7 节环境备忘。
+# kb 项目依赖（设计文档第 3 节）。
+#
+# 版本策略（2026-10-19 修订，设计文档 §3.2）：全部补齐上界，避免无上界导致的跨大版本漂移
+# （实测一次全新安装曾拉入 transformers 5.20.1 / mcp 2.3.0 / torch 2.14.1 等未验证组合）。
+# 下列区间均已在本机 Python 3.10 + Windows 实测可装可跑。
+#
+# torch：不在此显式指定，由 sentence-transformers 拉取 PyPI 默认版（Windows 为 CPU 版，
+# 约 124MB 轮子）。如需 CUDA 加速，按 AGENTS.md 第 7 节换装 CUDA 版 torch。
 
 # Web
-fastapi>=0.110
-uvicorn[standard]>=0.29
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
 
-# MCP（FastMCP 挂载进同一 ASGI 应用）
-mcp>=1.2
+# MCP（MCPServer 挂载进同一 ASGI 应用；代码使用 mcp 2.x 的 mcp.server.mcpserver 接口）
+mcp>=2.0,<3.0
 
 # 向量库 / 关键词检索
-chromadb>=1.5
-rank_bm25>=0.2.2
-jieba>=0.42
+chromadb>=1.5,<2.0
+rank_bm25>=0.2.2,<0.3
+jieba>=0.42,<0.43
 
-# Embedding
-sentence-transformers>=3.0
+# Embedding（transformers 为 sentence-transformers 的传递依赖，此处显式加上界防漂移）
+sentence-transformers>=3.0,<7.0
+transformers>=4.40,<6
 
 # LLM 客户端（OpenAI 兼容：Ollama / DeepSeek）
-openai>=1.0
-httpx>=0.27
+openai>=1.0,<4.0
+httpx>=0.27,<1.0
 
 # 文档解析
-pypdf>=4.0
-python-docx>=1.1
-markitdown>=0.1
+pypdf>=4.0,<7.0
+python-docx>=1.1,<2.0
+markitdown>=0.1,<0.2
 
 # 网页抓取
-trafilatura>=1.8
+# lxml_html_clean：新版 lxml 把 lxml.html.clean 拆为独立包，trafilatura → justext 导入链
+# 依赖它。缺失会导致 POST /api/v1/ingest/web 与 MCP add_webpage 直接 500（设计文档 §3.2）。
+trafilatura>=1.8,<3.0
+lxml_html_clean>=0.4,<1.0
 
 # 目录监听
-watchdog>=4.0
+watchdog>=4.0,<7.0
 
 # 切分（唯一保留的 langchain 独立小包）
-langchain-text-splitters>=0.3
+langchain-text-splitters>=0.3,<2.0
 
 # 配置 / CLI
-pydantic-settings>=2.0
-typer>=0.12
-rich>=13.0
+pydantic-settings>=2.0,<3.0
+typer>=0.12,<1.0
+rich>=13.0,<16.0
 
 # 测试
-pytest>=8.0
+pytest>=8.0,<10.0

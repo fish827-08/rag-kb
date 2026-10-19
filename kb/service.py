@@ -7,7 +7,7 @@ from pathlib import Path
 
 from kb.bm25 import BM25Index
 from kb.config import Settings, get_settings
-from kb.embedder import Embedder
+from kb.embedder import Embedder, EmbeddingUnavailableError
 from kb.ingest import (UnsupportedFormatError, WebFetchError, chunk_text,
                        fetch_webpage, parse_file)
 from kb.llm import LLMClient, LLMStatus
@@ -18,7 +18,7 @@ from kb.sparse import SparseIndex
 from kb.storage import ChromaStore
 
 __all__ = ["KBService", "LLMDisabledError", "UnsupportedFormatError",
-           "WebFetchError"]
+           "WebFetchError", "EmbeddingUnavailableError"]
 
 # RAG 护栏系统提示：强约束仅依据参考文档作答，禁止编造
 RAG_SYSTEM_PROMPT = "仅依据参考文档回答，无相关信息则明确说明，禁止编造。"
@@ -122,6 +122,94 @@ def _parse_label(resp: str) -> str:
     return "SIMPLE"
 
 
+# ---- 嵌入模型解析（设计文档 §3.1，2026-10-19 轻量优先修订）----
+
+# 本特性引入前（v1.0.2 及更早）的唯一默认模型；旧库无模型记录时按此沿用。
+LEGACY_DEFAULT_EMBED_MODEL = "BAAI/bge-m3"
+
+
+def resolve_embed_model(settings: Settings, has_data: bool) -> str:
+    """决定本次生效的嵌入模型，并把选择写回 runtime.json（设计文档 §3.1）。
+
+    背景：默认嵌入模型由 bge-m3（1024 维）改为 bge-small-zh（512 维）。
+    ChromaDB 集合维度由首个写入向量决定，换模型会让既有数据维度不匹配而查不动，
+    因此"库里有数据"时必须沿用库当初使用的模型，绝不能让新默认静默套用到旧库。
+
+    规则：
+    - 库为空：跟随配置（并记录），用户可自由改；
+    - 库非空且有记录：沿用记录值；与当前配置不一致时记 WARNING 说明如何迁移；
+    - 库非空但无记录（早于本特性的历史库）：沿用历史默认 bge-m3，
+      除非用户显式配置了 KB_EMBED_MODEL（那说明用户清楚自己在换什么）。
+
+    English: Decide the effective embedding model and persist the choice to runtime.json.
+    Because a ChromaDB collection's dimension is fixed by the first vector written, an existing
+    store must keep the model it was built with; the new lightweight default must never be
+    applied silently to legacy data.
+    """
+    import json
+    import logging
+
+    log = logging.getLogger("kb.service")
+    runtime = settings.runtime_file
+
+    def _read_recorded() -> str:
+        """读已记录的模型名；文件缺失/损坏时返回空串。"""
+        if not runtime.exists():
+            return ""
+        try:
+            data = json.loads(runtime.read_text(encoding="utf-8"))
+            return str((data or {}).get("embed_model") or "")
+        except (OSError, ValueError, TypeError, AttributeError):
+            return ""
+
+    def _remember(name: str) -> None:
+        """把模型名写入 runtime.json（保留 device 等其他键）；失败静默不阻塞启动。"""
+        try:
+            data: dict = {}
+            if runtime.exists():
+                try:
+                    data = json.loads(runtime.read_text(encoding="utf-8")) or {}
+                except (OSError, ValueError, TypeError):
+                    data = {}
+            data["embed_model"] = name
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            runtime.write_text(json.dumps(data), encoding="utf-8")
+        except (OSError, ValueError, TypeError):
+            pass
+
+    if not has_data:
+        # 空库：配置说了算（用户随时可换，不会破坏任何数据）
+        _remember(settings.embed_model)
+        return settings.embed_model
+
+    recorded = _read_recorded()
+    if recorded:
+        if recorded != settings.embed_model:
+            # 库里已记模型 ≠ 当前配置：必须沿用库里的（换了维度就不兼容）
+            if "embed_model" in settings.model_fields_set:
+                # 用户显式要求换模型却被沿用 → 必须告警，并给出可操作步骤
+                log.warning(
+                    "库中数据由 %s 构建，已沿用该模型以避免向量维度不匹配"
+                    "（你配置的是 %s）。如确要换，请备份后清空 kb_data/chroma 重新入库。",
+                    recorded, settings.embed_model)
+            else:
+                # 差异只因内置默认值变化（老库沿用建库模型）→ INFO 即可，不刷警告
+                log.info("库中数据由 %s 构建，本次沿用该模型（当前内置默认：%s）。",
+                         recorded, settings.embed_model)
+        return recorded
+
+    # 历史库（早于模型记录特性）：沿用历史默认，除非用户显式配置过
+    if "embed_model" in settings.model_fields_set:
+        _remember(settings.embed_model)
+        return settings.embed_model
+    _remember(LEGACY_DEFAULT_EMBED_MODEL)
+    log.info(
+        "检测到早于模型记录特性的历史数据，已沿用历史默认嵌入模型 %s 并记录"
+        "（当前内置默认已改为 %s）。如需换用轻量模型，请备份后清空 kb_data/chroma 重新入库。",
+        LEGACY_DEFAULT_EMBED_MODEL, settings.embed_model)
+    return LEGACY_DEFAULT_EMBED_MODEL
+
+
 class KBService:
     """记忆服务核心；REST / MCP / CLI 共用。
     English: Core memory service; shared by REST / MCP / CLI."""
@@ -134,7 +222,6 @@ class KBService:
         when injected, use it directly (test double)."""
         self.settings = settings or get_settings()
         self.device = self.settings.device or "cpu"
-        self.embedder = Embedder(self.settings.embed_model, device=self.device)
         self.store = ChromaStore(self.settings.chroma_dir)
         self.bm25 = BM25Index()
         self._bm25_cache = self.settings.data_dir / "bm25_corpus.json"
@@ -144,6 +231,10 @@ class KBService:
         # 读与写交错安全，Chroma 读与写并发风险主要在写侧）。
         self._write_lock = threading.RLock()
         all_records = list(self.store.iter_all())
+        # 嵌入模型解析（设计文档 §3.1）：库中已有数据则沿用其当初使用的模型，
+        # 避免新轻量默认静默套用到旧库导致向量维度不匹配；随后再建 Embedder。
+        self.settings.embed_model = resolve_embed_model(self.settings, bool(all_records))
+        self.embedder = Embedder(self.settings.embed_model, device=self.device)
         if not self.bm25.load_corpus(self._bm25_cache, [r.id for r in all_records]):
             self.bm25.rebuild(all_records)
             self._persist_bm25()
@@ -408,7 +499,7 @@ class KBService:
                               source=doc_source, agent_id=agent_id, client=client)
                        for c in chunks]
             vecs = self.embedder.embed_texts([r.content for r in records])
-            self.store.add(records, vecs)
+            replaced = self._replace_source_locked(doc_source, records, vecs)
             # 改进项 1B：批量并入语料后单次重建（此前每个 chunk 触发一次全量重建）
             self.bm25.add_many(records)
             self._persist_bm25()
@@ -417,7 +508,8 @@ class KBService:
                                source=doc_source, content=records[0].content,
                                namespace=records[0].namespace, client=client,
                                project=project)
-            return {"source": doc_source, "chunks": len(records)}
+            return {"source": doc_source, "chunks": len(records),
+                    "replaced": replaced}
 
     def add_webpage(self, url: str,
                     agent_id: str = "default",
@@ -442,7 +534,7 @@ class KBService:
             records = [Record(content=c, type=RecordType.WEB_CHUNK,
                               source=url, agent_id=agent_id, client=client) for c in chunks]
             vecs = self.embedder.embed_texts([r.content for r in records])
-            self.store.add(records, vecs)
+            replaced = self._replace_source_locked(url, records, vecs)
             # 改进项 1B：批量并入语料后单次重建
             self.bm25.add_many(records)
             self._persist_bm25()
@@ -451,7 +543,7 @@ class KBService:
                                source=url, content=records[0].content,
                                namespace=records[0].namespace, client=client,
                                project=project)
-            return {"source": url, "chunks": len(records)}
+            return {"source": url, "chunks": len(records), "replaced": replaced}
 
     def list_documents(self) -> list[dict]:
         """按 source 聚合文档列表（source 非空的所有记录，不限 type）。
@@ -469,6 +561,25 @@ class KBService:
             if r.created_at > d["last_imported"]:
                 d["last_imported"] = r.created_at
         return sorted(docs.values(), key=lambda d: d["source"])
+
+    def _replace_source_locked(self, source: str, records: list[Record],
+                               vectors: list[list[float]]) -> int:
+        """同一 source 重新入库时先删旧再写新，返回替换掉的旧记录数。
+
+        调用方必须已持有 _write_lock；先算好新向量再删除，避免嵌入失败
+        导致旧数据被清空而新数据又写不进去。
+        English: Replace an existing source: delete old records before writing new
+        ones, returning the number replaced. Caller must hold _write_lock; vectors
+        are computed before deletion so an embedding failure cannot destroy old data.
+        """
+        ids = [r.id for r in self.store.iter_all() if r.source == source]
+        if ids:
+            self.store.delete_by_source(source)
+            self.bm25.remove_many(ids)
+            self._persist_bm25()
+            self._sparse_remove(ids)
+        self.store.add(records, vectors)
+        return len(ids)
 
     def delete_document(self, source: str) -> int:
         """按 source 删除文档全部记录，返回删除数量；同步清理 BM25 索引。
@@ -591,11 +702,13 @@ class KBService:
         return results
 
     def stats(self) -> dict:
-        """运行统计；llm 为当前 LLM 状态（local/cloud/disabled）。
-        English: Runtime stats; llm is the current LLM status (local/cloud/disabled)."""
+        """运行统计；llm 为当前 LLM 状态，embedder 为嵌入模型加载状态。
+        English: Runtime stats; llm is the current LLM status and embedder is the
+        embedding-model load state."""
         _, total = self.store.list_records()
         return {"records": total, "device": self.device,
-                "llm": self.llm.status.value}
+                "llm": self.llm.status.value,
+                "embedder": self.embedder.status()}
 
     # ---- 问答（基础 RAG + 智能路由）----
     def ask(self, question: str, agent_id: str = "default",

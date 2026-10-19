@@ -4,7 +4,9 @@
 serve 启动时 watchdog 在 get_directory_handle 抛 FileNotFoundError
 直接崩溃退出（worker-1 在 TASK-0003 实测踩中）。
 
-期望：目录缺失时记 warning 日志并跳过目录监听，服务其余功能正常。
+期望：目录缺失时记 info 日志并跳过目录监听，服务其余功能正常。
+（2026-10-19 起由 warning 降为 info：默认 KB_WATCH_DIR=data 在全新安装中通常
+不存在，启动打 WARNING 会让新用户误以为服务异常。）
 """
 import logging
 
@@ -30,29 +32,29 @@ def test_监听目录缺失时服务正常启动(env_isolated, monkeypatch):
         assert r.status_code == 200, f"healthz 应 200，实际 {r.status_code}"
 
 
-def test_监听目录缺失时记警告日志(env_isolated, caplog):
-    """目录缺失时 watcher.start() 记 warning 且不抛异常；stop() 安全。"""
+def test_监听目录缺失时记提示日志(env_isolated, caplog):
+    """目录缺失时 watcher.start() 记 info 且不抛异常；stop() 安全。"""
     from kb.service import KBService
     from kb.watcher import KBWatcher
     watch = env_isolated / "no_such_dir"
     s = KBService()
     w = KBWatcher(s, watch)
-    with caplog.at_level(logging.WARNING, logger="kb.watcher"):
+    with caplog.at_level(logging.INFO, logger="kb.watcher"):
         w.start()  # 修复前此处抛 FileNotFoundError
     assert "监听目录不存在" in caplog.text, \
-        f"应记警告日志，实际捕获：{caplog.text!r}"
+        f"应记提示日志，实际捕获：{caplog.text!r}"
     w.stop()  # 跳过监听后 stop 应安全无事（无线程/句柄待清理）
 
 
 def test_监听路径是文件而非目录时同样跳过(env_isolated, caplog):
-    """watch_dir 指向普通文件：视为不可监听，同样警告跳过不崩溃。"""
+    """watch_dir 指向普通文件：视为不可监听，同样提示跳过不崩溃。"""
     from kb.service import KBService
     from kb.watcher import KBWatcher
     not_dir = env_isolated / "plain.txt"
     not_dir.write_text("不是目录", encoding="utf-8")
     s = KBService()
     w = KBWatcher(s, not_dir)
-    with caplog.at_level(logging.WARNING, logger="kb.watcher"):
+    with caplog.at_level(logging.INFO, logger="kb.watcher"):
         w.start()
     assert "监听目录不存在" in caplog.text
     w.stop()
