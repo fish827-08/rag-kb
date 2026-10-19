@@ -107,20 +107,32 @@ def test_mcp命令_不触发设备交互询问(env_isolated, monkeypatch):
 # ---------- Registry 提交材料一致性 ----------
 
 def test_serverjson_结构合法():
-    """仓库根 server.json：必需字段齐备，pypi 包 + stdio 传输 + mcp 定位参数。"""
+    """仓库根 server.json：必需字段齐备，远程流式 HTTP 端点自洽。
+
+    历史说明：旧清单声明 PyPI 包 `kb-memory` + uvx stdio，但该包从未发布
+    （PyPI 返回 404），任何按清单接入的用户都会第一步失败。现改为声明本项目
+    真实提供的本地 streamable-http 端点；待将来真正发布 PyPI 包后再补 packages。
+    """
     f = REPO_ROOT / "server.json"
     assert f.exists(), "缺少 server.json（MCP Registry 提交材料）"
     data = json.loads(f.read_text(encoding="utf-8"))
     assert data["name"].startswith("io.github.")
     assert data["version"], "顶层 version 必填"
-    assert data["packages"], "至少一个 package 条目"
-    pkg = data["packages"][0]
-    assert pkg["registryType"] == "pypi"
-    assert pkg["identifier"], "PyPI 包名必填"
-    assert pkg["transport"]["type"] == "stdio"
-    # uvx 一键拉起：定位参数应含 mcp 子命令
-    args = [a.get("value") for a in pkg.get("packageArguments", [])]
-    assert "mcp" in args, "packageArguments 应含 'mcp' 定位参数（uvx <pkg> mcp）"
+    assert "packages" not in data or data["packages"], (
+        "packages 若存在则不得为空；未发布 PyPI 包时请改用 remotes")
+    remotes = data.get("remotes") or []
+    assert remotes, "至少一个 remotes 条目（本项目以本地 HTTP 端点提供）"
+    remote = remotes[0]
+    assert remote["type"] == "streamable-http"
+    assert remote["url"].startswith("http://127.0.0.1:")
+    assert remote["url"].endswith("/mcp/")
+
+
+def test_serverjson版本与包版本一致():
+    """清单版本必须与 kb.__version__ 一致，避免文档/发布漂移。"""
+    import kb
+    data = json.loads((REPO_ROOT / "server.json").read_text(encoding="utf-8"))
+    assert data["version"] == kb.__version__
 
 
 def test_readme_mcpname注释_与serverjson一致():

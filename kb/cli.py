@@ -138,7 +138,18 @@ def compute_hot_records(records, top: int = 5) -> list[tuple]:
 
 def resolve_device(settings: Settings, interactive: bool, input_fn=input) -> str:
     """优先级：settings.device 显式非空值 > runtime.json 已存选择 > 交互询问（cuda 可用时）
-    > 默认 cpu。interactive=False 时不询问直接 cpu。"""
+    > 默认 cpu。interactive=False 时不询问直接 cpu。
+
+    交互询问额外要求 stdin 是终端：pythonw/后台脚本/CI 的 stdin 不可读，
+    若仍调用 input() 会 EOFError 导致服务直接退出（Windows 一键脚本首跑阻断）。
+    此时静默回退 cpu，用户之后可在 .env 显式设 KB_DEVICE=cuda。
+    English: Device priority: explicit settings.device > persisted runtime.json choice >
+    interactive prompt (when CUDA is available) > cpu. interactive=False skips the prompt.
+    The prompt also requires stdin to be a TTY: pythonw/background scripts/CI have no
+    readable stdin, and input() would raise EOFError and kill the service (Windows
+    one-click first-run blocker). In that case fall back to cpu silently; users can
+    set KB_DEVICE=cuda explicitly later.
+    """
     # 1. 显式配置最高优先，直接返回（不写文件）
     if settings.device:
         return settings.device
@@ -150,15 +161,25 @@ def resolve_device(settings: Settings, interactive: bool, input_fn=input) -> str
             saved = {}
         if saved.get("device"):
             return saved["device"]
-    # 3. 交互询问（仅 interactive 且 cuda 可用时）；仅此路径写入 runtime.json
+    # 3. 交互询问（仅 interactive 且 stdin 为终端且 cuda 可用时）；
+    #    仅此路径写入 runtime.json
+    stdin_tty = False
     if interactive:
+        try:
+            stdin_tty = bool(sys.stdin and sys.stdin.isatty())
+        except (AttributeError, OSError, ValueError):
+            stdin_tty = False
+    if interactive and stdin_tty:
         try:
             import torch
             cuda_ok = torch.cuda.is_available()
         except ImportError:
             cuda_ok = False
         if cuda_ok:
-            answer = input_fn("检测到独立显卡，是否启用 GPU 加速？[y/n]")
+            try:
+                answer = input_fn("检测到独立显卡，是否启用 GPU 加速？[y/n]")
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
             device = "cuda" if answer.strip().lower() == "y" else "cpu"
             settings.runtime_file.parent.mkdir(parents=True, exist_ok=True)
             settings.runtime_file.write_text(
@@ -604,10 +625,15 @@ def eval_cmd(
         console.print(f"[red]数据集加载失败: {e}[/red]")
         raise typer.Exit(code=1)
 
-    # 独立临时库：评测进程专用 KB_DATA_DIR，不碰生产库
+    # 独立临时库：评测进程专用 KB_DATA_DIR，不碰生产库；
+    # 显式关闭治理与审计，避免用户 .env 里的 dedup/decay/freshness 干扰
+    # 评测语料写入（开启去重会被判定重复而直接失败），保证结果可复现。
     tmp_dir = tempfile.mkdtemp(prefix="kb_eval_")
     settings = Settings(data_dir=Path(tmp_dir),
-                        rerank_enabled=rerank, sparse_enabled=sparse)
+                        rerank_enabled=rerank, sparse_enabled=sparse,
+                        dedup_enabled=False, decay_enabled=False,
+                        freshness_enabled=False, consolidation_enabled=False,
+                        access_audit_enabled=False)
     try:
         svc = KBService(settings)
         console.print(f"[blue]评测中：{len(dataset)} 条 × mode={mode} "

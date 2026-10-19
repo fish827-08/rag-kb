@@ -1,16 +1,16 @@
 @echo off
 REM ============================================================
-REM  kb 一键启动：后台无窗口常驻，以健康检查确认"真的起来了"。
-REM  用法：双击，或从仓库根目录执行 scripts\windows\start_kb.bat
-REM  日志   : logs\kb_serve.log / logs\kb_serve.log.err
-REM  PID    : kb.pid 由服务进程自身写入/清理（本脚本不再代写）
-REM  停止   : scripts\windows\stop_kb.bat
+REM  kb one-click background start (no console window).
+REM  Usage: double-click, or run scripts\windows\start_kb.bat
+REM  Logs : logs\kb_serve.log / logs\kb_serve.log.err
+REM  PID  : kb.pid (written by the service)
+REM  Stop : scripts\windows\stop_kb.bat
 REM
-REM  流程（任务 #2 修复：杜绝"进程活着但不监听"的挂死空壳）：
-REM   1. 启动前端口预检：端口已被占用 → 提示并退出，杜绝双实例竞跑
-REM   2. pythonw 后台拉起 kb serve（无控制台，绑定失败由服务侧预检兜住）
-REM   3. 轮询 /api/v1/healthz 最多 30 秒，返回 200 才报 [OK]；
-REM      超时则打印错误日志尾部并以非零码退出
+REM  Safety:
+REM   1. Port pre-check: refuse to start when the port is taken.
+REM   2. pythonw has no console; non-interactive GPU prompt is skipped
+REM      by kb itself (defaults to CPU), so first run cannot hang.
+REM   3. Poll /api/v1/healthz for up to 30 seconds and report failure.
 REM ============================================================
 setlocal
 cd /d "%~dp0..\.."
@@ -38,25 +38,36 @@ if "%HF_ENDPOINT%"=="" set "HF_ENDPOINT=https://hf-mirror.com"
 
 set "KB_LOG=%CD%\logs\kb_serve.log"
 set "KB_DIR=%CD%"
-REM --- 服务端口：与 .env 的 KB_API_PORT 保持一致（默认 8000） ---
+
+REM --- resolve port: environment KB_API_PORT > .env KB_API_PORT > 8000 ---
 set "KB_PORT=8000"
+set "ENV_KB_PORT="
+if exist ".env" (
+    for /f "usebackq tokens=1,* delims==" %%A in (`findstr /b /c:"KB_API_PORT=" ".env" 2^>nul`) do set "ENV_KB_PORT=%%B"
+)
+if defined ENV_KB_PORT set "ENV_KB_PORT=%ENV_KB_PORT:"=%"
+if defined ENV_KB_PORT set "ENV_KB_PORT=%ENV_KB_PORT: =%"
+if defined ENV_KB_PORT set "KB_PORT=%ENV_KB_PORT%"
 if defined KB_API_PORT set "KB_PORT=%KB_API_PORT%"
+set "KB_PORT=%KB_PORT:"=%"
+set "KB_PORT=%KB_PORT: =%"
+if not defined KB_PORT set "KB_PORT=8000"
 set "HEALTH_URL=http://127.0.0.1:%KB_PORT%/api/v1/healthz"
 
-REM --- 启动前端口预检：已有实例在监听则拒绝再启，杜绝双跑 ---
+REM --- port pre-check: refuse to start a second instance ---
 netstat -ano | findstr LISTENING | findstr ":%KB_PORT% " >nul
 if not errorlevel 1 (
-    echo [ERROR] 端口 %KB_PORT% 已被占用，可能已有实例在运行。
-    echo         请先执行 scripts\windows\stop_kb.bat，或确认端口占用后重试。
+    echo [ERROR] Port %KB_PORT% is already in use.
+    echo         Run scripts\windows\stop_kb.bat, or change KB_API_PORT in .env.
     pause
     exit /b 1
 )
 
 echo [INFO] Starting kb serve in background (no window) ...
 echo [INFO] Python: %PYW%
+echo [INFO] Port  : %KB_PORT%
 
 REM --- launch via PowerShell Start-Process, native strings, zero quoting hell ---
-REM     kb.pid 不再由本脚本写入：服务进程存活到真正启动后才自行写入（见 kb/cli.py）
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$so=$env:KB_LOG; $se=$env:KB_LOG+'.err'; try{$p=Start-Process -FilePath $env:PYW -ArgumentList '-m','kb','serve' -WorkingDirectory $env:KB_DIR -RedirectStandardOutput $so -RedirectStandardError $se -WindowStyle Hidden -PassThru -ErrorAction Stop}catch{Write-Host ('[ERROR] '+$_.Exception.Message); exit 1}; Start-Sleep -Milliseconds 2500; if($p.HasExited){Write-Host ('[ERROR] kb serve exited code '+$p.ExitCode); if(Test-Path $se){Get-Content -Tail 10 $se}; exit 1}; Write-Host ('[INFO] process started, PID='+$p.Id)"
 if errorlevel 1 (
     echo [ERROR] Failed to start kb serve. See messages above.
@@ -64,7 +75,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM --- 健康轮询：最多 30 秒（15 次 x 2 秒），/api/v1/healthz 返回 200 才算成功 ---
+REM --- poll health for up to 30 seconds (15 x 2s) ---
 echo [INFO] Waiting for health check: %HEALTH_URL%
 set /a TRIES=0
 :wait_loop
@@ -83,8 +94,8 @@ endlocal
 exit /b 0
 
 :timeout
-echo [ERROR] kb serve 未在 30 秒内通过健康检查（%HEALTH_URL%）。
-echo [ERROR] 错误日志尾部（logs\kb_serve.log.err）：
+echo [ERROR] kb serve did not become healthy within 30 seconds (%HEALTH_URL%).
+echo [ERROR] Check the log tail: logs\kb_serve.log.err
 powershell -NoProfile -Command "if(Test-Path ($env:KB_LOG+'.err')){Get-Content -Tail 10 ($env:KB_LOG+'.err')}"
 pause
 exit /b 1

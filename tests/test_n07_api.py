@@ -39,4 +39,5 @@ def test_错误路径(client):
 def test_健康检查(client):
     r = client.get("/api/v1/healthz").json()
     assert r["status"] == "ok" and r["records"] == 0
-    assert set(r) == {"status", "llm", "device", "records"}
+    assert set(r) == {"status", "llm", "device", "records", "embedder"}
+    assert r["embedder"]["state"] in {"unloaded", "loading", "ok", "error"}

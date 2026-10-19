@@ -63,24 +63,18 @@ class KBWatcher:
     def start(self) -> None:
         """启动 watchdog Observer 与后台处理线程。
 
-        先在当前线程预热嵌入模型：Embedder 首次 embed 才加载
-        SentenceTransformer（含 torch 导入与首次 CPU 推理，实测 10s+），
-        若留到 worker 线程处理首个事件时才加载，会远超事件入库的时效
-        预期；此处同步预热一次，worker 复用已加载的模型。预热失败不
-        阻断监听启动（worker 首次处理时再按需加载并容忍失败）。
+        不在启动时预热嵌入模型：空闲常驻保持轻量，模型在首次写入/检索
+        （含首个文件事件的入库）时才加载；一次加载会被后续事件复用。
 
-        容错（V2-0）：监听目录不存在（或不是目录）时记 warning 并
-        直接跳过监听——服务其余功能不受影响，serve 不因此崩溃；
+        容错（V2-0）：监听目录不存在（或不是目录）时记 info 并直接跳过
+        监听——服务其余功能不受影响，serve 不因此崩溃；默认目录 data/
+        在全新安装时通常不存在，用 warning 会误导新用户以为启动失败。
         此刻不启动 Observer 与 worker 线程，stop() 对未启动状态安全。
         """
         if not self.watch_dir.is_dir():
-            logger.warning("监听目录不存在或不可用，跳过目录监听：%s",
-                           self.watch_dir)
+            logger.info("监听目录不存在或不可用，跳过目录监听：%s",
+                        self.watch_dir)
             return
-        try:
-            self.service.embedder.embed_texts(["warmup"])
-        except Exception:
-            pass
         self._observer = Observer()
         self._observer.schedule(_EventHandler(self), str(self.watch_dir),
                                 recursive=False)

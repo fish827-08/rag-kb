@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("kb_data")            # 运行数据根目录
     device: str = ""                            # 空=自动检测；显式设 cpu/cuda 覆盖
-    embed_model: str = "BAAI/bge-m3"
+    embed_model: str = "BAAI/bge-small-zh-v1.5"   # 轻量优先（设计文档 §3.1，2026-10-19）：~92MB/512维；可显式换 BAAI/bge-m3
     llm_mode: str = "off"                      # off(默认,完全不加载/调用LLM) | local | auto | cloud
     ollama_base_url: str = "http://localhost:11434"
     llm_model: str = ""                        # 本地 Ollama 模型名（空=未配置，用户按自己电脑显存/需求自配，以 ollama list 为准）

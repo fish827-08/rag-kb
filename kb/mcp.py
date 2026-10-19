@@ -12,9 +12,10 @@ create_mcp_server overrides it when injected; otherwise a KBService() is lazily 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
 
-from kb.service import (KBService, LLMDisabledError, UnsupportedFormatError,
-                        WebFetchError, validate_agent_id, validate_client,
-                        validate_project)
+from kb import __version__
+from kb.service import (EmbeddingUnavailableError, KBService, LLMDisabledError,
+                        UnsupportedFormatError, WebFetchError, validate_agent_id,
+                        validate_client, validate_project)
 from kb.i18n import mcp_instructions
 
 # 模块级服务单例：None 表示尚未注入，首次调用工具时惰性自建
@@ -70,6 +71,14 @@ def _resolve_client_ctx(ctx, client: str | None) -> str:
     return client or _client_from_ctx(ctx) or "HTTP"
 
 
+def _embedding_error(exc: EmbeddingUnavailableError) -> dict:
+    """MCP 通道统一返回嵌入模型不可用错误（不把底层堆栈抛给客户端）。
+    English: Unified MCP error for an unavailable embedding model (never leak the stack trace)."""
+    return {"error": "EMBED_MODEL_UNAVAILABLE", "message": str(exc),
+            "model": exc.model_name,
+            "hint": "检查 KB_EMBED_MODEL；国内网络可设 HF_ENDPOINT=https://hf-mirror.com"}
+
+
 def write_memory(content: str,
                  tags: list[str] | None = None,
                  project: str | None = None,
@@ -90,8 +99,11 @@ def write_memory(content: str,
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
     c = _resolve_client_ctx(ctx, client)
-    record = _svc().add_memory(content, tags=tags, agent_id=project or "default",
-                               client=c, project=project)
+    try:
+        record = _svc().add_memory(content, tags=tags, agent_id=project or "default",
+                                   client=c, project=project)
+    except EmbeddingUnavailableError as exc:
+        return _embedding_error(exc)
     return {"id": record.id}
 
 
@@ -111,12 +123,17 @@ def search_memory(query: str, top_k: int = 5,
     client: source client (optional; auto-detected from clientInfo when omitted)."""
     if top_k < 1:
         return {"error": "INVALID_ARGUMENT", "message": "top_k 必须为不小于 1 的整数"}
+    if not query or not query.strip():
+        return {"error": "INVALID_ARGUMENT", "message": "query 不能为空或纯空白"}
     err = _check_identity(ctx, client, project)
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
     c = _resolve_client_ctx(ctx, client)
-    return _svc().search(query, top_k=top_k, agent_id=project or "default",
-                         client=c, project=project)
+    try:
+        return _svc().search(query, top_k=top_k, agent_id=project or "default",
+                             client=c, project=project)
+    except EmbeddingUnavailableError as exc:
+        return _embedding_error(exc)
 
 
 def read_memory(record_id: str,
@@ -157,9 +174,12 @@ def update_memory(record_id: str, content: str,
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
     c = _resolve_client_ctx(ctx, client)
-    record = _svc().update_memory(record_id, content=content,
-                                  agent_id=project or "default",
-                                  client=c, project=project)
+    try:
+        record = _svc().update_memory(record_id, content=content,
+                                      agent_id=project or "default",
+                                      client=c, project=project)
+    except EmbeddingUnavailableError as exc:
+        return _embedding_error(exc)
     if record is None:
         return {"error": "NOT_FOUND"}
     return record.model_dump()
@@ -206,6 +226,8 @@ def add_document(path: str,
                                    client=c, project=project)
     except UnsupportedFormatError as exc:
         return {"error": "UNSUPPORTED_FORMAT", "message": str(exc)}
+    except EmbeddingUnavailableError as exc:
+        return _embedding_error(exc)
     except OSError as exc:
         return {"error": "FILE_NOT_FOUND", "message": f"文件无法读取：{exc}"}
 
@@ -230,6 +252,8 @@ def add_webpage(url: str,
                                   client=c, project=project)
     except WebFetchError as exc:
         return {"error": "WEB_FETCH_FAILED", "message": str(exc)}
+    except EmbeddingUnavailableError as exc:
+        return _embedding_error(exc)
 
 
 def ask_kb(question: str,
@@ -253,6 +277,8 @@ def ask_kb(question: str,
                           client=c, project=project)
     except LLMDisabledError as exc:
         return {"error": "LLM_DISABLED", "message": str(exc)}
+    except EmbeddingUnavailableError as exc:
+        return _embedding_error(exc)
 
 
 def create_mcp_server(service: KBService) -> MCPServer:
@@ -266,7 +292,7 @@ def create_mcp_server(service: KBService) -> MCPServer:
     # v3（2026-08-31）：MCPServer instructions 承载全局接入规约——任何客户端挂载 MCP 即自动
     # 注入 AI 上下文（跨客户端全局提示词，无需 skill/客户端全局规则）；中英双语按系统语言选一套。
     # 核心：不要求先做健康探测、反馈极简（记了/没记+原因）、记忆全共享。
-    mcp = MCPServer(name="kb",
+    mcp = MCPServer(name="kb", version=__version__,
                     instructions=mcp_instructions())
     for fn in (write_memory, search_memory, read_memory, update_memory,
                delete_memory, add_document, add_webpage, ask_kb):
