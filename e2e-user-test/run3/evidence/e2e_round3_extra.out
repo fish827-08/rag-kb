@@ -1,0 +1,63 @@
+== kb 第三轮补充 E2E ==  python=<repo>\venv\Scripts\python.exe
+
+--- A 主服务 UX 契约 ---
+[PASS] A1 healthz 暴露 embedder 状态且模型已就绪 -- status=200 state=ok model=BAAI/bge-small-zh-v1.5
+[PASS] A2 空白检索返回 422（不再静默全库匹配） -- status=422
+[PASS] A3 空白提问返回 422 -- status=422
+[PASS] A4 本地网页入库成功 -- status=200 source=http://127.0.0.1:8030/site_page.html chunks=1
+[PASS] A5 同 URL 重复入库为原子替换（replaced>0，块数一致） -- status=200 replaced=1 chunks=1
+[PASS] A6 文档列表按 source 聚合无重复条目 -- status=200 matches=1 chunks=1
+[PASS] A7 网页内容可被检索命中 -- status=200 found=True
+[PASS] A8 按 URL 查询参数删除成功 -- status=200 deleted=1
+[PASS] A9 删除后文档列表不再包含该 URL -- status=200 remaining=0
+[PASS] A10 本地文件重复导入为替换而非追加 -- first(replaced=0,chunks=1) second(replaced=1,chunks=1)
+[PASS] A11 替换后的唯一短语可检索（无内容丢失） -- status=200 sources=['dup_doc.md', None, 'e2e_sample_doc.md', 'https://example.com']
+[PASS] A12 本地文件按 source 删除成功 -- deleted=1
+
+--- B 鉴权实例 ---
+[PASS] B1 匿名健康探针放行（healthz 200） -- status=200
+[PASS] B2 匿名业务请求返回 401 -- status=401 error=UNAUTHORIZED
+[PASS] B3 Bearer 正确密钥放行 -- status=200
+[PASS] B4 X-API-Key 正确密钥放行 -- status=200
+[PASS] B5 错误密钥返回 401 -- status=401
+[PASS] B6 首页不豁免鉴权（401，防信息暴露） -- status=401
+
+--- C 坏模型容错 ---
+[PASS] C1 坏模型配置下服务正常启动且 healthz 200 -- status=200 state=unloaded
+[PASS] C2 嵌入模型不可用时写入返回结构化 503 -- status=503 error=EMBED_MODEL_UNAVAILABLE
+[PASS] C3 失败后 healthz 标记 embedder error（可诊断） -- state=error error=We couldn't connect to 'https://huggingface.co' to load the
+
+--- D CLI ---
+[PASS] D1 kb info 正常 -- exit=0 out={
+    'records': 0,
+    'device': 'cpu',
+    'llm': 'disabled',
+    'embedder':
+[PASS] D2 kb add 写入成功 -- exit=0 out=已写入 id=ea82596b4a2f4dbba1cf9d76dd5910a6 client=E2E project=run3
+<USERPROFILE>\Desk
+[PASS] D3 kb search 命中刚写入内容 -- exit=0 out=[1.0000] (memory) - :: 这是 CLI
+端到端测试记忆：CLI-E2E-孤岛信标-77，用于验证全链路。
+<USERPROFILE>\Desktop\temp\tempCode\ra
+[PASS] D4 kb stats 正常输出 -- exit=0
+[PASS] D5 kb audit 正常输出 -- exit=0 out=无匹配的存取审计记录（client=`-` project=`rag-kb`；agent-audit
+目录可能为空或未发生存取）
+<USERPROFILE>\De
+[PASS] D6 kb forget --stale --dry-run 正常（默认不删除） -- exit=0 out=无超 90 天未命中的记录
+<repo>\venv\lib\site-packages\ji
+[PASS] D7 kb dedup --dry-run 正常（记录不足2条时短路） -- exit=0 out=记录不足2条，无需去重扫描
+<repo>\venv\lib\site-packages\ji
+[PASS] D8 kb eval 不受用户治理开关影响（隔离临时库） -- exit=0 tail= from cache D:\AppData\Local\Temp\jieba.cache
+Loading model cost 0.534 seconds.
+Prefix dict has been built successfully.
+
+--- E MCP stdio ---
+[PASS] E1 MCP stdio initialize 成功且上报服务版本 -- server={'name': 'kb', 'version': '2.0.0'}
+[PASS] E2 MCP tools/list 返回 8 个约定工具 -- count=8 missing=[] extra=[]
+
+--- F skill 包 ---
+[PASS] F1 skill 包构建命令成功 -- exit=0 out=[OK] <repo>\e2e-user-test\run3\dist\kb-memory-skill-2.0.0.zip (10 err=
+[PASS] F2 zip 根目录直接包含 SKILL.md 与配置模板 -- files=['SKILL.md', 'README.md', 'mcp.json', 'env.example', 'LICENSE']
+[PASS] F3 SKILL.md 为独立包（无 orchestra/归档/测试路径）且含标准 front matter -- forbidden=[] size=8227B
+
+== 结果：34/34 ==
+明细：<repo>\e2e-user-test\run3\e2e_round3_result.json

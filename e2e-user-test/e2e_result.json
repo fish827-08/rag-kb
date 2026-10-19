@@ -1,0 +1,174 @@
+{
+  "passed": 28,
+  "total": 28,
+  "items": [
+    {
+      "item": "GET /healthz",
+      "ok": true,
+      "detail": "status=200 body={'status': 'ok', 'records': 3, 'device': 'cpu', 'llm': 'disabled'}",
+      "extra": null
+    },
+    {
+      "item": "POST /memories 写入",
+      "ok": true,
+      "detail": "status=200 id=d30c8cd53e6347478cf9df02299dca74 body={'id': 'd30c8cd53e6347478cf9df02299dca74', 'content': 'E2E 测试记忆：用户偏好深色主题，主力语言 Python', 'type': 'memory', 'namespace': 'e2e_test', 'agent_id': 'default', 'client",
+      "extra": null
+    },
+    {
+      "item": "GET /memories 列表",
+      "ok": true,
+      "detail": "status=200 total=4",
+      "extra": null
+    },
+    {
+      "item": "GET /memories/{id} 读取",
+      "ok": true,
+      "detail": "status=200 content=E2E 测试记忆：用户偏好深色主题，主力语言 Python",
+      "extra": null
+    },
+    {
+      "item": "PATCH /memories/{id} 更新",
+      "ok": true,
+      "detail": "status=200",
+      "extra": null
+    },
+    {
+      "item": "GET /memories/{id} 不存在 → 404",
+      "ok": true,
+      "detail": "status=404",
+      "extra": null
+    },
+    {
+      "item": "POST /search mode=hybrid",
+      "ok": true,
+      "detail": "status=200 命中=4",
+      "extra": null
+    },
+    {
+      "item": "POST /search mode=vector",
+      "ok": true,
+      "detail": "status=200 命中=4",
+      "extra": null
+    },
+    {
+      "item": "POST /search mode=keyword",
+      "ok": true,
+      "detail": "status=200 命中=4",
+      "extra": null
+    },
+    {
+      "item": "POST /documents 文档入库",
+      "ok": true,
+      "detail": "status=200 body={'source': 'e2e_sample_doc.md', 'chunks': 1}",
+      "extra": null
+    },
+    {
+      "item": "GET /documents 列表",
+      "ok": true,
+      "detail": "status=200 body={'items': [{'source': 'e2e_sample_doc.md', 'chunks': 2, 'chars': 208, 'last_imported': '2026-10-19T20:26:37.314665'}, {'source': 'https://example.com', 'chunks'",
+      "extra": null
+    },
+    {
+      "item": "入库文档可被检索",
+      "ok": true,
+      "detail": "status=200 命中内容含'RRF'=True",
+      "extra": null
+    },
+    {
+      "item": "POST /ingest/web 网页入库",
+      "ok": true,
+      "detail": "status=200 body={'source': 'https://example.com', 'chunks': 1}",
+      "extra": null
+    },
+    {
+      "item": "POST /ask 无LLM降级",
+      "ok": true,
+      "detail": "status=503 body={'error': 'LLM_DISABLED', 'message': '未检测到可用的 LLM：请在 .env 配置 KB_LLM_MODE=local （Ollama）或 KB_LLM_API_KEY 启用云端（任意 OpenAI 兼容服务商）'}（预期 503：默认 KB_LLM_MODE=off）",
+      "extra": null
+    },
+    {
+      "item": "GET /governance/stats",
+      "ok": true,
+      "detail": "status=200 body={'total_count': 6, 'avg_access_count': 3.67, 'stale_90d_count': 0}",
+      "extra": null
+    },
+    {
+      "item": "GET /governance/config",
+      "ok": true,
+      "detail": "status=200 body={'decay_enabled': False, 'decay_lambda': 0.02, 'decay_gamma': 0.3, 'freshness_enabled': False, 'freshness_beta': 0.05, 'freshness_alpha': 0.3}",
+      "extra": null
+    },
+    {
+      "item": "GET /logs",
+      "ok": true,
+      "detail": "status=200 total=5",
+      "extra": null
+    },
+    {
+      "item": "GET /logs/events",
+      "ok": true,
+      "detail": "status=200 keys=['window', 'total_lines', 'by_level', 'by_logger']",
+      "extra": null
+    },
+    {
+      "item": "GET /audit?client=CLI",
+      "ok": true,
+      "detail": "status=200 total=0",
+      "extra": null
+    },
+    {
+      "item": "GET /audit 缺参数 → 422",
+      "ok": true,
+      "detail": "status=422 {'error': 'INVALID_ARGUMENT', 'message': 'client 或 agent 参数至少提供一个'}",
+      "extra": null
+    },
+    {
+      "item": "GET /dashboard 看板",
+      "ok": true,
+      "detail": "status=200",
+      "extra": null
+    },
+    {
+      "item": "GET / 根页面",
+      "ok": true,
+      "detail": "status=200",
+      "extra": null
+    },
+    {
+      "item": "DELETE /memories/{id}",
+      "ok": true,
+      "detail": "status=200 body={'ok': True}",
+      "extra": null
+    },
+    {
+      "item": "MCP initialize",
+      "ok": true,
+      "detail": "serverInfo={'name': 'kb', 'version': ''}",
+      "extra": null
+    },
+    {
+      "item": "MCP session 建立",
+      "ok": true,
+      "detail": "session=6c65ed97093b…",
+      "extra": null
+    },
+    {
+      "item": "MCP tools/list",
+      "ok": true,
+      "detail": "8 个工具: write_memory, search_memory, read_memory, update_memory, delete_memory, add_document, add_webpage, ask_kb",
+      "extra": null
+    },
+    {
+      "item": "MCP tools/call write_memory",
+      "ok": true,
+      "detail": "",
+      "extra": null
+    },
+    {
+      "item": "MCP tools/call search_memory",
+      "ok": true,
+      "detail": "",
+      "extra": null
+    }
+  ]
+}
