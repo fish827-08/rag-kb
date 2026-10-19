@@ -14,7 +14,7 @@
 
 | 子系统 | 一句话定位 | 状态 |
 |---|---|---|
-| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品，开发主线，当前测试开发阶段） | 测试开发中 |
+| **kb** | 本地优先、完全免费的 Agent 记忆与知识服务（核心产品，开发主线） | v2.0.0 · 自动化回归全绿，待人工验收 |
 | **agent-orchestra** | 基于 kb 共享任务板的跨任务多 Agent 协作系统（❄️ 维护模式，自用脚手架） | B1-B3 收口冻结 |
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
@@ -31,9 +31,10 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 ## 核心特性
 
 - **单进程常驻**：一个 `python -m kb serve` 同时提供 REST API 与 MCP 端点，无需额外组件
-- **混合检索**：BGE-M3 向量检索 + BM25 关键词检索，归一化加权融合排序（每路 min-max 归一化后按生效路数均权，N32/N33），中文分词友好
+- **混合检索**：向量检索 + BM25 关键词检索，归一化加权融合排序（每路 min-max 归一化后按生效路数均权，N32/N33），中文分词友好
+  - 嵌入模型：**默认 `BAAI/bge-small-zh-v1.5`（轻量，约 92 MB / 512 维）**——开箱成本低、CPU 上也快；需要更强语义理解可换 `BAAI/bge-m3`（约 2.2 GB / 1024 维），见「[嵌入模型怎么选](#嵌入模型怎么选)」
   - 可选精排：`KB_RERANK_ENABLED=true` 启用 bge-reranker-v2-m3 交叉重排（默认关）
-  - 可选三路：`KB_SPARSE_ENABLED=true` 启用 BGE-M3 稀疏向量第三路（默认关，失败自动降级双路）
+  - 可选三路：`KB_SPARSE_ENABLED=true` 启用 BGE-M3 稀疏向量第三路（默认关，失败自动降级双路；需 bge-m3）
 - **记忆管理**：写入 / 更新 / 删除 / 列表，支持 namespace、tags、type 过滤
 - **记忆全共享（v3）**：所有记忆/知识与任何客户端、任务、AI 全共享——本地单用户定位，跨 agent、跨任务读到同一份用户记忆；client/project 仅用于审计归类与元数据（不再隔离读写）；主键服务端生成
 - **存取审计**：每次写/读/改/删/检索/问答记 JSON 到 `logs/agent-audit/<客户端>__<项目>.log`（按 client+project 分文件）；用户可查：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 CLI `kb audit --client <客户端>`
@@ -52,8 +53,9 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 
-# 2. 安装依赖
+# 2. 安装依赖 + 安装 kb 命令
 pip install -r requirements.txt
+pip install -e .
 
 # 3. 启动服务（默认监听 http://127.0.0.1:8000）
 python -m kb serve
@@ -66,13 +68,21 @@ python -m kb serve
 python3 -m venv venv
 source venv/bin/activate
 
-# 2. 安装依赖
+# 2. 安装依赖 + 安装 kb 命令
 pip install -r requirements.txt
+pip install -e .
 
 # 3. 启动服务
 python -m kb serve
 ```
 
+> **首次安装要下载什么、大概多久**（先看一眼，避免以为卡死了）：
+> - Python 依赖约 **600 MB**（最大单体是 `torch` 轮子 124 MB）；
+> - **首次写入/检索时**才加载并下载嵌入模型（懒加载，启动本身很轻），**默认 `bge-small-zh-v1.5` 约 92 MB**（若显式配了 `KB_EMBED_MODEL=BAAI/bge-m3`，则约 2.2 GB）；
+> - 国内网络建议加 pip 镜像（实测阿里云可用、清华可能 403）：
+>   `pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/`
+> - 模型下载走 HuggingFace 镜像：`$env:HF_ENDPOINT='https://hf-mirror.com'`（Windows）/ `export HF_ENDPOINT=https://hf-mirror.com`（Linux、macOS）。
+>
 > 重要：`kb` 命令只装在虚拟环境内。**每个新终端都要先激活虚拟环境**
 > （Windows `.\venv\Scripts\Activate.ps1`，Linux/macOS `source venv/bin/activate`），
 > 否则会提示 `kb：未找到命令`。改用 `python -m kb <子命令>` 可绕过激活。
@@ -86,12 +96,41 @@ python -m kb serve
 curl http://127.0.0.1:8000/api/v1/healthz
 ```
 
-> 首次启动会加载本地嵌入模型（默认 BAAI/bge-m3，约 2GB，需提前下载缓存）；
+> 嵌入模型采用懒加载：启动后空闲时几乎不占内存，**首次写入或检索**才加载
+> `BAAI/bge-small-zh-v1.5`（约 92 MB，自动下载并缓存，之后断网可用）；
 > 未配置 LLM 时服务照常启动，`/ask` 返回 503 与配置指引。
+> `/healthz` 的 `embedder` 字段会显示 `unloaded/loading/ok/error`，模型加载失败时
+> 写/查请求返回 **503 `EMBED_MODEL_UNAVAILABLE`**（含模型名与修复建议），不再裸 500。
+>
+> **CPU 即可运行，不占显卡**：全新安装默认拿到 CPU 版 torch（`device=cpu`），
+> 不占用 GPU 显存，无独立显卡的机器也能完整使用。有显卡想加速（大库、批量入库）
+> 可另装 CUDA 版 torch，见 [AGENTS.md](AGENTS.md) 第 7 节；也可显式 `KB_DEVICE=cuda`。
 >
 > **LLM 默认关闭（`KB_LLM_MODE=off`）**：服务启动不会探测/加载/调用任何大模型，
 > 零显存、零成本、纯离线；记忆写入、文档入库、混合检索完整可用。
 > 需要 RAG 问答（`/ask`）时再按下面方式配置本地或云端 LLM。
+
+### 嵌入模型怎么选
+
+默认用轻量模型，是为了让"先试试"的成本足够低；模型不强绑定，可随时按需切换：
+
+| 模型 | 体积 | 维度 | 加载后常驻内存 | 适用 |
+|---|---|---|---|---|
+| **`BAAI/bge-small-zh-v1.5`（默认）** | **约 92 MB** | 512 | 约 100 MB 量级 | 日常偏好/决策/笔记类记忆；CPU 上也快 |
+| `BAAI/bge-m3` | 约 2.2 GB | 1024 | 约 2 GB | 长文档、跨语言、语义更微妙的内容，需要更强语义召回 |
+
+> 本项目在自带 50 题中文评测集上的实测（`kb eval`）：轻量模型 Recall@1 **0.760** / MRR **0.847** /
+> 平均延迟 **28.6 ms**；bge-m3 为 0.740 / 0.841 / 105.6 ms。小样本下二者基本持平，轻量模型更快更省。
+> 但 **bge-m3 在长文档与跨语言场景预期更强**，两个模型定位不同，按自己数据选。
+
+**换模型前必读**：向量维度不同（512 vs 1024），ChromaDB 集合维度由首次写入的向量决定，
+**换了模型后旧数据无法直接检索**。所以：
+
+- **新库**（还没写过数据）：直接设 `KB_EMBED_MODEL=BAAI/bge-m3` 即可；
+- **已有数据的库**：kb 会自动**沿用建库时使用的模型**（记录在 `kb_data/runtime.json`），
+  不会因默认值变化而破坏你的数据，启动日志会记录实际沿用的模型；
+  若能识别的配置与库不一致（你显式改了 `KB_EMBED_MODEL`），还会给出 WARNING 说明如何迁移。
+  确要换模型，请先备份，再清空 `kb_data/chroma` 后重新入库。
 
 ### 配置 LLM（可选，`/ask` 问答需要）
 
@@ -176,6 +215,20 @@ KB_LLM_CLOUD_MODEL=deepseek-v4-flash       # 云端模型名
 > （粘贴 `AGENT_PROMPT.md`，纯文本任何客户端可用）。安装方法、各客户端目录差异与加载机制、
 > 相互引用关系：详细见 [`scripts/README.md`](scripts/README.md)（此处不重复）。
 
+### 打包为独立 skill（Agensi / marketplace）
+
+`skills/kb-memory/` 是 **kb 的独立交付单元**，与仓库内的实验子系统完全解耦：
+包含标准 front matter 的 `SKILL.md`（包根）、MCP 配置模板 `mcp.json`、配置模板
+`env.example`、独立 README 与 LICENSE，覆盖「安装 → 启动 → 配置 → 验证 → 排障」全流程。
+
+```powershell
+python scripts/build_skill_package.py        # 产物：dist/kb-memory-skill-<版本>.zip
+```
+
+zip 内 `SKILL.md` 位于**包根目录**，不含 orchestra、测试、运行数据或任何密钥；
+构建脚本会校验 front matter、自包含说明与敏感信息。可直接提交到 Agensi 这类
+skill marketplace，用户拿到包后按 `SKILL.md` 即可把本机 kb 接入自己的 Agent。
+
 ## MCP 挂载
 
 MCP 端点（streamable HTTP）：`http://127.0.0.1:8000/mcp/`
@@ -219,33 +272,42 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 | POST | `/api/v1/search` | 混合检索 `{query, top_k?, mode?, type?, tag?}`，mode: `hybrid/vector/keyword` |
 | POST | `/api/v1/documents` | 文档入库：multipart `file` 字段或 JSON `{"path": "本地路径"}` |
 | GET | `/api/v1/documents` | 已入库文档列表（按 source 聚合） |
-| DELETE | `/api/v1/documents/{source}` | 按 source 删除该文档全部记录 |
-| POST | `/api/v1/ingest/web` | 网页入库 `{url}`，抓取正文切分入库 |
+| DELETE | `/api/v1/documents/{source}` | 按 source 删除该文档全部记录（本地文件名等简单 source） |
+| DELETE | `/api/v1/documents?source=<urlencoded>` | 按查询参数删除（**URL 等含斜杠的 source 必须用这个**） |
+| POST | `/api/v1/ingest/web` | 网页入库 `{url}`，抓取正文切分入库；同 URL 重复入库自动替换旧记录 |
 | POST | `/api/v1/ask` | RAG 问答 `{question}`；未配置 LLM 返回 503 |
-| GET | `/api/v1/healthz` | 健康检查与服务统计 |
+| GET | `/api/v1/healthz` | 健康检查与服务统计（含 `embedder` 状态） |
 | GET | `/api/v1/governance/stats` | 记忆治理统计：`total_count`/`avg_access_count`/`stale_90d_count`（只读） |
 | GET | `/api/v1/governance/config` | 治理配置：衰减+新鲜度开关与参数（只读） |
 | POST | `/api/v1/memories` → **409** | 启用语义去重（`KB_DEDUP_ENABLED=true`）后写入命中重复返回 409：`{"error":"DUPLICATE","duplicate_of":"<已有记录id>","similarity":<相似度>}`（不写入） |
 
 > 记忆治理（去重/衰减/新鲜度）均默认关闭、零行为变化；用法见 [USER_GUIDE §3.5](docs/USER_GUIDE.md#35-记忆治理a3语义去重--衰减--新鲜度)。
 
-示例：
+示例（Windows PowerShell 可直接复制；中文必须按 UTF-8 字节发送）：
 
 ```powershell
+function Invoke-KbJson($Uri, $Body) {
+  Invoke-RestMethod -Uri $Uri -Method Post -ContentType 'application/json; charset=utf-8' `
+    -Body ([System.Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 5)))
+}
+
 # 写入一条记忆
-curl -X POST http://127.0.0.1:8000/api/v1/memories `
-  -H "Content-Type: application/json" `
-  -d '{"content": "用户偏好深色主题", "tags": ["偏好"]}'
+Invoke-KbJson http://127.0.0.1:8000/api/v1/memories @{ content = "用户偏好深色主题"; tags = @("偏好") }
 
 # 混合检索
-curl -X POST http://127.0.0.1:8000/api/v1/search `
-  -H "Content-Type: application/json" `
-  -d '{"query": "用户界面偏好", "top_k": 5}'
+Invoke-KbJson http://127.0.0.1:8000/api/v1/search @{ query = "用户界面偏好"; top_k = 5 }
 
-# RAG 问答（需配置 LLM）
-curl -X POST http://127.0.0.1:8000/api/v1/ask `
-  -H "Content-Type: application/json" `
-  -d '{"question": "用户喜欢什么主题？"}'
+# 按 URL 删除网页文档（source 需 URL 编码；PowerShell 用 [uri]::EscapeDataString）
+$src = [uri]::EscapeDataString("https://example.com/page")
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/documents?source=$src" -Method Delete
+```
+
+Linux / macOS 用 `curl`（`curl` 在这里是原生命令，不是 PowerShell 别名）：
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/memories \
+  -H "Content-Type: application/json" \
+  -d '{"content": "用户偏好深色主题", "tags": ["偏好"]}'
 ```
 
 ## 配置项简表
@@ -260,7 +322,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask `
 | `KB_WATCH_DIR` | `data` | serve 模式监听目录，文件变动自动入库；空串或 `.` = 不启动 |
 | `KB_DATA_DIR` | `kb_data` | 运行数据根目录（ChromaDB、运行时状态等） |
 | `KB_API_HOST` / `KB_API_PORT` | `127.0.0.1` / `8000` | REST 与 MCP 监听地址 |
-| `KB_EMBED_MODEL` | `BAAI/bge-m3` | 嵌入模型 |
+| `KB_EMBED_MODEL` | `BAAI/bge-small-zh-v1.5` | 嵌入模型（轻量默认，约 92 MB）；可换 `BAAI/bge-m3`（约 2.2 GB，更强），见「嵌入模型怎么选」 |
 | `KB_LLM_MODEL` | 空 | 本地 Ollama 模型名（默认空=不配；配 `KB_LLM_MODE=local/auto` 时须按自己电脑选模型，以 `ollama list` 为准） |
 | `KB_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 端点 |
 | `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` | 空 | 云端 LLM（可选）：**任意 OpenAI 兼容服务商**（DeepSeek / OpenAI / 通义 / 硅基流动等），仅填在本机 `.env` |
@@ -285,7 +347,11 @@ python -m kb dedup --threshold 0.92           # 语义去重
 
 > `kb ask` 直连本地服务逻辑（不经 HTTP）；建议 `serve` 停止时使用，避免双进程写库竞争。
 
-## agent-orchestra — 多 Agent 协作系统（实验）
+## agent-orchestra — 多 Agent 协作系统（实验，独立于 kb 产品）
+
+> **子系统边界**：agent-orchestra 是作者自用的实验脚手架，`❄️ 维护模式`，
+> **不属于 kb 的对外交付物**，不随 skill 包发布，也不是运行 kb 的前置依赖；
+> 本 README 其余部分（安装、配置、MCP、REST、CLI）均只针对 kb。
 
 让多个 AI 助手（不同 TraeWork 任务 / Claude Code 会话，模型可不同）通过 kb 共享任务板
 协作开发：协调者 AI 拆卡分发，worker AI 领卡执行、单卡单轮、回写结果，协调者核验流转。
@@ -303,7 +369,7 @@ venv\Scripts\python.exe orchestra\board.py new-worker worker-1
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（375 项，含 eval_zh_50.jsonl 检索评测数据集）
+tests/         kb 验收测试（417 项，含 eval_zh_50.jsonl 检索评测数据集）
 orchestra/     多 Agent 协作系统（board.py CLI + 协议三件套 + skill + 245 项测试）
 docs/          设计文档、节点计划、用户使用手册
 kb_data/       kb 运行数据（gitignore）
@@ -314,6 +380,7 @@ _archive/      旧学习项目归档（仅保留历史，禁止参考）
 
 - **用户使用手册（人类用户入口）**：[docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 - **AI 接力文档（AI 助手入口）**：[PROJECT.md](PROJECT.md)（项目状态 / 进度看板 / 接手指南）
+- **用户视角 E2E 测试报告（第三轮）**：[e2e-user-test/测试报告-第三轮.md](e2e-user-test/测试报告-第三轮.md)
 - 设计文档（需求、架构、API、里程碑）：`docs/superpowers/specs/2026-08-23-kb-memory-service-design.md`
 - P2 日志设计：`docs/superpowers/specs/2026-08-24-logging-design.md`
 - P2 路线图：`docs/superpowers/plans/2026-08-24-p2-roadmap.md`

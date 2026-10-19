@@ -2,11 +2,11 @@
 
 > **给任何接手的 AI 助手**：先读 [AGENTS.md](AGENTS.md)（工作规则与红线），再读本文档（项目状态），然后按第 5 节"接手指南"行动。两份文档读完即可接力，无需追问用户历史。
 >
-> 最后更新：2026-08-28 ｜ 维护者：文档/测试 AI（按 AGENTS.md 角色分工）｜ 本文件随每个里程碑/节点更新
+> 最后更新：2026-10-19 ｜ 维护者：文档/测试 AI（按 AGENTS.md 角色分工）｜ 本文件随每个里程碑/节点更新
 >
 > English: [PROJECT_EN.md](PROJECT_EN.md)
 
-## 1. 项目是什么（双子系统）
+## 1. 项目是什么（两个独立子系统）
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -22,12 +22,16 @@
 └─────────────────────────────────────────────────┘
 ```
 
-- **设计原则**：本地优先、完全免费、断网可用；显存预算 6GB（BGE-M3 + qwen3:4b 共 4.3GB）
+> **交付边界（2026-10-19）**：kb 是唯一对外交付物；orchestra 是作者自用的实验脚手架，
+> 不随 kb 安装、不进入 Agensi skill 包、测试冻结不跑（AGENTS.md 验证协议）。
+> kb 默认嵌入模型为轻量 `BAAI/bge-small-zh-v1.5`（约 92MB），显式可换 BGE-M3。
+
+- **设计原则**：本地优先、完全免费、断网可用；显存预算 6GB（默认 bge-small；选 BGE-M3 时与 qwen3:4b 共 4.3GB）
 - **唯一事实来源**：`docs/superpowers/specs/` 下的设计文档（见第 6 节索引）
 
 ## 2. 当前进度（看板）
 
-### ① kb 记忆服务 — 测试开发阶段（P1/P2 主线持续迭代）
+### ① kb 记忆服务 — v2.0.0 交付加固（P1/P2 主线持续迭代）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
@@ -37,7 +41,7 @@
 | M4（N13-N16） | 文档摄取（pdf/docx/md/txt）、网页抓取、目录监听、README | ✅ 2026-08-24 |
 | v1.0.1 hotfix | top_k/mode/空内容校验 → 422、MCP 入口校验、SSE charset | ✅ 2026-08-24 |
 
-- 测试：**339 项全绿**（`tests/`；其中 A3.5+A4 新增 68 项：reranker/sparse/eval/perf/cli 五个测试文件，分支 `feature/a-line-remaining`）
+- 测试基线：**417 项全绿**（2026-10-19 全量回归；历史：A3.5+A4 新增 68 项：reranker/sparse/eval/perf/cli 五个测试文件，分支 `feature/a-line-remaining`）
 - 基准：混合检索 26ms、/ask 端到端 ~2s（本地 qwen3:4b）
 - tag：`node-01`~`node-16`、`v1.0.0`、`v1.0.1`（均已推 Gitee）
 - v1.0.2：JSON charset 已修复（TASK-0003/0038/0045 交付，含测试断言）
@@ -59,11 +63,19 @@
   - 取消 (client, project) 隔离：所有记忆/知识全共享，跨 agent/任务可读同一份用户偏好
   - client/project 降级为**审计归类与元数据**，不隔离读写（MCP/REST/CLI/检索全部同步）
   - 验证协议定稿：小改动只跑相关测试、核心架构改变才全量、B 线冻结不测（AGENTS.md §0）
-  - 测试：375 项全绿（`tests/`，隔离断言已反转测试隔离语义）
+  - 测试：417 项全绿（2026-10-19 全量回归，隔离断言已反转测试隔离语义）
 - **混合检索融合修复收口**（2026-09-01，N32/N33，回归测试 `tests/test_n32_hybrid_fusion_recall.py` 7 项）：
   - hybrid 默认融合从 RRF 排名融合改为**归一化评分加权融合**（每路 min-max 归一化后按**生效路数**均权，候选池放宽 `max(3×top_k, 30)`）
   - 解决跨语言/专有名词召回：中文 query 查不到英文歌名（Poker Face）、纯英文/日文记忆缺席 BM25 路时不再被 ÷总路数稀释挤出 top_k；同语言场景零行为变化
   - 三语言（中/英/日）模拟写入读取与交叉检索实测通过
+- **v2.0.0 交付加固收口**（2026-10-19，面向真实新用户与 Agensi 交付）：
+  - 轻量默认：`BAAI/bge-small-zh-v1.5`（约 92MB / 512 维），显式可换回 BGE-M3；embedder 懒加载，healthz 暴露 `embedder.state/error`
+  - 失败可诊断：嵌入模型不可用返回 503 `EMBED_MODEL_UNAVAILABLE`（REST/MCP 同语义），不再 500
+  - 入库原子性：同 source 重复导入改为“先算向量再替换”，失败不丢旧数据；文档删除支持 URL 查询参数
+  - 参数校验：空白搜索/提问 422；`kb eval` 强制隔离治理开关，评测结果可复现
+  - Windows 一键脚本：`.env` 端口解析、pythonw 无控制台不卡 GPU 询问、PID+端口+命令行三路停止
+  - 独立 skill 包：`skills/kb-memory/` + `scripts/build_skill_package.py`（zip 根 `SKILL.md`，不含 orchestra/测试/密钥），打包校验 7 项
+  - 用户视角 E2E：基础 28/28 + 补充 34/34（隔离实例验证鉴权/坏模型/CLI/MCP stdio/skill 包），报告见 `e2e-user-test/测试报告-第三轮.md`
 
 ### ② agent-orchestra — B1/B2/B3 收口后转入冻结维护（2026-08-28）
 
@@ -108,7 +120,7 @@ rag-kb/
 ├── ROADMAP.md           # 项目发展总线设计书（人类入口，树形路线+进度）
 ├── README.md            # kb 产品说明（快速开始/MCP 挂载/端点速查）
 ├── kb/                  # ① kb 服务源码（见设计文档 4.2；含 reranker/sparse/eval 等 A3.5/A4 模块）
-├── tests/               # kb 验收测试（375 项，含 eval_zh_50.jsonl 评测数据集）
+├── tests/               # kb 验收测试（417 项，含 eval_zh_50.jsonl 评测数据集）
 ├── orchestra/           # ② 协作系统（board.py + 协议 + skill + 245 项测试）
 │   └── docs/superpowers/  # orchestra 设计文档与实施计划
 ├── docs/superpowers/    # kb 设计文档（specs）与节点计划（plans）
@@ -125,7 +137,7 @@ rag-kb/
 python -m kb serve                    # 默认 127.0.0.1:8000
 
 # kb 测试 / orchestra 测试（venv 内）
-venv\Scripts\python.exe -m pytest tests/ -q            # 339 项
+venv\Scripts\python.exe -m pytest tests/ -q            # 417 项
 venv\Scripts\python.exe -m pytest orchestra/tests/ -q  # 245 项
 
 # orchestra 任务板（协调者工具）

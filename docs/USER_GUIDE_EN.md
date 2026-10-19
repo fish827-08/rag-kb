@@ -41,8 +41,12 @@ pip install -r requirements.txt
 python -m kb serve
 ```
 
-- Default listen `http://127.0.0.1:8000`; loads the local embedding model at startup (~10s first time)
-- Verify: open `http://127.0.0.1:8000/api/v1/healthz` in another terminal/browser, `{"status": "ok", ...}` means healthy
+- Default listen `http://127.0.0.1:8000`; startup is lightweight — the embedding model is
+  lazy-loaded on the first write/search
+- Verify: open `http://127.0.0.1:8000/api/v1/healthz` in another terminal/browser;
+  `{"status": "ok", "embedder": {"state": "unloaded|ok", ...}, ...}` means healthy.
+  `embedder.state=error` means the model failed to load and write/search return
+  503 `EMBED_MODEL_UNAVAILABLE`
 - **Keep that terminal window open** (or run it in the background); closing it stops the service
 
 > One-click: `scripts\windows\start_kb.bat` (background), `scripts\windows\start_kb_console.bat` (debug console), `scripts\windows\stop_kb.bat` (stop).
@@ -152,9 +156,12 @@ Returns `items` (file order; each with time/level/logger/message/line) plus `tot
 |---|---|
 | Tell the AI | "Ingest D:\docs\xxx.pdf" / "Save this webpage to the KB: <URL>" |
 | REST | `POST /api/v1/documents` (multipart file or JSON path); `POST /api/v1/ingest/web` (URL) |
+| Delete | local file: `DELETE /api/v1/documents/{source}`; webpage: `DELETE /api/v1/documents?source=<urlencoded>` (URLs contain slashes, so use the query parameter) |
 | Dir watcher | set `KB_WATCH_DIR` (default `data`); new files auto-ingested, deletions auto-cleaned |
 
 Supported formats: txt / md / pdf / docx.
+Re-ingesting the same source **replaces** its old chunks (the response reports
+`replaced`), so retrieval never returns duplicate chunks.
 
 ### 3.5 Memory governance (A3: dedup / decay / freshness)
 
@@ -246,9 +253,16 @@ Example shapes:
 - `/governance/stats`: `{"total_count": 279, "avg_access_count": 1.25, "stale_90d_count": 3}`
 - `/governance/config`: `{"decay_enabled": false, "decay_lambda": 0.02, "decay_gamma": 0.3, "freshness_enabled": false, "freshness_beta": 0.05, "freshness_alpha": 0.3}`
 
-> CLI maintenance commands (bulk cleanup etc., N23a) are in progress; see §6 for `forget`/`dedup`.
+> CLI maintenance commands are available: `python -m kb forget --stale`,
+> `python -m kb dedup --dry-run`, `python -m kb audit`, `python -m kb eval`.
+> `kb eval` uses an isolated temporary database and explicitly disables
+> dedup/decay/freshness, so results are reproducible regardless of your `.env`.
 
-## 4. orchestra: multi-Agent collaboration
+## 4. orchestra: multi-Agent collaboration (experimental, separate subsystem)
+
+> **Boundary**: orchestra is the author's experimental scaffolding. It is not part
+> of kb's deliverables, is not shipped in the standalone skill package, and is not
+> required to install or use kb. Readers who only need kb can skip this section.
 
 ### 4.1 What it solves
 
