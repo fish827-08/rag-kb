@@ -10,10 +10,10 @@ import pytest
 
 from kb.llm import LLMError
 from kb.config import Settings
-from kb.monitor import (MonitorAgent, _b3_parse_rounds, _detect_anomalies,
+from kb.monitor import (MonitorAgent, _detect_anomalies,
                         _fallback_dispatch_text, _fallback_summary_text,
                         build_anomaly_snapshot, build_messages, build_snapshot,
-                        maybe_open_dashboard, run_once_dispatch, run_once_summary)
+                        run_once_dispatch, run_once_summary)
 
 
 # ---- 测试替身 ----
@@ -141,19 +141,6 @@ def test_interval非法回退():
     assert MonitorAgent(svc, interval_minutes=3).interval == 3
 
 
-def test_看板自启动开关():
-    class S:
-        dashboard_autoopen = False
-        dashboard_url = "http://x"
-
-    calls = []
-    maybe_open_dashboard(S(), opener=lambda u: calls.append(u))
-    assert calls == []
-    S.dashboard_autoopen = True
-    maybe_open_dashboard(S(), opener=lambda u: calls.append(u))
-    assert calls == ["http://x"]
-
-
 # ---- TASK-0021：去常驻改按需——端点测试（mock llm，不依赖真实 LLM/Ollama）----
 def _make_client(env_isolated, monkeypatch,
                  llm_result="当前协作正常：TASK-0016 完成，TASK-0021 进行中。",
@@ -207,7 +194,7 @@ def test_按需端点LLM不可用降级返回200(env_isolated, monkeypatch):
 def test_配置去常驻默认(env_isolated, monkeypatch):
     """去常驻：monitor_enabled 默认 False（不启线程）；KB_MONITOR_AUTOTIMER 默认 0。
 
-    GET /api/v1/config 暴露 monitor_autotimer 供看板前端读取（>0 时前端定时调）。
+    GET /api/v1/config 暴露 monitor_autotimer 供外部客户端读取。
     """
     from kb.config import Settings
     s = Settings()
@@ -344,87 +331,21 @@ class TestDetectAnomalies:
         assert types == sorted(["pending_low", "claimed_stale",
                                 "done_unverified", "fbk_open_stale"])
 
-    # ---- TASK-0058：B3 rounds 轮次告警（规则⑤）----
-    def test_rounds_exceeded_触发_达到上限(self):
-        snap = {
-            "tasks": [_task("TASK-0052", "claimed")],
-            "feedbacks": [],
-            "rounds": {"TASK-0052": {"total": 5, "complexity": "medium",
-                                       "quota": {"total": 5}}},
-        }
-        anomalies = _detect_anomalies(snap, now=_NOW)
-        assert any(a["type"] == "rounds_exceeded" and a["task_id"] == "TASK-0052"
-                   for a in anomalies)
-
-    def test_rounds_exceeded_触发_超过上限(self):
-        snap = {
-            "tasks": [_task("TASK-0052", "claimed")],
-            "feedbacks": [],
-            "rounds": {"TASK-0052": {"total": 6, "complexity": "medium",
-                                       "quota": {"total": 5}}},
-        }
-        anomalies = _detect_anomalies(snap, now=_NOW)
-        assert any(a["type"] == "rounds_exceeded" for a in anomalies)
-
-    def test_rounds_exceeded_不触发_未超限(self):
-        snap = {
-            "tasks": [_task("TASK-0052", "claimed")],
-            "feedbacks": [],
-            "rounds": {"TASK-0052": {"total": 4, "complexity": "medium",
-                                       "quota": {"total": 5}}},
-        }
-        anomalies = _detect_anomalies(snap, now=_NOW)
-        assert all(a["type"] != "rounds_exceeded" for a in anomalies)
-
-    def test_rounds_exceeded_不触发_非claimed(self):
-        """pending/done 卡即使 rounds 超限也不触发（只检测 claimed）。"""
-        snap = {
-            "tasks": [_task("TASK-0052", "pending"), _task("TASK-0053", "done")],
-            "feedbacks": [],
-            "rounds": {
-                "TASK-0052": {"total": 5, "complexity": "simple", "quota": {"total": 3}},
-                "TASK-0053": {"total": 8, "complexity": "complex", "quota": {"total": 8}},
-            },
-        }
-        anomalies = _detect_anomalies(snap, now=_NOW)
-        assert all(a["type"] != "rounds_exceeded" for a in anomalies)
-
-    def test_rounds_exceeded_不触发_无rounds记录(self):
-        snap = {"tasks": [_task("TASK-0052", "claimed")], "feedbacks": []}
-        anomalies = _detect_anomalies(snap, now=_NOW)
-        assert all(a["type"] != "rounds_exceeded" for a in anomalies)
-
-    def test_rounds_exceeded_detail含轮次字段(self):
-        """告警 detail 含 'TASK-NNNN complexity第N轮/共M' 格式（comm:dispatch 播报字段）。"""
-        snap = {
-            "tasks": [_task("TASK-0052", "claimed")],
-            "feedbacks": [],
-            "rounds": {"TASK-0052": {"total": 5, "complexity": "medium",
-                                       "quota": {"total": 5}}},
-        }
-        anomalies = _detect_anomalies(snap, now=_NOW)
-        a = [a for a in anomalies if a["type"] == "rounds_exceeded"][0]
-        assert "TASK-0052" in a["detail"]
-        assert "medium第5轮/共5" in a["detail"]
-        assert "轮次超限" in a["detail"]
-
-    def test_综合五条规则同时触发(self):
-        """TASK-0058 后五条规则可同时触发（含 rounds_exceeded）。"""
+    # ---- 四条规则（组合触发）----
+    def test_综合四条规则同时触发(self):
+        """四条规则可同时触发。"""
         snap = {
             "tasks": [
                 _task("TASK-0001", "pending"),  # pending=1 < 2
                 _task("TASK-0002", "claimed", minutes_ago=45),  # >30
                 _task("TASK-0003", "done", minutes_ago=10),  # >5
-                _task("TASK-0052", "claimed"),  # rounds 超限
             ],
             "feedbacks": [_fbk("FBK-0001", "open", minutes_ago=20)],  # >10
-            "rounds": {"TASK-0052": {"total": 5, "complexity": "medium",
-                                       "quota": {"total": 5}}},
         }
         anomalies = _detect_anomalies(snap, now=_NOW)
         types = sorted(a["type"] for a in anomalies)
         assert types == sorted(["pending_low", "claimed_stale", "done_unverified",
-                                "fbk_open_stale", "rounds_exceeded"])
+                                "fbk_open_stale"])
 
 
 # ---- TASK-0049：异常调度（comm:dispatch）----
@@ -484,16 +405,12 @@ class TestDispatch:
 
     def test_build_anomaly_snapshot收集(self):
         now = datetime.now().isoformat()
-        rounds_content = ("ROUNDS TASK-0001 | precheck=1 milestone=1 review=0 total=2\n"
-                          "复杂度：medium\n配额：precheck=2 milestone=2 total=5")
         records = [
             _rec("TASK-0001 claimed worker-1 | 标题A", ["taskboard"], updated_at=now),
             _rec("坏首行", ["taskboard"], updated_at=now),  # 解析失败跳过
             _rec("FBK-0001 feedback TASK-0001 | objection precheck\n结果：open",
                  ["feedback"], updated_at=now),
             _rec("坏反馈首行", ["feedback"], updated_at=now),  # 跳过
-            _rec(rounds_content, ["rounds"], updated_at=now),  # TASK-0058 rounds 采集
-            _rec("ROUNDS 坏格式", ["rounds"], updated_at=now),  # 解析失败跳过
         ]
         svc = FakeService(records)
         snap = build_anomaly_snapshot(svc)
@@ -503,55 +420,6 @@ class TestDispatch:
         assert len(snap["feedbacks"]) == 1
         assert snap["feedbacks"][0]["fbk_id"] == "FBK-0001"
         assert snap["feedbacks"][0]["status"] == "open"
-        # TASK-0058：rounds 采集（orchestra.b3 可 import 时解析，否则空 dict）
-        if _b3_parse_rounds is not None:
-            assert "TASK-0001" in snap["rounds"]
-            assert snap["rounds"]["TASK-0001"]["total"] == 2
-            assert snap["rounds"]["TASK-0001"]["complexity"] == "medium"
-        else:
-            assert snap["rounds"] == {}
-
-    def test_dispatch轮次告警含轮次字段(self, monkeypatch):
-        """TASK-0058 冒烟：rounds_exceeded 异常时，comm:dispatch 播报 LLM 输入含轮次字段。"""
-        # 确保 orchestra 及其内部模块可 import（b3.py 内部用 from cards import，需 orchestra/ 在 path）
-        import sys as _sys
-        from pathlib import Path as _Path
-        _repo_root = str(_Path(__file__).resolve().parent.parent)
-        _orchestra_dir = str(_Path(_repo_root) / "orchestra")
-        for _p in (_repo_root, _orchestra_dir):
-            if _p not in _sys.path:
-                _sys.path.insert(0, _p)
-        try:
-            from orchestra.b3 import parse_rounds as _pr
-        except ImportError:
-            pytest.skip("orchestra.b3 不可 import")
-        monkeypatch.setattr("kb.monitor._b3_parse_rounds", _pr)
-        now = datetime.now().isoformat()
-        rounds_content = ("ROUNDS TASK-0052 | precheck=2 milestone=2 review=1 total=5\n"
-                          "复杂度：medium\n配额：precheck=2 milestone=2 total=5")
-        records = [
-            _rec("TASK-0052 claimed worker-1 | 标题", ["taskboard"], updated_at=now),
-            _rec("TASK-0001 pending worker-2 | 待办", ["taskboard"], updated_at=now),
-            _rec("TASK-0002 pending worker-3 | 待办", ["taskboard"], updated_at=now),
-            _rec(rounds_content, ["rounds"], updated_at=now),
-        ]
-        svc = FakeService(records)
-        captured = {}
-
-        def fake_chat(messages, max_tokens=None, prefer="auto"):
-            captured["messages"] = messages
-            return "轮次超限告警：TASK-0052 medium第5轮/共5"
-        monkeypatch.setattr(svc.llm, "chat", fake_chat)
-        run_once_dispatch(svc, max_tokens=300, monitor_llm="auto")
-        # LLM 被调用，且 user content 含轮次字段（comm:dispatch 播报格式）
-        assert "messages" in captured
-        user_msg = captured["messages"][1]["content"]
-        assert "TASK-0052" in user_msg
-        assert "medium第5轮/共5" in user_msg
-        assert "rounds_exceeded" in user_msg
-        # comm:dispatch 记录已写入
-        dispatch = [a for a in svc.added if "comm:dispatch" in (a["tags"] or [])]
-        assert len(dispatch) == 1
 
     def test_dispatch独立执行_主摘要失败时仍播报(self):
         """TASK-0059：主摘要 LLM 失败时，dispatch 仍独立执行（不再整轮短路）。"""
@@ -587,13 +455,13 @@ def test_fallback_dispatch_text纯函数():
     """TASK-0059：_fallback_dispatch_text 异常列表模板渲染。"""
     anomalies = [
         {"type": "pending_low", "task_id": None, "detail": "卡池 pending 数=0 < 2"},
-        {"type": "rounds_exceeded", "task_id": "TASK-0052",
-         "detail": "TASK-0052 medium第5轮/共5，轮次超限"},
+        {"type": "claimed_stale", "task_id": "TASK-0052",
+         "detail": "claimed 卡 TASK-0052 已 45 分钟未动（>30）"},
     ]
     text = _fallback_dispatch_text(anomalies, "2026-08-26 12:00")
     assert "共2条" in text
     assert "[pending_low]" in text
-    assert "[rounds_exceeded]" in text
+    assert "[claimed_stale]" in text
     assert "TASK-0052" in text
     assert "纯文本降级" in text
 

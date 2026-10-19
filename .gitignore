@@ -9,8 +9,10 @@ models/
 .idea/
 .pytest_cache/
 logs/
-# orchestra worktree 隔离目录（TASK-0025）
+# 本地 worktree 隔离目录
 .worktrees/
+# 本地保留的协作实验目录：已从仓库移出，不再上传（2026-10-19）
+orchestra/
 # 临时脚本目录（历史遗留两种写法都忽略）
 .kb_tmp/
 _kb_tmp/
@@ -35,7 +37,7 @@ build/
 *.pid
 # Qoder 本地工具产物（credits 报告等，仅本机使用）
 .qoder-credits/
-# 旧 orchestra 看板分享包（构建产物，不再入库）
+# 旧看板分享包（构建产物，不再入库）
 .trae-html-share-packages/
 # E2E 测试产物：隔离实例、仓库副本、运行时数据库、日志、临时输入与 pid 备份
 # （测试脚本、结果 JSON、evidence 与测试报告仍入库）

@@ -14,7 +14,6 @@
 |---|---|---|
 | **小改动 / 功能迭代**（常规） | 只读相关 spec | **只跑相关测试**（改动涉及的模块/功能的验收测试 + 单元测试） |
 | **版本大更新 / 核心架构改变** | 通读相应 spec 链 | **全量测试**（kb 套件 `pytest tests/`） |
-| **orchestra（B 线）** | — | **冻结不测**：任何情况下不跑 `orchestra/tests/`，也不为其改动做验证开销 |
 
 其余红线不变：先测后实现（TDD）；任何 AI 不得代替人工声称"验收已完成"；交付时出具"自动化已覆盖 / 待人工验证"两部分。
 
@@ -26,15 +25,13 @@
 | `AGENTS.md`（本文件） | ✅ 有效 | AI 工作规则 |
 | `ROADMAP.md` | ✅ 有效 | **项目发展总线设计书**（人类入口：树形路线+进度；2026-08-24 v2 总线定稿） |
 | `PROJECT.md` | ✅ 有效 | **接力文档**（项目状态/进度看板/接手指南；新 AI 必读第 2 份，2026-08-24 新增） |
-| `docs/USER_GUIDE.md` | ✅ 有效 | **用户使用手册**（人类用户入口：kb 使用 + MCP 挂载 + orchestra 协作流程，2026-08-24 新增） |
+| `docs/USER_GUIDE.md` | ✅ 有效 | **用户使用手册**（人类用户入口：kb 使用 + MCP 挂载，2026-08-24 新增） |
 | `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | ✅ 有效 | 节点计划（门禁与验收测试，N1-N16 全部完成） |
 | `docs/superpowers/specs/2026-08-24-logging-design.md` | ✅ 有效 | 日志设计（总线 A1.2，N17-N18 实施依据） |
 | `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | ✅ 有效 | kb 功能路线（总线 A2-A4：鉴权→遗忘→CLI/Web UI） |
-| `orchestra/protocol.md` + `worker-prompt.md` + `coordinator-prompt.md` | ✅ 有效 | orchestra 协作协议三件套（v1.1：任务分支/重启管控/交流窗） |
-| `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` | ✅ 有效 | orchestra v2 迭代计划（总线 B1 P0 载体；V2-0 修复卡保留，其余节点按总线 B1.1-B1.7 编号演进） |
 | `README.md` | ✅ 有效 | 项目说明（N16 按新定位重写：快速开始 / MCP 挂载 / 端点速查） |
 | `docs/AGENT_PROMPT.md` / `AGENT_PROMPT_EN.md` | ✅ 有效 | 通用 Agent 接入提示词（客户端无关；另封装为 `skills/kb-memory/SKILL.md`，安装见 scripts/README.md） |
-| `skills/kb-memory/` + `scripts/build_skill_package.py` | ✅ 有效 | **Agensi 独立 skill 包**（zip 根 `SKILL.md` + MCP/env 模板；不含 orchestra、测试、运行数据或密钥） |
+| `skills/kb-memory/` + `scripts/build_skill_package.py` | ✅ 有效 | **Agensi 独立 skill 包**（zip 根 `SKILL.md` + MCP/env 模板；不含测试、运行数据或密钥） |
 | `docs/DEV_HANDBOOK.md` | ✅ 有效 | **开发者维护手册**（架构分层、调用链、函数索引、配置与红线；按代码校订，行号锚点为快照） |
 | `docs/superpowers/specs/2026-08-30-memory-scope-refactor-design.md` | ✅ 有效（隔离语义已取代） | **记忆范围重构 v2（2026-08-30 收口）**：隔离键改 client+project（agent_id 降为主键冗余）、MCP 工具去 agent_id、审计文件 client__project、遗忘时钟注入验证；**其 (client, project) 隔离语义已被 v3 取代**（见下行） |
 | `docs/superpowers/specs/2026-08-31-memory-share-refactor-design.md` | ✅ 有效 | **记忆全共享 v3（2026-08-31 定稿）**：去除 (client, project) 隔离——所有记忆/知识全共享，client/project 降级为审计归类与元数据；取代 v2 的隔离语义 |
@@ -99,7 +96,7 @@
 
 > **状态：✅ 已全部完成（2026-08-24 收口）**。N1-N16 按计划串行推进完毕，M1-M4 四个人工门禁点均通过，tag `node-01` ~ `node-16` 及版本 tag `v1.0.0` 均已推送远程。
 
-P1（N1-N16，kb v1.0.1）已收口；agent-orchestra MVP 已合入 main（`orchestra/`，见 PROJECT.md）。当前进入 **P2**：按 `docs/superpowers/plans/2026-08-24-p2-roadmap.md` 顺序推进——**P2-1 日志（N17-N18）→ P2-2 鉴权 → P2-3 遗忘机制 → P2-4 Web UI/CLI（CLI 优先）**；Qdrant 已砍掉（违反零常驻约束）。不跳步；各功能 spec 定稿后仍走节点门禁制。后续新需求（P2）先修订设计文档再立项，不在本节点计划上续写。
+P1（N1-N16，kb v1.0.1）已收口；当前进入 **P2**：按 `docs/superpowers/plans/2026-08-24-p2-roadmap.md` 顺序推进——**P2-1 日志（N17-N18）→ P2-2 鉴权 → P2-3 遗忘机制 → P2-4 Web UI/CLI（CLI 优先）**；Qdrant 已砍掉（违反零常驻约束）。不跳步；各功能 spec 定稿后仍走节点门禁制。后续新需求（P2）先修订设计文档再立项，不在本节点计划上续写。
 
 ## 7. 环境备忘
 

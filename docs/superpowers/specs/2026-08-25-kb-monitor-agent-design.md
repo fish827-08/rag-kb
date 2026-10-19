@@ -16,7 +16,7 @@
 ### 2.1 目标
 
 在监控单轮后，检测协作快照异常；异常非空时由本地 LLM 组织 ≤100 字中文调度摘要，
-写入 `comm:dispatch` 新频道（`source=kb-dispatch`），供协调者 / worker 关注。
+写入 `comm:dispatch` 新频道（`source=kb-dispatch`），供外部消费方关注。
 无异常不写（避免刷屏）。
 
 ### 2.2 异常检测四规则（TASK-0048，`_detect_anomalies` 纯函数）
@@ -44,7 +44,7 @@
 ### 2.6 降级策略（TASK-0059）
 
 - 主摘要 LLM 失败（不可用/返回空/抛异常）→ 降级为确定性纯文本拼接
-  （`_fallback_summary_text`），从快照解析任务板各状态卡数，仍写
+  （`_fallback_summary_text`），从快照解析任务卡各状态数量，仍写
   comm:monitor，记 WARNING；
 - dispatch LLM 失败 → 降级为异常列表模板渲染（`_fallback_dispatch_text`），
   仍写 comm:dispatch，记 WARNING；

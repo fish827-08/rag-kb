@@ -147,7 +147,7 @@ POST   /api/v1/ask                 RAG 问答        GET  /api/v1/audit         
 GET    /healthz  /health           健康检查        POST /api/v1/monitor/summary  监控按需摘要
 GET    /api/v1/config              配置查看        GET  /api/v1/governance/stats  治理统计
 GET    /api/v1/governance/config   治理配置        GET  /api/v1/logs[/events]     日志查询/SSE
-GET    /                           看板静态页
+GET    /                           服务导航页（API 状态/文档链接）
 ```
 
 ### 3.2 service.py（798 行）★★ — 业务编排中枢（全项目最该读的文件）
@@ -278,7 +278,7 @@ GET    /                           看板静态页
 
 1. 改哪个模块，先读对应 spec（设计文档）；冲突时先改文档再改码。
 2. TDD：先写/跑验收测试（红）→ 实现 → 绿 → 相关测试回归。
-3. 小改动只跑相关测试；核心架构变更（service/retriever/storage）跑全量 `pytest tests/`；orchestra/ 永不测。
+3. 小改动只跑相关测试；核心架构变更（service/retriever/storage）跑全量 `pytest tests/`。
 4. 提交信息中文 `节点NN: 简述` 或 `文档: 简述`；**敏感信息（key、硬件细节、用户名、本地路径）绝不入库**。
 5. 依赖只加设计文档第 3 节列出的；禁 LangChain（langchain-text-splitters 除外）；禁 7B+ 本地模型；禁新常驻服务。
 

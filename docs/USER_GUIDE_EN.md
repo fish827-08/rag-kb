@@ -9,18 +9,15 @@
 1. [Overview](#1-overview)
 2. [kb service: install & start](#2-kb-service-install--start)
 3. [kb service: daily use](#3-kb-service-daily-use)
-4. [orchestra: multi-Agent collaboration](#4-orchestra-multi-agent-collaboration)
-5. [Configuration reference](#5-configuration-reference)
+4. [Configuration reference](#4-configuration-reference)
+5. [Maintenance commands](#5-maintenance-commands)
 6. [FAQ & troubleshooting](#6-faq--troubleshooting)
 
 ---
 
 ## 1. Overview
 
-Two subsystems in one sentence each:
-
-- **kb**: an "AI memory bank" service running on your machine. Once your AI assistants (TraeWork / Claude Code / Cursor) mount it, they gain cross-session long-term memory — written memories and ingested documents are queryable any time in later conversations.
-- **agent-orchestra**: a "task board" for multiple AI assistants to collaborate. One AI (coordinator) splits tasks, other AIs (workers) execute; handoff via task cards on the kb board. You only give instructions and do acceptance.
+**kb**: an "AI memory bank" service running on your machine. Once your AI assistants (TraeWork / Claude Code / Cursor) mount it, they gain cross-session long-term memory — written memories and ingested documents are queryable any time in later conversations.
 
 **Daily minimum**: keep kb running → mount MCP on AI clients → just chat.
 
@@ -258,110 +255,7 @@ Example shapes:
 > `kb eval` uses an isolated temporary database and explicitly disables
 > dedup/decay/freshness, so results are reproducible regardless of your `.env`.
 
-## 4. orchestra: multi-Agent collaboration (experimental, separate subsystem)
-
-> **Boundary**: orchestra is the author's experimental scaffolding. It is not part
-> of kb's deliverables, is not shipped in the standalone skill package, and is not
-> required to install or use kb. Readers who only need kb can skip this section.
-
-### 4.1 What it solves
-
-Different AI sessions don't know what others are doing. orchestra uses kb as a **shared task board**: task cards are records in kb, all AIs see the same board — coordinator splits, workers claim & execute, write back, coordinator verifies. **Each AI only works when woken; mounting costs zero otherwise.**
-
-### 4.2 Three roles
-
-| Role | Who | What |
-|---|---|---|
-| **You** | human | request, open worker tasks, final acceptance |
-| **Coordinator** | one AI task (e.g. this session) | split requests into cards, assign to workers, verify results, commit code |
-| **Worker** | other AI tasks (any model) | claim → execute → write back → stop, **one card one round** |
-
-### 4.3 Standard flow (five steps)
-
-**Step 1: request to coordinator**
-
-Just say it in the coordinator task, e.g. "add a `list-pending` subcommand to orchestra".
-Coordinator splits cards (each has title/goal/input/constraints/acceptance, five fields) and assigns an assignee.
-
-**Step 2: open a worker task**
-
-Open a new TraeWork task (same project, any model — this is exactly the "any-model-as-worker" thesis),
-paste the coordinator's wake prompt, or run:
-
-```powershell
-venv\Scripts\python.exe orchestra\board.py new-worker worker-1
-```
-
-Send the output wake prompt verbatim to that new task. The worker auto: looks up cards → claims → works → writes back → stops.
-
-**Step 3: watch progress**
-
-In the coordinator task (or any terminal):
-
-```powershell
-venv\Scripts\python.exe orchestra\board.py status          # board, one card per line
-venv\Scripts\python.exe orchestra\board.py show TASK-0001  # a card's detail & result
-venv\Scripts\python.exe orchestra\board.py list-pending    # pending only
-```
-
-**Step 4: multi-card handoff**
-
-Workers follow one-card-one-round discipline: stop after finishing a card. Say "**继续**" (continue) in the worker task to claim the next.
-
-**Step 5: coordinator acceptance**
-
-After all workers finish, say "**核验**" (verify) in the coordinator task. Coordinator independently checks (code diff, full test run, real-service re-verify); pass → verify transition (pending → claimed → done → verified) + unified commit/push; fail → reject and cycle back.
-
-### 4.4 Multiple parallel workers
-
-Supported now:
-
-1. Coordinator assigns by assignee when splitting (worker-1 edits A, worker-2 writes B doc, worker-3 runs tests)
-2. Open N tasks, paste each worker's `new-worker` prompt
-3. Workers claim their own cards in parallel, no interference
-
-**Known limits (MVP, honest)**:
-
-- Wake is manual (no auto-scheduler)
-- No dependency graph — ordering controlled by coordinator when splitting
-- **Parallel cards must not touch the same file** (coordinator avoids at split time)
-- Multi-worker parallelism not yet real-machine tested (single worker verified); try small-scale first
-
-### 4.5 Collaboration discipline (protocol red lines, workers & coordinator share)
-
-- One card one round: one card per wake, stop after completion
-- No polling, no chit-chat: zero cost while mounted, act only when woken
-- Cards have field length caps; write results to a file, put the path in the card
-- Workers don't git commit/push directly — coordinator commits after verification
-- Test discipline: acceptance test first (red) → implement (green) → full regression
-
-### 4.6 Mount-resident mode (B5, new)
-
-Let workers/designers **mount-listen after finishing** (idle 15 min auto-stop, new card auto-continue); sub-coordinators **stay mounted**; parent coordinator **woken on demand**:
-
-```powershell
-# mount (worker/designer default TTL=900 = 15 min; sub-coordinator --ttl 0 resident)
-venv\Scripts\python.exe orchestra\board.py mount worker-1 --role worker --ttl 900
-venv\Scripts\python.exe orchestra\board.py mount designer-1 --role designer --ttl 900
-venv\Scripts\python.exe orchestra\board.py mount subcoordinator --role subcoordinator --ttl 0
-
-# heartbeat / exit / board / lost-contact
-venv\Scripts\python.exe orchestra\board.py heartbeat worker-1
-venv\Scripts\python.exe orchestra\board.py unmount worker-1 --reason idle-timeout
-venv\Scripts\python.exe orchestra\board.py mount-status            # one agent per line
-venv\Scripts\python.exe orchestra\board.py mount-check --threshold 300
-
-# called by worker/designer inside the mount loop
-venv\Scripts\python.exe orchestra\board.py mount-claim worker-1 --topic kb-A3
-venv\Scripts\python.exe orchestra\board.py mount-idle worker-1
-```
-
-- **Mount loop**: after mounting, workers/designers self-loop — check cards → claim & work & write back → `mount-idle`; no card → `heartbeat`+sleep 60s; accumulated idle ≥ TTL → `unmount` stop.
-- **Consecutive-related ≤5**: done to the 5th consecutive card of the same "topic", write summary then `unmount` to reset context (prevent bloat).
-- Parent coordinator doesn't mount: when woken by the user, creates a "split-card" (assignee=subcoordinator), see `orchestra/parent-coordinator-prompt.md`.
-- Full protocol: `orchestra/protocol.md` §15 and `orchestra/docs/superpowers/specs/2026-08-28-orchestra-mount-design.md`.
-
-## 5. Configuration reference
+## 4. Configuration reference
 
 Copy `.env.example` to `.env` and fill as needed (`.env` isn't committed; keys stay local):
 
@@ -372,10 +266,10 @@ Copy `.env.example` to `.env` and fill as needed (`.env` isn't committed; keys s
 | Cloud Q&A fallback | `.env` → `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` (**any OpenAI-compatible provider**, three generic keys, not tied to DeepSeek); `KB_LLM_MODE=auto` (local-first, cloud fallback) |
 | Privacy isolation | `KB_SENSITIVE_NAMESPACES=私人笔记` (comma-separated); matched → local-only answers, no egress |
 | Performance tuning | `KB_DEVICE=cuda/cpu`; `KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` |
-| LAN/multi-agent auth | `KB_API_KEY=<≥32 random chars>` enables Bearer/X-API-Key auth (see 5.1) |
+| LAN/multi-agent auth | `KB_API_KEY=<≥32 random chars>` enables Bearer/X-API-Key auth (see 4.1) |
 | Memory governance | `KB_DEDUP_ENABLED` / `KB_DECAY_ENABLED` / `KB_FRESHNESS_ENABLED`, all default off (see 3.5) |
-| Multi-client/project isolation | isolation key = `(client, project)`: `memory` visible only to this client+project; doc/web shared knowledge visible to all; agents do NOT self-report identity (see 5.3) |
-| Access audit | `KB_ACCESS_AUDIT_ENABLED` (default on): every access writes a JSON line to `logs/agent-audit/<client>__<project>.log`; query via REST `GET /api/v1/audit?client=<name>[&project=<name>]` or `kb audit --client <name>` (see 5.3) |
+| Fully shared memory | v3 (2026-08-31): all memories/knowledge are shared; (client, project) are audit-only tags, never read/write isolation (see 4.3) |
+| Access audit | `KB_ACCESS_AUDIT_ENABLED` (default on): every access writes a JSON line to `logs/agent-audit/<client>__<project>.log`; query via REST `GET /api/v1/audit?client=<name>[&project=<name>]` or `kb audit --client <name>` (see 4.3) |
 
 Full key list: [`.env.example`](../.env.example).
 
@@ -386,7 +280,7 @@ Full key list: [`.env.example`](../.env.example).
 - **Fallback**: the plain-text prompt in `docs/AGENT_PROMPT.md` — paste it into any agent to connect;
   no skill mechanism required. Both sources stay in sync.
 
-### 5.3 Fully shared memory & access audit (v3: client + project as audit-only tags, 2026-08-31)
+### 4.1 Fully shared memory & access audit (v3: client + project as audit-only tags, 2026-08-31)
 
 **Memory is fully shared** (local single-user positioning — all agents/tasks read the same memory):
 
@@ -417,7 +311,7 @@ Full key list: [`.env.example`](../.env.example).
   kb audit --client TraeWork --project kb --action write --days 7 --limit 100
   ```
 
-### 5.1 API Key auth (N19)
+### 4.2 API Key auth (N19)
 
 Local loopback is zero-friction by default (`KB_API_KEY` empty = no auth). When exposing kb to LAN, phone MCP mount, or parallel multi-agent access, enable auth:
 
@@ -426,19 +320,17 @@ Local loopback is zero-friction by default (`KB_API_KEY` empty = no auth). When 
 3. All client requests carry the key (either):
    - `Authorization: Bearer <key>` (recommended, MCP client headers config)
    - `X-API-Key: <key>` (script/curl convenience)
-4. Only whitelist: `GET /api/v1/healthz` (liveness probe; coordinator/monitor can probe without key)
+4. Only whitelist: `GET /api/v1/healthz` (liveness probe; no key needed)
 5. Missing or wrong key → `401 {"error":"UNAUTHORIZED","message":"missing or invalid api key"}` (undifferentiated, anti-probing)
 
 Empty key leaves all existing behavior unchanged (v1.x compatible); key comparison uses `hmac.compare_digest` (timing-attack safe).
 
-### 5.2 Client adaptation (N20: how each client carries the key)
+### 4.3 Client adaptation (N20: how each client carries the key)
 
 | Client | Config |
 |---|---|
-| **orchestra CLI** (`orchestra/board.py` etc.) | zero-change auto-adopt: reads `KB_API_KEY` from env (then repo-root `.env`), non-empty → auto `X-API-Key` header, empty → no auth; on 401 suggests "check KB_API_KEY" |
 | **MCP clients** (Claude Code / Cursor / TraeWork) | add `headers` in connection config (real key NOT written into committed `.mcp.json`; keep it local / use env vars or local override): |
 | **REST scripts / curl** | header `X-API-Key: <key>` or `Authorization: Bearer <key>` (either; Bearer preferred) |
-| **Dashboard `/dashboard`** | after key enabled, frontend needs the key to load data (fill manually) |
 
 MCP config with key (local personal use, **don't commit**):
 
@@ -456,11 +348,11 @@ MCP config with key (local personal use, **don't commit**):
 
 Repo `.mcp.json` stays keyless (JSON has no comments; doc lives here); health probe `GET /api/v1/healthz` never needs a key.
 
-## 6. Maintenance commands (forget / dedup)
+## 5. Maintenance commands (forget / dedup)
 
 N23a adds two maintenance CLIs (`python -m kb forget` / `dedup`), default **dry-run safe-first** (only lists candidates, never mutates), touching the storage layer directly (not via REST/service).
 
-### 6.1 forget — scan stale memory
+### 5.1 forget — scan stale memory
 
 ```bash
 # preview records not accessed in >90 days (dry-run default, no delete)
@@ -475,7 +367,7 @@ python -m kb forget --stale --days 90 --no-dry-run
 - `--dry-run/--no-dry-run`: default dry-run (candidate table: id/content-summary/last-accessed/days); `--no-dry-run` requires typing `yes` to confirm before deleting
 - Day calc: empty `last_accessed` falls back to `created_at` (never touched = creation time)
 
-### 6.2 dedup — scan duplicate pairs
+### 5.2 dedup — scan duplicate pairs
 
 ```bash
 # preview pairs with similarity > 0.85 (dry-run default, no change)
@@ -489,7 +381,7 @@ python -m kb dedup --threshold 0.90 --dry-run
 - `--dry-run/--no-dry-run`: default dry-run (candidate table: record-A/record-B/sim/content-summary); `--no-dry-run` auto-merge not implemented yet (N23c smart consolidation later), prompts manual review
 - embeds each record then pairwise cosine compare; cost grows O(n²) with record count
 
-## 7. FAQ & troubleshooting
+## 6. FAQ & troubleshooting
 
 **Q: healthz unreachable?**
 Service isn't up. Check: is the terminal still open, is the port occupied (`netstat -ano | findstr 8000`), or use another port `KB_API_PORT=8001 python -m kb serve`.
@@ -511,9 +403,6 @@ All in `kb_data/` (ChromaDB + runtime state). Backup = copy that directory; rest
 
 **Q: Want to wipe the memory bank and start over?**
 Stop the service, delete `kb_data/chroma`, restart (irreversible — back up first).
-
-**Q: Worker claimed a card but stuck/claimed forever?**
-Say "继续" (continue) in the worker task to wake it; if the task is truly dead, have the coordinator handle the card return on the board.
 
 ---
 

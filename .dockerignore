@@ -18,8 +18,6 @@ build/
 *.egg-info/
 .pytest_cache/
 .idea/
-# 协作系统（orchestra）不进容器：kb 服务无依赖，排除减体积
-orchestra/
 # 测试 / 文档 / 评估报告
 tests/
 docs/

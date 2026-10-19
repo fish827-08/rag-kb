@@ -31,7 +31,7 @@ class _NoRequestFilter(logging.Filter):
     """控制台降噪过滤器：拦截 event=request.* 的访问日志。
 
     文件 handler 不挂此过滤器（全量审计保留）；仅控制台静默，
-    避免看板轮询（每 10 秒 3 个请求）刷屏。匹配 N17 中间件的
+    避免高频轮询（每 10 秒 3 个请求）刷屏。匹配 N17 中间件的
     消息格式 "request.start method=..." / "request.end method=..."。
     """
 
@@ -63,7 +63,7 @@ def setup_logging(settings=None) -> logging.Logger:
     console = logging.StreamHandler()  # 默认 stderr
     console.setFormatter(logging.Formatter(_FORMAT, datefmt=_CONSOLE_DATEFMT))
     # 控制台降噪（用户反馈）：request.* 访问日志全量进文件（审计），
-    # 控制台只保留错误与关键生命周期事件，看板轮询不再刷屏
+    # 控制台只保留错误与关键生命周期事件，高频轮询不再刷屏
     console.addFilter(_NoRequestFilter())
     root.addHandler(console)
 

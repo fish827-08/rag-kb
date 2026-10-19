@@ -49,12 +49,11 @@ def test_skill自包含安装启动配置验证排障():
         assert marker in text, f"SKILL.md 缺少 {marker!r}"
 
 
-def test_skill包不依赖orchestra且无密钥():
+def test_skill包自包含且无密钥():
     for path in SKILL_DIR.iterdir():
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        assert "orchestra" not in text
         assert "_archive" not in text
         assert "e2e-user-test" not in text
 

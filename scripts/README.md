@@ -114,7 +114,7 @@ python scripts/build_skill_package.py --out-dir tmp   # 指定输出目录
 ```
 
 - zip **根目录**直接包含 `SKILL.md`、`README.md`、`mcp.json`、`env.example`、`LICENSE`；
-- 只包含 kb 接入所需内容，**不含 orchestra、测试、运行数据、任何密钥**；
+- 只包含 kb 接入所需内容，**不含测试、运行数据、任何密钥**；
 - 构建前自动校验：front matter 是否标准、安装/启动/配置/验证/排障是否齐备、
   JSON 模板是否可解析、env 模板是否为空值、是否混入真实 API Key。
 

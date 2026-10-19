@@ -118,4 +118,4 @@ project: str = ""           # 项目/任务归属（仅审计归类与元数据�
 | V3-1 | 代码：retriever/service/mcp/api/cli 移除隔离校验（全共享） | 相关测试（本 spec 1-4） |
 | V3-2 | 测试：test_agent_isolation / test_improvements_isolation_recall 改写为共享语义 | 相关测试全绿 |
 | V3-3 | 文档同步：spec / AGENTS.md / README / USER_GUIDE / PROJECT | 人工确认 |
-| V3-4 | **核心架构变更** → 全量测试（kb 套件；orchestra B 线冻结不跑） | 全量绿 + 人工确认 |
+| V3-4 | **核心架构变更** → 全量测试（kb 套件） | 全量绿 + 人工确认 |

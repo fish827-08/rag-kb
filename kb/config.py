@@ -43,11 +43,11 @@ class Settings(BaseSettings):
     log_max_bytes: int = 1048576                # 单文件 1MB，超限轮转
     log_backup_count: int = 5                   # 轮转保留备份数（合计 ≤6MB）
     # ---- 本地监控 Agent（0015 设计书，N18；TASK-0021 去常驻改按需）----
-    monitor_enabled: bool = False               # 默认不启常驻线程（去常驻：按需端点/看板按钮触发）
+    monitor_enabled: bool = False               # 默认不启常驻线程（去常驻：按需端点触发）
     monitor_interval: int = 10                  # 轮询间隔（分钟），≥1，非法回退默认（常驻模式用）
     monitor_startup_run: bool = True            # 启动时立即跑一轮（便于验证；常驻模式用）
     monitor_max_tokens: int = 300               # 摘要输出上限（护栏：≤300，硬约束）
-    monitor_autotimer: int = 0                  # KB_MONITOR_AUTOTIMER：看板前端自动轮询间隔（分钟），0=关
+    monitor_autotimer: int = 0                  # KB_MONITOR_AUTOTIMER：外部轮询间隔（分钟），0=关
     dispatch_enabled: bool = True                # KB_DISPATCH_ENABLED：监控单轮后异常调度（comm:dispatch），默认开（TASK-0049）
     monitor_llm: str = "off"                     # KB_MONITOR_LLM：监控摘要模式 off=全程纯文本不调LLM(默认零成本/不抢GPU) / auto=LLM可用摘要化不可用降级(TASK-0065)
     # ---- 记忆治理 A3（N21b 衰减评分公式模块，TASK-0068；N22a 语义去重服务层，TASK-0069）----
@@ -77,8 +77,6 @@ class Settings(BaseSettings):
     rerank_top_n: int = 20                        # KB_RERANK_TOP_N：参与精排的融合候选数上限
     # ---- A3.5 检索质量（N25 稀疏向量，2026-08-28 spec）----
     sparse_enabled: bool = False                  # KB_SPARSE_ENABLED：稀疏第三路开关，默认关（零行为变化）
-    dashboard_autoopen: bool = False            # serve 启动自动打开看板（默认关：用户主动访问，防骚扰）
-    dashboard_url: str = "http://127.0.0.1:8000/dashboard/"  # 看板地址（可覆盖）
 
     @property
     def chroma_dir(self) -> Path:
