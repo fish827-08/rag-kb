@@ -43,8 +43,10 @@ pip install -r requirements.txt
 python -m kb serve
 ```
 
-- 默认监听 `http://127.0.0.1:8000`，启动时会加载本地嵌入模型（首次约 10 秒）
-- 验证：浏览器或另开终端访问 `http://127.0.0.1:8000/api/v1/healthz`，返回 `{"status": "ok", ...}` 即正常
+- 默认监听 `http://127.0.0.1:8000`；启动本身很轻，嵌入模型在**首次写入/检索时**才加载
+- 验证：浏览器或另开终端访问 `http://127.0.0.1:8000/api/v1/healthz`，返回
+  `{"status": "ok", "embedder": {"state": "unloaded|ok", ...}, ...}` 即正常；
+  `embedder.state=error` 表示模型加载失败，写/查会返回 503 `EMBED_MODEL_UNAVAILABLE`
 - **保持这个终端窗口开着**（或让它跑在后台）；关掉窗口 = 服务停止
 
 ### 2.3 停止与重启
@@ -146,9 +148,11 @@ curl "http://127.0.0.1:8000/api/v1/logs/events"
 |---|---|
 | 对 AI 说 | "把 D:\docs\xxx.pdf 入库" / "把这个网页存进知识库：<URL>" |
 | REST | `POST /api/v1/documents`（multipart 文件或 JSON 路径）；`POST /api/v1/ingest/web`（URL） |
+| 删除 | 本地文件：`DELETE /api/v1/documents/{source}`；网页：`DELETE /api/v1/documents?source=<URL 编码>`（URL 含斜杠，必须用查询参数） |
 | 目录监听 | 设 `KB_WATCH_DIR`（默认 `data`）后，目录内新增文件自动入库、删除自动清理 |
 
 支持格式：txt / md / pdf / docx。
+同一 source 重复入库会**先替换旧 chunk 再写入**（返回 `replaced` 数量），不会产生重复检索结果。
 
 ### 3.5 记忆治理（A3：语义去重 / 衰减 / 新鲜度）
 
@@ -239,9 +243,15 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/governance/config
 - `/governance/stats`：`{"total_count": 279, "avg_access_count": 1.25, "stale_90d_count": 3}`
 - `/governance/config`：`{"decay_enabled": false, "decay_lambda": 0.02, "decay_gamma": 0.3, "freshness_enabled": false, "freshness_beta": 0.05, "freshness_alpha": 0.3}`
 
-> CLI 维护命令（批量清理等，N23a）开发中，后续版本提供。
+> CLI 维护命令已可用：`python -m kb forget --stale`、`python -m kb dedup --dry-run`、
+> `python -m kb audit`、`python -m kb eval`。`kb eval` 使用独立临时库并显式关闭
+> dedup/decay/freshness，不受 `.env` 治理配置影响，结果可复现。
 
-## 4. orchestra：多 Agent 协作
+## 4. orchestra：多 Agent 协作（实验，独立子系统）
+
+> **边界说明**：orchestra 是作者自用的实验脚手架，不属于 kb 产品交付物，
+> 不随独立 skill 包发布，也不是使用 kb 的前置依赖。本节仅对想尝试多 Agent
+> 协作的用户保留；只使用 kb 的读者可跳过。
 
 ### 4.1 它解决什么问题
 

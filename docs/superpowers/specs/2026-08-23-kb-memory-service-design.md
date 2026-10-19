@@ -52,13 +52,46 @@
 | MCP | 官方 `mcp` Python SDK（mcp 2.0.0 的 MCPServer，挂载进同一 ASGI 应用；SDK 2.0 已移除 1.x 的 FastMCP 类，能力等价） | MIT |
 | 向量库 | ChromaDB（嵌入式，进程内直连） | Apache 2.0 |
 | 关键词检索 | rank_bm25 + jieba | Apache 2.0 / MIT |
-| Embedding | sentence-transformers 直载 BGE-M3（默认），可配置小模型（如 bge-small-zh） | MIT |
+| Embedding | sentence-transformers 直载嵌入模型；**默认 `BAAI/bge-small-zh-v1.5`（轻量，见 §3.1）**，可配置切换 `BAAI/bge-m3` 等 | MIT |
 | LLM 客户端 | openai SDK（OpenAI 兼容：Ollama / DeepSeek） | Apache 2.0 |
 | 文档解析 | pypdf、python-docx、markitdown（Office 全格式兜底） | MIT |
-| 网页抓取 | httpx + trafilatura | Apache 2.0 |
+| 网页抓取 | httpx + trafilatura（**需补 `lxml_html_clean`**，见 §3.2） | Apache 2.0 |
 | 目录监听 | watchdog | Apache 2.0 |
 | 配置 | pydantic-settings | MIT |
 | CLI | typer + rich | MIT |
+
+### 3.1 默认嵌入模型：轻量优先（2026-10-19 修订）
+
+**变更**：默认嵌入模型由 `BAAI/bge-m3` 改为 `BAAI/bge-small-zh-v1.5`（`KB_EMBED_MODEL` 可覆盖）。
+
+**理由**（基于 2026-10-19 全新用户端到端实测）：
+
+| 项 | bge-m3（原默认） | bge-small-zh-v1.5（新默认） |
+|---|---|---|
+| 模型体积 | 4,353 MB | **92 MB**（1/47） |
+| 加载后常驻内存 | 约 2 GB | 约 100 MB 量级 |
+| 平均检索延迟 | 105.6 ms | **28.6 ms**（快 3.7 倍） |
+| Recall@1 / MRR（50 题评测） | 0.740 / 0.841 | **0.760 / 0.847**（略优） |
+| Recall@5（50 题评测） | 0.980 | 0.960（略降） |
+
+原默认让"只想试用"的新用户付出约 2.8 GB / 25 分钟的首次成本（pip ~600 MB + 模型 2.2 GB），收益与成本严重不匹配，是新用户流失的主因。
+
+**边界与取舍**：上述评测为 50 题小样本，±0.02 差异处于噪声范围，不能断言轻量模型全面更优。bge-m3 为 1024 维、bge-small-zh 为 512 维，**长文档、跨语言、语义更微妙的内容上 bge-m3 预期仍更强**。因此保留 `KB_EMBED_MODEL` 显式切换能力，并在 README 给出"质量 vs 资源"对照表，供有需要（且有硬件）的用户主动换回。
+
+**验收标准**：全新安装首次成本降到约 250 MB 量级；`KB_EMBED_MODEL=BAAI/bge-m3` 时原有行为与质量不变；既有测试全绿。
+
+### 3.2 依赖修复：`lxml_html_clean`（2026-10-19 修订）
+
+**问题**：全新安装后 `POST /api/v1/ingest/web` 与 MCP `add_webpage` 100% 返回 500。根因为 `trafilatura` → `justext` 导入链失败：
+
+```
+ImportError: lxml.html.clean module is now a separate project lxml_html_clean.
+Install lxml[html-clean] or lxml_html_clean directly.
+```
+
+新版 `lxml` 将 `lxml.html.clean` 拆分为独立包，而 `requirements.txt` 未带上。
+
+**修复**：`requirements.txt` 增加 `lxml_html_clean`。同时为关键依赖补版本上界，避免无上界导致的跨大版本漂移（实测一次全新安装拉入 `transformers 5.20.1` / `mcp 2.3.0` / `torch 2.14.1` 等）。
 
 ## 4. 架构
 
@@ -77,7 +110,7 @@
 └──────────────────────────────────────┘
    │本地          │本地         ┆可选外部
    ▼              ▼             ▼
- ChromaDB      BGE-M3      Ollama / 云 LLM
+ ChromaDB      嵌入模型      Ollama / 云 LLM
 ```
 
 无 LLM 时：`/ask`、`ask_kb` 返回 503；其余功能完整。
@@ -92,7 +125,7 @@ kb/
 ├── models.py       # Record 数据模型
 ├── service.py      # KBService 核心编排
 ├── storage.py      # ChromaDB 封装（VectorStore 抽象接口）
-├── embedder.py     # BGE-M3 加载 + 设备检测
+├── embedder.py     # 嵌入模型加载（懒加载）+ 设备检测
 ├── bm25.py         # BM25 索引 + jieba 分词
 ├── retriever.py    # 混合检索 + RRF 融合
 ├── ingest.py       # 文档 / 网页解析入库
@@ -136,13 +169,14 @@ kb/
 | `/memories/{id}` | GET | 读取单条 |
 | `/memories/{id}` | PATCH | 更新 `content` / `tags`（content 变更时重新嵌入） |
 | `/memories/{id}` | DELETE | 删除 |
-| `/search` | POST | `{query, top_k=5, mode=hybrid\|vector\|keyword, type?, tag?}` → 结果列表（含 score） |
-| `/documents` | POST | 上传文件（multipart）或传本地路径导入 → `{source, chunks}` |
+| `/search` | POST | `{query, top_k=5, mode=hybrid\|vector\|keyword, type?, tag?}` → 结果列表（含 score）；**query 为空/纯空白 → 422**（不得匹配全部记录） |
+| `/documents` | POST | 上传文件（multipart）或传本地路径导入 → `{source, chunks, replaced}`；**同一 source 重复入库先替换旧记录**（`replaced` 为被替换数） |
 | `/documents` | GET | 文档列表（按 source 聚合：chunk 数、导入时间、总字符数） |
-| `/documents/{source}` | DELETE | 删除整份文档的所有 chunk |
-| `/ingest/web` | POST | `{url}` 抓取正文入库 → `{source, chunks}` |
-| `/ask` | POST | `{question}` RAG 问答；LLM 未就绪时返回 503 与配置指引 |
-| `/healthz` | GET | `{status, llm, device, records}` |
+| `/documents/{source}` | DELETE | 删除整份文档的所有 chunk（适用于文件名等不含斜杠的 source） |
+| `/documents?source=<urlencoded>` | DELETE | 按查询参数删除整份文档（**URL 等含斜杠的 source 必须走此形式**） |
+| `/ingest/web` | POST | `{url}` 抓取正文入库 → `{source, chunks, replaced}`（同一 URL 重复入库替换） |
+| `/ask` | POST | `{question}` RAG 问答；LLM 未就绪时返回 503 与配置指引；question 为空/纯空白 → 422 |
+| `/healthz` | GET | `{status, llm, device, records, embedder}`；`embedder` 为 `{state: unloaded\|loading\|ok\|error, model, error}`，不触发模型加载 |
 
 ### 5.2 MCP tools（mcp.py）
 
@@ -267,20 +301,36 @@ RAG 护栏配置（关思考 / temp 0.2 / num_ctx 4096 / 强约束 prompt）下�
 ## 9. 摄取管道（ingest.py + watcher.py）
 
 - 文档：`.pdf` → pypdf；`.docx` → python-docx；`.md` / `.txt` 直接读取；`.xlsx` / `.pptx` 等 → markitdown 兜底。不支持的扩展名返回 400。
-- 网页：httpx 拉取（超时 15s，UA 伪装常规浏览器）→ trafilatura 提取正文 → 入库为 `web_chunk`，`source` 为 URL。抓取/解析失败返回 400 及原因。
+- 网页：httpx 拉取（超时 15s，UA 伪装常规浏览器）→ trafilatura 提取正文 → 入库为 `web_chunk`，`source` 为 URL。抓取/解析失败返回 400 及原因。同一 URL 重复入库按 §10.1 替换旧 chunk，不产生重复记录。
 - 目录监听：watchdog 后台线程监听配置目录（默认 `data/`）；创建/修改事件去抖 2s 后入库；文件删除时同步删除对应 `source` 的记录。
 
 ## 10. 错误处理
 
 - 统一错误 JSON：`{"error": "<CODE>", "message": "<人话描述>"}`。
 - 状态码语义：400 参数/文件格式错误；404 记录不存在；422 校验失败（FastAPI 默认，格式化）；503 LLM 未就绪。
+- **嵌入模型不可用**（下载/加载/推理失败）→ 503 结构化错误
+  `{"error":"EMBED_MODEL_UNAVAILABLE","message","model","hint"}`，不再裸 500；
+  MCP 通道返回同结构 dict。`healthz` 同时暴露 `embedder.state`，避免"服务 ok 但一写就 500"。
 - 全局异常处理器兜底未知异常为 500，不泄露堆栈给客户端，堆栈进日志。
+
+### 10.1 用户视角健壮性补充（2026-10-19，第二/三轮测试报告闭环）
+
+- **同源替换**：文档/网页重复入库先算新向量、再删旧记录、后写新记录；嵌入失败时
+  旧数据保持不变（不得先删后算）。`replaced` 返回旧记录数。
+- **空查询**：`/search` 与 `/ask` 的空白输入在模型校验层直接 422，不得走"匹配全部"。
+- **文档删除**：`DELETE /api/v1/documents?source=<urlencoded>`；URL 等含斜杠的 source
+  不能走路径参数，必须走查询参数（路径参数版本保留给普通文件名）。
+- **评测隔离**：`kb eval` 使用独立临时库，并显式关闭 `dedup/decay/freshness/
+  consolidation/access_audit`，不受用户 `.env` 治理配置影响，保证结果可复现。
+- **Windows 非交互启动**：`resolve_device()` 仅在 `interactive=True` **且 stdin 为
+  TTY** 时询问 GPU；`pythonw`/一键脚本/CI 静默回退 `cpu`（避免 EOFError 退出）。
+  一键启停脚本解析 `.env` 的 `KB_API_PORT`，健康探测与停止使用同一端口。
 
 ## 11. 测试策略
 
 | 层 | 工具 | 覆盖 |
 |---|---|---|
-| 单元 | pytest | RRF 融合排序、jieba 分词、Record 序列化/反序列化、配置加载 |
+| 单元 | pytest | 归一化加权融合排序（N32/N33；RRF 保留为可选）、jieba 分词、Record 序列化/反序列化、配置加载 |
 | 集成 | pytest + 临时目录 | Chroma CRUD 全流程、混合检索命中（关键词/语义各准备用例）、文档删除级联 |
 | API | httpx TestClient | 全端点 happy path + 主要错误路径 |
 | MCP | mcp 内存客户端 | 每个 tool 调用与返回结构 |
@@ -355,3 +405,5 @@ Embedding 相关测试用真实小模型（如 `bge-small-zh-v1.5`，约 100MB�
 | P2 追加（A4 易用性，N28） | `kb stats`（类型分布/访问热度/陈旧分布）+ `kb ask`（终端 RAG 问答，LLM 缺席降级输出检索命中）；**Web UI 砍掉**（评估报告定论） | spec 见 `2026-08-28-a4-cli-design.md` | ✅ 2026-08-28 完成（分支 `feature/a-line-remaining`） |
 
 每个里程碑附带对应测试。全量回归 584 项全绿（2026-08-28：tests/ 339 + orchestra/tests/ 245，tests/ 全目录）。
+当前基线（2026-10-19）：`tests/` **417 项全绿**（orchestra 冻结不计）；用户视角 E2E 两轮
+28/28 + 34/34，详见 `e2e-user-test/测试报告-第三轮.md`。

@@ -4,7 +4,7 @@
 > Tree-shaped, from root to leaves.
 > AI assistants: read AGENTS.md + PROJECT.md (implementation details); this file is the human-facing bus view.
 >
-> Last updated: 2026-08-28 ｜ Bus version: v3 (strategic shift: B-line frozen to maintenance, A-line is the only development mainline)
+> Last updated: 2026-10-19 ｜ Bus version: v3.1 (B-line frozen to maintenance, A-line is the only development mainline; v2.0.0 delivery hardening shipped)
 
 ## 0. Vision (one sentence)
 
@@ -35,6 +35,7 @@ rag-kb production-grade local multi-Agent system
 │   │   ├── ✅ GitHub mirror migration (github.com/fish827-08/rag-kb, 443-port SSH, 2026-08-27)
 │   │   ├── ✅ English README (README_EN.md, bilingual cross-links, 2026-08-27)
 │   │   ├── ✅ Sensitive-info governance (git filter-repo history rewrite + pre-push hook + expanded gitignore, 2026-08-27)
+│   │   ├── ✅ Agensi standalone skill package (skills/kb-memory + scripts/build_skill_package.py, SKILL.md at zip root, 2026-10-19)
 │   │   └── 🔲 MCP official Registry / awesome-mcp-servers submission (awaiting user)
 │   │
 │   ├── A3 Memory governance (forget/decay/dedup) N21-N23 … ✅ delivered (2026-08-28, TASK-0066~0076)
@@ -48,8 +49,14 @@ rag-kb production-grade local multi-Agent system
 │   │   ├── ✅ minimal eval bench (50-Chinese-QA, kb eval: Recall@1/@5 + MRR + by-difficulty)
 │   │   └── ✅ N+1 query fix (store.get_many batch) + BM25 corpus persistence
 │   │
-│   └── A4 Usability (CLI first)…………………… ✅ delivered (2026-08-28, N28; Web UI cancelled — eval-report conclusion)
-│       └── ✅ kb stats (type distribution/hot records/stale distribution) + kb ask (terminal RAG; LLM-absent degrades to retrieval hits)
+│   ├── A4 Usability (CLI first)…………………… ✅ delivered (2026-08-28, N28; Web UI cancelled — eval-report conclusion)
+│   │   └── ✅ kb stats (type distribution/hot records/stale distribution) + kb ask (terminal RAG; LLM-absent degrades to retrieval hits)
+│   │
+│   └── A5 v2.0.0 delivery hardening ………………………… ✅ shipped (2026-10-19)
+│       ├── ✅ lightweight default model bge-small-zh-v1.5 + lazy embedder/healthz state
+│       ├── ✅ actionable 503 on embedding failure + atomic same-source replacement + URL document deletion + blank-query 422
+│       ├── ✅ Windows one-click start/stop scripts (.env port / no console prompt hang / three-pass stop)
+│       └── ✅ user-perspective E2E 28/28 + 34/34; full regression 417 green (orchestra frozen, not counted)
 │
 ├── 🤖 Main Line B: orchestra collaboration (❄️ maintenance mode — frozen since 2026-08-27, personal scaffold)
 │   │
@@ -109,11 +116,12 @@ rag-kb production-grade local multi-Agent system
 ```
 Main A: A1 ✅ → A2 auth ✅ → A2.5 ecosystem 🚧 (only MCP Registry left, user action)
         → A3 memory governance ✅ → A3.5 retrieval quality ✅ → A4 usability ✅ (CLI shipped, Web UI cancelled)
+        → A5 v2.0.0 delivery hardening ✅ (2026-10-19)
         —— all in-plan A-line nodes done; new needs: update design docs first, then initiate
 Main B: ❄️ maintenance mode (B1/B2/B3/B3+ frozen-shipped, B4 cancelled) — 2026-08-27 strategic shift
 ```
 
-**Current position** (2026-08-28): **all in-plan A-line nodes delivered** — A3 governance (TASK-0066~0076), A3.5 retrieval quality and A4 CLI (branch `feature/a-line-remaining`, N24-N28, full regression 584 green) all landed; A2.5 only MCP Registry submission remains (user action). B-line ❄️ maintenance (B5 mount residency is the exception, on a separate branch). Strategy basis: root-folder 《Evaluation Report》 dual reports + user decision. See coordinator-prompt.md "later plans".
+**Current position** (2026-10-19): **v2.0.0 delivery hardening shipped** — lightweight default model, actionable embedding failures, atomic same-source replacement, Windows one-click scripts and the Agensi standalone skill package all landed; user-perspective E2E 28/28 + 34/34, `tests/` full regression 417 green, manual acceptance pending. A2.5 only MCP Registry submission remains (user action). B-line ❄️ maintenance, tests frozen. Strategy basis: root-folder 《Evaluation Report》 dual reports + user decision.
 
 ## 3. Priority Principles (why this order)
 

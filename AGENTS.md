@@ -34,6 +34,8 @@
 | `orchestra/docs/superpowers/plans/2026-08-24-orchestra-v2-iteration.md` | ✅ 有效 | orchestra v2 迭代计划（总线 B1 P0 载体；V2-0 修复卡保留，其余节点按总线 B1.1-B1.7 编号演进） |
 | `README.md` | ✅ 有效 | 项目说明（N16 按新定位重写：快速开始 / MCP 挂载 / 端点速查） |
 | `docs/AGENT_PROMPT.md` / `AGENT_PROMPT_EN.md` | ✅ 有效 | 通用 Agent 接入提示词（客户端无关；另封装为 `skills/kb-memory/SKILL.md`，安装见 scripts/README.md） |
+| `skills/kb-memory/` + `scripts/build_skill_package.py` | ✅ 有效 | **Agensi 独立 skill 包**（zip 根 `SKILL.md` + MCP/env 模板；不含 orchestra、测试、运行数据或密钥） |
+| `docs/DEV_HANDBOOK.md` | ✅ 有效 | **开发者维护手册**（架构分层、调用链、函数索引、配置与红线；按代码校订，行号锚点为快照） |
 | `docs/superpowers/specs/2026-08-30-memory-scope-refactor-design.md` | ✅ 有效（隔离语义已取代） | **记忆范围重构 v2（2026-08-30 收口）**：隔离键改 client+project（agent_id 降为主键冗余）、MCP 工具去 agent_id、审计文件 client__project、遗忘时钟注入验证；**其 (client, project) 隔离语义已被 v3 取代**（见下行） |
 | `docs/superpowers/specs/2026-08-31-memory-share-refactor-design.md` | ✅ 有效 | **记忆全共享 v3（2026-08-31 定稿）**：去除 (client, project) 隔离——所有记忆/知识全共享，client/project 降级为审计归类与元数据；取代 v2 的隔离语义 |
 | `.mcp.json` | ✅ 有效 | 项目级 MCP 挂载配置（Claude Code 等在本目录启动即连 kb 服务） |
@@ -41,13 +43,13 @@
 
 ## 2. 项目定位（一句话）
 
-本地优先、完全免费的 Agent 记忆与知识服务：Windows 单进程常驻（`python -m kb serve`），REST + MCP 双协议，向 Claude Code / Cursor / 自建 Agent 提供记忆写入、文档/网页入库与混合检索（向量 + BM25/RRF）；无 LLM 时存取与检索完整可用。
+本地优先、完全免费的 Agent 记忆与知识服务：Windows 单进程常驻（`python -m kb serve`），REST + MCP 双协议，向 Claude Code / Cursor / 自建 Agent 提供记忆写入、文档/网页入库与混合检索（向量 + BM25，归一化加权融合；可选稀疏/精排）；无 LLM 时存取与检索完整可用。
 
 ## 3. 硬件与资源约束（务必遵守）
 
 - 用户机器：**6GB 显存 + 16GB 内存，Windows**。
 - 本地 LLM 默认 `qwen3:4b`（2026-08-23 基准定型：实测 3.2GB 显存 @num_ctx 4096、80.2 tok/s、RAG 基准 4 项全过）；低配选项 `qwen3:1.7b`（~1.8GB、101.4 tok/s）。**两模型禁止同时加载**（合计 + embedding 超 6GB），路由/压缩/回答统一用当前配置的单个模型。
-- 显存预算：BGE-M3 fp16（约 1.1GB）+ `qwen3:4b`（3.2GB）= 4.3GB，可共存（已实测验证）；OOM 时 `KB_DEVICE=cpu` 或切 `qwen3:1.7b`。
+- 显存/内存预算：**默认嵌入模型 `BAAI/bge-small-zh-v1.5`（磁盘约 92MB、512 维、常驻内存约百兆级）**，对无显卡/低内存机器友好（设计文档 §3.1，2026-10-19 轻量优先修订）。显式配 `KB_EMBED_MODEL=BAAI/bge-m3` 时：fp16 约 1.1GB 显存、磁盘约 2.2GB，与 `qwen3:4b`（3.2GB）合计 4.3GB 可共存（已实测验证）；OOM 时 `KB_DEVICE=cpu` 或切 `qwen3:1.7b`。**换模型前务必确认库中是否已有数据**（维度不兼容），服务会自动沿用建库模型，详见设计文档 §3.1。
 - `/ask` 智能路由（设计文档第 7 节）：默认 `KB_LLM_MODE=off`（不加载/不调用 LLM，纯本地零成本）；`local|auto|cloud` 为可选项——本地守门（复杂度路由 / 上下文压缩 / 简单问题直答 / 隐私隔离 / 离线兜底），云端为**任意 OpenAI 兼容服务商**（`KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` 通用三键，不绑定 DeepSeek）。护栏参数硬编码默认值：`think:false`、`temperature 0.2`、`num_ctx 4096`、`max_tokens 800`、检索上下文 ≤2000 token 截断、强约束 system prompt。
 - **禁止**建议 7B 及以上本地模型；**禁止**引入需要额外常驻服务的组件（Qdrant、独立向量库服务等）。
 
@@ -103,7 +105,8 @@ P1（N1-N16，kb v1.0.1）已收口；agent-orchestra MVP 已合入 main（`orch
 
 - CUDA 版 PyTorch：本机 Python 3.10 对应 **torch 2.11.0+cu128**（已装好并验证，2026-08-23；cu124 轮子在新版已停发，勿照搬旧教程）。官方源 `download.pytorch.org` 国内仅 ~0.6MB/s，**下载走阿里云镜像** `https://mirrors.aliyun.com/pytorch-wheels/cu128/`（实测 ~6.5MB/s，curl 需带 `-A "Mozilla/5.0"`，否则 403）；轮子文件名含 `+`，经终端传路径会被转义，安装时用 PowerShell 变量构造路径再传给 pip。
 - HuggingFace 模型下载走镜像：`HF_ENDPOINT=https://hf-mirror.com`。
-- BGE-M3（约 2GB）与 Ollama 模型均已预下载缓存；模型缓存与 ChromaDB 数据均落本地目录，**断网可完整运行是验收标准之一**。
+- pip 源（国内新用户安装必看）：用阿里云镜像 `https://mirrors.aliyun.com/pypi/simple/`（实测可用）；清华 `pypi.tuna.tsinghua.edu.cn` 实测返回 403，勿写进文档误导用户。全新安装依赖约 600MB（`torch` 轮子 124MB 为最大单体），另需下载嵌入模型（默认 `bge-small-zh-v1.5` 约 92MB）。
+- 嵌入模型缓存：默认 `bge-small-zh-v1.5`（约 92MB）、可选 `BGE-M3`（约 2GB）与 `bge-reranker-v2-m3`（约 2GB）均已预下载缓存；模型缓存与 ChromaDB 数据均落本地目录，**断网可完整运行是验收标准之一**。
 - Ollama 国内加速：安装包走 GitHub Releases 加速代理（可用前缀按序尝试 `gh-proxy.com` / `ghproxy.net` / `ghfast.top` / `ghproxy.cn`，旧域名 ghproxy.com 已停服，完整可用列表见设计文档第 12 节）；模型用魔搭前缀拉取（如 `ollama pull modelscope.cn/Qwen/Qwen3-4B-GGUF`），拉完 `ollama cp` 改名。实际模型名以 `ollama list` 为准，若与服务配置的模型名不一致，先提醒用户改名而不是改代码。
 - Ollama 模型目录：已迁移至 **`D:\ollama_models`**（用户级环境变量 `OLLAMA_MODELS`，2026-08-23）。注意：**从 AI 沙箱终端启动的 Ollama 会继承文件限制导致数据库读写失败**——若发现 Ollama 异常，提醒用户从开始菜单/托盘正常启动，而不是在沙箱终端里拉起。
 - qwen3 系列默认开启思考模式，RAG 场景必须禁用：本地走 Ollama 原生 `/api/chat` 并传 `"think": false`（openai SDK 不透传该参数，故本地不用 SDK）；云端走 openai SDK。2026-08-23 基准：关思考后 4b 80.2 tok/s、1.7b 101.4 tok/s，均远超 8 tok/s 达标线；无约束交互下的幻觉/会话污染在 RAG 护栏下未复现。

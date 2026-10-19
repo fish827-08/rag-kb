@@ -6,45 +6,56 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
 [![Glama MCP score](https://glama.ai/mcp/servers/fish827-08/rag-kb/badges/score.svg)](https://glama.ai/mcp/servers/fish827-08/rag-kb)
 
-**Local-first, offline-capable Agent memory & knowledge service.** REST + MCP dual-protocol, hybrid retrieval (vector + BM25 normalized-score fusion), document/webpage ingestion and RAG Q\&A — storage & retrieval fully usable without any LLM.
+**Local-first, offline-capable agent memory & knowledge service.** REST + MCP dual
+protocol, hybrid retrieval (vector + BM25 with normalized-score fusion), document
+and webpage ingestion, and RAG Q&A — storage and retrieval remain fully usable
+without any LLM.
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
 **kb** is a local-first, completely free memory & knowledge service for AI agents.
-One resident process (`python -m kb serve`) exposes both **REST** and **MCP** protocols,
-giving Claude Code / Cursor / TraeWork / custom agents persistent memory, document &
-webpage ingestion, and hybrid retrieval (dense vectors + BM25, fused via normalized scores).
+One resident process (`python -m kb serve`) exposes both **REST** and **MCP**,
+giving Claude Code / Cursor / TraeWork / custom agents persistent memory, document
+& webpage ingestion, and hybrid retrieval.
 
 **Fully functional without any LLM** — memory writes, document ingestion, and hybrid
-retrieval never call a language model. Optionally configure local Ollama or a cloud API
-to unlock `/ask` (RAG question answering).
+retrieval never call a language model. Optionally configure local Ollama or a cloud
+API to unlock `/ask` (RAG question answering).
 
-> 中文文档见 [README.md](README.md)（本文件为英文版，内容同步维护）。
+> Chinese documentation: [README.md](README.md) (primary).
+
+This repository contains two subsystems ([ROADMAP](ROADMAP.md)):
+
+| Subsystem | Purpose | Status |
+|---|---|---|
+| **kb** | The shippable product: local memory & knowledge service | v2.0.0 — automated suite green; manual acceptance pending |
+| **agent-orchestra** | Experimental multi-agent collaboration scaffold built on kb (maintenance mode) | Frozen; not part of kb deliverables |
+
+> **Subsystem boundary**: agent-orchestra is the author's own experimental
+> scaffolding. It is **not** required to install, run, or use kb, and it is **not**
+> included in the standalone skill package.
 
 ## Why kb
 
-- **Local-first & offline-capable** — models and data stay on your machine; retrieval
-  works with the network completely cut off
-
-- **Zero extra infrastructure** — a single process; ChromaDB embedded, no external
-  vector DB service, no container required
-
-- **Hybrid retrieval that speaks Chinese** — BGE-M3 dense vectors + BM25 (jieba
-  search-mode tokenization), fused via normalized scores
-
-- **Dual protocol** — REST API for scripts/tools, native MCP server for AI clients,
-  mounted from the same process
-
-- **Multi-agent identity isolation** — every access carries `agent_id` (use your task name, e.g.
-  `TASK-0076`): personal memories (`memory`) are visible only to their owning agent (read/update/delete of
-  another agent's memory is rejected); document/web chunks are shared knowledge visible to all
-
-- **Access audit** — every write/read/update/delete/search/ask logs a JSON line to
-  `logs/agent-audit/<client>__<project>__<task>.log` (one file per agent); humans query it via
-  `GET /api/v1/audit?agent=<task name>` or the CLI `kb audit <task name>`
-
+- **Local-first & offline-capable** — models and data stay on your machine;
+  retrieval works with the network completely cut off.
+- **Zero extra infrastructure** — one process; ChromaDB is embedded, no external
+  vector DB service and no container required.
+- **Hybrid retrieval that speaks Chinese** — dense vectors + BM25 (jieba
+  search-mode tokenization), each min-max normalized and evenly weighted across
+  the active retrieval paths.
+- **Dual protocol** — REST for scripts/tools, native streamable-HTTP MCP for AI
+  clients, served by the same process.
+- **Shared memory by design (v3)** — memories and knowledge written by any client
+  or session are visible to all sessions. `client` / `project` are audit metadata
+  only; they never isolate reads or writes.
+- **Access audit** — every write/read/update/delete/search/ask emits a JSON line
+  under `logs/agent-audit/`; query it through `GET /api/v1/audit?client=<client>`
+  or `kb audit --client <client>`.
 - **Privacy guardrails** — sensitive namespaces are answered strictly locally;
-  `/ask` routes local-first with optional cloud fallback (opt-in)
+  `/ask` routes local-first with optional cloud fallback.
+- **Lightweight default model** — `BAAI/bge-small-zh-v1.5` (~92 MB, 512-dim),
+  with `BAAI/bge-m3` (~2.2 GB, 1024-dim) as an opt-in upgrade.
 
 ## Quick Start (Windows / Linux / macOS)
 
@@ -55,8 +66,9 @@ to unlock `/ask` (RAG question answering).
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 
-# 2. Install dependencies
+# 2. Install dependencies and the kb CLI
 pip install -r requirements.txt
+pip install -e .
 
 # 3. Start the service (listens on http://127.0.0.1:8000)
 python -m kb serve
@@ -69,130 +81,147 @@ python -m kb serve
 python3 -m venv venv
 source venv/bin/activate
 
-# 2. Install dependencies
+# 2. Install dependencies and the kb CLI
 pip install -r requirements.txt
+pip install -e .
 
 # 3. Start the service
 python -m kb serve
 ```
 
-> Important: the `kb` command only lives inside the virtual environment —
-> **activate it in every new terminal** (Windows `.\venv\Scripts\Activate.ps1`,
-> Linux/macOS `source venv/bin/activate`), otherwise you'll get `kb: command not found`.
-> Alternatively, run `python -m kb <subcommand>` without activating.
+> **What the first install downloads** (so it doesn't look stuck):
+> - Python dependencies: about **600 MB** (largest wheel: `torch`, 124 MB).
+> - The embedding model is loaded **on the first write/search** (lazy), not at
+>   startup: default `bge-small-zh-v1.5`, about **92 MB** (or ~2.2 GB if you set
+>   `KB_EMBED_MODEL=BAAI/bge-m3`).
+> - China / slow networks: use a pip mirror such as
+>   `pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/`
+>   (Aliyun tested; Tsinghua may return 403), and set
+>   `HF_ENDPOINT=https://hf-mirror.com` for model downloads.
 >
-> No-venv alternative (Python 3.10+): `pip install --user -r requirements.txt`, then
-> `python -m kb serve`. A virtual environment is still recommended to isolate deps.
+> Important: the `kb` command is installed inside the virtual environment.
+> **Activate it in every new terminal** (Windows `.\venv\Scripts\Activate.ps1`,
+> Linux/macOS `source venv/bin/activate`), otherwise you'll see
+> `kb: command not found`. Use `python -m kb <subcommand>` to bypass activation.
 
 Health check:
 
 ```powershell
-curl http://127.0.0.1:8000/api/v1/healthz
+curl.exe http://127.0.0.1:8000/api/v1/healthz
 ```
 
-> First startup lazily loads the embedding model (default `BAAI/bge-m3`, \~2 GB —
-> download it beforehand). Without an LLM configured, the service still starts
-> normally; `/ask` returns 503 with setup instructions.
+> The model is lazy-loaded: an idle service uses almost no memory. The first write
+> or search loads and caches the model. `/healthz` reports
+> `embedder.state` as `unloaded | loading | ok | error`; if the model cannot be
+> loaded, write/search return **503 `EMBED_MODEL_UNAVAILABLE`** with the model name
+> and a fix hint (never a bare 500).
 >
-> **LLM is OFF by default (`KB_LLM_MODE=off`)**: the service never probes/loads/calls
-> any LLM — zero VRAM, zero cost, fully offline. Memory storage/retrieval work completely
-> without one. Configure a local or cloud LLM below only if you want `/ask` Q\&A.
+> **CPU is enough — no GPU required.** A fresh install gets the CPU build of torch
+> (`device=cpu`). To use a GPU, install a CUDA build of torch and set
+> `KB_DEVICE=cuda` (see [AGENTS.md](AGENTS.md) §7; Chinese).
+>
+> **LLM is OFF by default (`KB_LLM_MODE=off`)**: the service never probes, loads,
+> or calls any LLM — zero VRAM, zero cost, fully offline. Memory storage and
+> retrieval work completely without one.
 
-### Configure an LLM (optional; only needed for `/ask` Q\&A)
+### Choosing an embedding model
+
+The lightweight default keeps the first-run cost low. You can switch at any time:
+
+| Model | Size | Dim | Resident memory after load | Best for |
+|---|---|---|---|---|
+| **`BAAI/bge-small-zh-v1.5` (default)** | ~92 MB | 512 | ~100 MB | Everyday preferences, decisions, notes; fast on CPU |
+| `BAAI/bge-m3` | ~2.2 GB | 1024 | ~2 GB | Long documents, cross-lingual and nuanced semantics |
+
+Two models with different dimensions cannot share one ChromaDB collection. kb
+records the model used to build the database in `kb_data/runtime.json` and
+**keeps using it automatically**, so changing the default never corrupts existing
+data. To deliberately migrate, back up the data and re-ingest after clearing
+`kb_data/chroma`.
+
+### Configure an LLM (optional; only needed for `/ask` Q&A)
 
 `KB_LLM_MODE` defaults to `off` (never loads/calls an LLM). Four modes:
 
-| Mode            | Behavior                                                                          |
-| --------------- | --------------------------------------------------------------------------------- |
-| `off` (default) | Never loads/calls an LLM; memory store & retrieval fully work                     |
-| `local`         | Local Ollama only (fully offline, data never leaves the machine)                  |
-| `auto`          | **Local-first, cloud fallback**: local Ollama if available, else cloud if key set |
-| `cloud`         | Everything via the cloud (local only compresses & isolates privacy)               |
+| Mode | Behavior |
+|---|---|
+| `off` (default) | Never loads/calls an LLM; memory store & retrieval fully work |
+| `local` | Local Ollama only (fully offline, data never leaves the machine) |
+| `auto` | **Local-first, cloud fallback**: local Ollama if available, else cloud if a key is set |
+| `cloud` | Everything via the cloud (local only compresses & isolates privacy) |
 
 **Local LLM (Ollama):**
 
 ```powershell
 # 1. Install and start Ollama (on Windows start it from the Start menu / tray,
 #    not from an AI-sandbox terminal)
-# 2. Pull a model that fits your machine (pick by VRAM/RAM, e.g. qwen3:4b ~3.2GB,
-#    qwen3:1.7b ~1.8GB; in China use ModelScope mirrors + `ollama cp` rename)
+# 2. Pull a model that fits your machine (e.g. qwen3:4b ~3.2GB, qwen3:1.7b ~1.8GB)
 ollama pull <your-model>
-# 3. Configure in .env and restart the service:
-#    KB_LLM_MODE=local            # local only
-#    KB_LLM_MODEL=<your-model>    # exact name per `ollama list`
+# 3. Configure in .env and restart:
+#    KB_LLM_MODE=local
+#    KB_LLM_MODEL=<your-model>    # exact name from `ollama list`
 #    KB_OLLAMA_BASE_URL=http://localhost:11434
 ```
 
 **Cloud LLM (any OpenAI-compatible provider — not tied to DeepSeek):**
-DeepSeek / OpenAI / Qwen / SiliconFlow / Moonshot etc. all work, with three
-generic keys:
 
 ```ini
 # .env
 KB_LLM_MODE=auto                 # local-first, cloud fallback; or cloud for all-cloud
 KB_LLM_API_KEY=sk-xxx            # your provider API key
-KB_LLM_BASE_URL=https://api.deepseek.com   # your provider's OpenAI-compatible endpoint
+KB_LLM_BASE_URL=https://api.deepseek.com   # OpenAI-compatible endpoint
 KB_LLM_CLOUD_MODEL=deepseek-v4-flash       # cloud model name
 ```
 
-Verify: `GET /api/v1/healthz` — the `llm` field shows `local`/`cloud` when an LLM is
-ready, `disabled` when not enabled.
+Verify: `GET /api/v1/healthz` — `llm` shows `local`/`cloud` when ready, `disabled`
+when not enabled.
 
 ### FAQ: embedding model download fails
 
-- **Direct** **`huggingface.co`** **access times out from mainland China.** Set the HF mirror
-  and restart:
+- **Direct `huggingface.co` access times out from mainland China.** Set the HF
+  mirror and restart:
 
   ```bash
-  export HF_ENDPOINT=https://hf-mirror.com   # or append to ~/.bashrc to persist
+  export HF_ENDPOINT=https://hf-mirror.com   # or append to ~/.bashrc
   python -m kb serve
   ```
 
-  The model downloads from the mirror and is cached to `~/.cache/huggingface/hub/`,
-  after which it loads fully offline.
-
-- **Model already cached locally but no internet:** kb is offline-first (local cache
-  first, network only as a fallback) — with a complete cache it runs fully offline.
+  The model downloads from the mirror and is cached to
+  `~/.cache/huggingface/hub/`, after which it loads fully offline.
+- **Model already cached but no internet:** kb is offline-first (local cache first,
+  network only as a fallback) — a complete cache runs fully offline.
 
 ## Onboarding Agents to kb (client-agnostic)
 
-Hand the kb access spec to an AI client (TraeWork / Claude Code / Cursor / a custom agent)
-so it knows how to read/write memory, which identity rules to follow, and how to query the
-audit log. **Two ways — pick one:**
-
-1. **Skill (recommended; auto-triggers) — an OPTIONAL, standalone step**: [`skills/kb-memory/SKILL.md`](skills/kb-memory/SKILL.md)
-   in this repo is a client-agnostic Anthropic open-format skill. Install it to your client's
-   user-level skills directory and any project session of that client will **auto-detect and
-   trigger** it on memory read/write, RAG Q\&A, and audit queries.
-   Installing = copying the `skills/kb-memory` directory over (a script exists, but manual
-   copy works too — no dependencies). Updating (re-copy to overwrite), uninstalling, and
-   post-install usage: see [`scripts/README.md`](scripts/README.md).
-
-   > **Skipping it never affects the kb service**: the skill is only a "prompt wrapper" for
-   > AI clients and is unrelated to installing/starting the service. Skip it and the service
-   > runs normally — you can always connect with option 2's plain-text prompt. Skill install
-   > is **one-time, on-demand, and standalone**: it never auto-runs with `kb serve`, and it
-   > writes nothing outside your client's user-level directories.
+1. **Skill (recommended; auto-triggers) — an optional, standalone step**:
+   [`skills/kb-memory/SKILL.md`](skills/kb-memory/SKILL.md) is a client-agnostic
+   Anthropic open-format skill. Install it into your client's user-level skills
+   directory; any project session of that client will auto-detect and trigger it
+   on memory read/write, RAG Q&A, and audit queries. Installing = copying the
+   `skills/kb-memory` directory (a script exists; manual copy works too). See
+   [`scripts/README.md`](scripts/README.md) for install/update/uninstall steps.
 2. **Plain-text prompt (fallback; works on every client)**: copy
-   [`docs/AGENT_PROMPT.md`](docs/AGENT_PROMPT.md) in full and paste it to the agent —
-   no skill mechanism required.
+   [`docs/AGENT_PROMPT_EN.md`](docs/AGENT_PROMPT_EN.md) and paste it to the agent.
 
-> **Are** **`.trae-cn/skills`** **/** **`.claude/skills`** **/** **`.cursor/skills`** **a universal standard every client
-> follows? — No.** They are each vendor's **own user-level convention**. The `SKILL.md` file itself
-> is a uniform Anthropic open format, but *which directory a client reads and whether it auto-loads*
-> is decided per client, with varying support:
+> Skipping the skill never affects the kb service — it is only a prompt wrapper.
+> There is no universal skills directory; each client has its own convention
+> (`~/.trae-cn/skills/`, `~/.claude/skills/`, `~/.cursor/skills/`). If your client
+> does not support skills, option 2 always works.
 
-| Client                | User-level skills dir | Auto-load                   |
-| --------------------- | --------------------- | --------------------------- |
-| TraeWork              | `~/.trae-cn/skills/`  | Auto-discovered             |
-| Claude Code           | `~/.claude/skills/`   | Supported on newer versions |
-| Cursor                | `~/.cursor/skills/`   | Rolling out gradually       |
-| Other / custom agents | No common convention  | Manual load or unsupported  |
+### Standalone skill package (Agensi / marketplaces)
 
-> There is no single directory that **every** client honors. If your client does not support
-> skills, **option 2 always works** (paste `AGENT_PROMPT.md` — plain text, any client).
-> Install steps, per-client directory differences and load mechanisms, and how the docs
-> reference each other: see [`scripts/README.md`](scripts/README.md) (not duplicated here).
+`skills/kb-memory/` is kb's **standalone delivery unit**, fully decoupled from the
+experimental subsystem. It contains a standard `SKILL.md` at the package root, an
+MCP config template (`mcp.json`), a config template (`env.example`), a README and
+the license — covering install → start → configure → verify → troubleshoot.
+
+```powershell
+python scripts/build_skill_package.py        # output: dist/kb-memory-skill-<version>.zip
+```
+
+The zip keeps `SKILL.md` at its **root** and excludes orchestra, tests, runtime
+data and any secrets. The build script validates front matter, self-containment
+and accidental secret leakage.
 
 ## MCP Integration
 
@@ -221,76 +250,107 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 Available MCP tools: `write_memory` / `search_memory` / `read_memory` /
 `update_memory` / `delete_memory` / `add_document` / `add_webpage` / `ask_kb`.
 
-> With `KB_API_KEY` auth enabled, clients must send `Authorization: Bearer <key>` /
-> `X-API-Key` headers — see [USER\_GUIDE §5.2](docs/USER_GUIDE.md) (Chinese) for
-> per-client configuration.
+> With `KB_API_KEY` auth enabled, clients must send `Authorization: Bearer <key>`
+> or `X-API-Key` headers — see [USER_GUIDE §5.2](docs/USER_GUIDE.md) (Chinese).
 
 ## REST API Reference
 
-| Method | Path                         | Description                                                                                    |
-| ------ | ---------------------------- | ---------------------------------------------------------------------------------------------- |
-| POST   | `/api/v1/memories`           | Write a memory `{content, tags?, source?, namespace?, agent_id?}`                              |
-| GET    | `/api/v1/memories`           | List memories; filters: `type/tag/source/q/limit/offset`                                       |
-| GET    | `/api/v1/memories/{id}`      | Read one memory (`?agent_id=`; another agent's memory → 404)                                   |
-| PATCH  | `/api/v1/memories/{id}`      | Update content or tags (`?agent_id=`; non-owner → 404)                                         |
-| DELETE | `/api/v1/memories/{id}`      | Delete one memory (`?agent_id=`; non-owner → 404)                                              |
-| POST   | `/api/v1/search`             | Hybrid search `{query, top_k?, mode?, type?, tag?, agent_id?}` — mode: `hybrid/vector/keyword` |
-| POST   | `/api/v1/documents`          | Ingest a document: multipart `file` or JSON `{"path": "...", "agent_id"?}`                     |
-| GET    | `/api/v1/documents`          | List ingested documents (grouped by source)                                                    |
-| DELETE | `/api/v1/documents/{source}` | Delete all records of a document                                                               |
-| POST   | `/api/v1/ingest/web`         | Ingest a webpage `{url}` — fetch, extract, chunk, store                                        |
-| POST   | `/api/v1/ask`                | RAG answering `{question, agent_id?}`; 503 if no LLM configured                                |
-| GET    | `/api/v1/audit`              | Agent access audit `?agent=<identity>&action?&days?&limit?`                                    |
-| GET    | `/api/v1/healthz`            | Health check & service stats                                                                   |
+All memories and knowledge are **shared** (v3): `client` / `project` are audit
+metadata, not isolation keys. Record IDs are generated server-side.
 
-Example:
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/v1/memories` | Write a memory `{content, tags?, source?, namespace?}` |
+| GET | `/api/v1/memories` | List memories; filters: `type/tag/source/q/limit/offset` |
+| GET | `/api/v1/memories/{id}` | Read one memory |
+| PATCH | `/api/v1/memories/{id}` | Update content or tags |
+| DELETE | `/api/v1/memories/{id}` | Delete one memory |
+| POST | `/api/v1/search` | Hybrid search `{query, top_k?, mode?, type?, tag?}` — mode: `hybrid/vector/keyword`; blank query → 422 |
+| POST | `/api/v1/documents` | Ingest a document: multipart `file` or JSON `{"path": "..."}`; re-ingesting the same source replaces old chunks |
+| GET | `/api/v1/documents` | List ingested documents (grouped by source) |
+| DELETE | `/api/v1/documents/{source}` | Delete all records of a document (simple sources such as file names) |
+| DELETE | `/api/v1/documents?source=<urlencoded>` | Delete by query parameter (required for URLs containing slashes) |
+| POST | `/api/v1/ingest/web` | Ingest a webpage `{url}` — fetch, extract, chunk, store |
+| POST | `/api/v1/ask` | RAG answering `{question}`; 503 if no LLM configured |
+| GET | `/api/v1/audit` | Access audit `?client=<client>&project?&days?&limit?` |
+| GET | `/api/v1/healthz` | Health check & service stats (includes `embedder.state`) |
+
+Error responses use `{"error": "<CODE>", "message": "..."}`. Notable codes:
+`DUPLICATE` (semantic dedup enabled), `EMBED_MODEL_UNAVAILABLE`,
+`LLM_DISABLED`, `NOT_FOUND`, `INVALID_ARGUMENT`.
+
+Example (Windows PowerShell — copy as-is; Chinese content must be sent as UTF-8):
 
 ```powershell
-# Write a memory
-curl -X POST http://127.0.0.1:8000/api/v1/memories `
-  -H "Content-Type: application/json" `
-  -d '{"content": "User prefers dark theme", "tags": ["preference"]}'
+function Invoke-KbJson($Uri, $Body) {
+  Invoke-RestMethod -Uri $Uri -Method Post -ContentType 'application/json; charset=utf-8' `
+    -Body ([System.Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 5)))
+}
 
-# Hybrid search
-curl -X POST http://127.0.0.1:8000/api/v1/search `
-  -H "Content-Type: application/json" `
-  -d '{"query": "UI preferences", "top_k": 5}'
+Invoke-KbJson http://127.0.0.1:8000/api/v1/memories @{ content = "User prefers dark theme"; tags = @("preference") }
+Invoke-KbJson http://127.0.0.1:8000/api/v1/search @{ query = "UI preferences"; top_k = 5 }
+```
+
+Linux / macOS:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/memories \
+  -H "Content-Type: application/json" \
+  -d '{"content": "User prefers dark theme", "tags": ["preference"]}'
 ```
 
 ## Configuration
 
 All settings use the `KB_` environment prefix or a local `.env` file. See
-[`.env.example`](.env.example) for the full key list (copy to `.env` and fill in;
-`.env` is gitignored — real keys never enter version control).
+[`.env.example`](.env.example) for the full key list (copy to `.env`; it is
+gitignored — real keys never enter version control).
 
-| Key                                                         | Default              | Description                                                                                                                                 |
-| ----------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `KB_LLM_MODE`                                               | `off`                | `off` (default, never loads/calls an LLM) / `local` (Ollama only) / `auto` (local-first, cloud fallback) / `cloud`                          |
-| `KB_DEVICE`                                                 | empty                | Embedding device: empty = auto-detect; `cpu` / `cuda` to override                                                                           |
-| `KB_WATCH_DIR`                                              | `data`               | Directory watched in serve mode; empty or `.` = disabled                                                                                    |
-| `KB_DATA_DIR`                                               | `kb_data`            | Data root (ChromaDB, runtime state)                                                                                                         |
-| `KB_API_HOST` / `KB_API_PORT`                               | `127.0.0.1` / `8000` | REST & MCP listen address                                                                                                                   |
-| `KB_EMBED_MODEL`                                            | `BAAI/bge-m3`        | Embedding model                                                                                                                             |
-| `KB_LLM_MODEL`                                              | empty                | Local Ollama model name (empty by default; when `KB_LLM_MODE=local/auto`, pick one fitting your machine — exact name per `ollama list`)     |
-| `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` | empty                | Cloud LLM (optional): **any OpenAI-compatible provider** (DeepSeek / OpenAI / Qwen / SiliconFlow / Moonshot...); set in a local `.env` only |
-| `KB_API_KEY`                                                | empty                | Empty = no auth (zero friction on loopback); non-empty = Bearer/X-API-Key auth                                                              |
-| `KB_SENSITIVE_NAMESPACES`                                   | empty                | Comma-separated namespaces forced to answer locally                                                                                         |
+| Key | Default | Description |
+|---|---|---|
+| `KB_LLM_MODE` | `off` | `off` / `local` / `auto` / `cloud` |
+| `KB_DEVICE` | empty | Embedding device: empty = auto-detect; `cpu` / `cuda` to override |
+| `KB_WATCH_DIR` | `data` | Directory watched in serve mode; empty or `.` = disabled |
+| `KB_DATA_DIR` | `kb_data` | Data root (ChromaDB, runtime state) |
+| `KB_API_HOST` / `KB_API_PORT` | `127.0.0.1` / `8000` | REST & MCP listen address |
+| `KB_EMBED_MODEL` | `BAAI/bge-small-zh-v1.5` | Embedding model (lightweight default; `BAAI/bge-m3` optional) |
+| `KB_LLM_MODEL` | empty | Local Ollama model name (exact name per `ollama list`) |
+| `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` | empty | Any OpenAI-compatible cloud provider |
+| `KB_API_KEY` | empty | Empty = no auth (loopback); non-empty = Bearer / X-API-Key |
+| `KB_SENSITIVE_NAMESPACES` | empty | Comma-separated namespaces forced to answer locally |
+
+## CLI
+
+```powershell
+python -m kb add "memory" --tags preference --client ClaudeCode
+python -m kb search "query" --client ClaudeCode
+python -m kb stats
+python -m kb ask "question" --client ClaudeCode
+python -m kb audit --client ClaudeCode --days 7
+python -m kb eval --file tests/eval_zh_50.jsonl
+python -m kb forget --stale --days 90
+python -m kb dedup --threshold 0.92
+```
+
+> `kb eval` uses an isolated temporary database and explicitly disables user
+> governance settings (dedup/decay/freshness), so evaluation stays reproducible
+> even when your `.env` enables them.
 
 ## Repository Layout
 
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / watcher / api / mcp / cli)
-tests/         acceptance tests
-orchestra/     multi-agent collaboration system (maintenance mode; see below)
-docs/          design specs, node plans, user guide (Chinese)
+tests/         kb acceptance & regression tests (417, including eval_zh_50.jsonl)
+skills/        standalone kb-memory skill package (Agensi deliverable)
+scripts/       build/start/stop scripts (Windows one-click launchers)
+docs/          design specs, node plans, user guides
+orchestra/     experimental collaboration scaffold (maintenance mode, not delivered)
 ```
 
-Also in this repo: **agent-orchestra** — an experimental multi-agent collaboration
-system built on kb as a shared task board (coordinator splits cards, workers claim
-and execute, feedback loop with quotas). Now in maintenance mode, kept as the
-author's own scaffolding. Documentation is Chinese-only; see
-[orchestra/protocol.md](orchestra/protocol.md).
+**agent-orchestra** is an experimental multi-agent collaboration system built on
+kb as a shared task board. It is frozen, maintained only as the author's own
+scaffolding, and is **not** part of kb's deliverables. Documentation is
+Chinese-only: [orchestra/protocol.md](orchestra/protocol.md).
 
 ## License
 
@@ -299,8 +359,7 @@ author's own scaffolding. Documentation is Chinese-only; see
 ## Links
 
 - [README.md](README.md) — Chinese documentation (primary)
-
-- [docs/USER\_GUIDE.md](docs/USER_GUIDE.md) — user guide (Chinese)
-
-- [PROJECT.md](PROJECT.md) — AI handover doc / project status (Chinese)
-
+- [docs/USER_GUIDE_EN.md](docs/USER_GUIDE_EN.md) — user guide (English)
+- [docs/AGENT_PROMPT_EN.md](docs/AGENT_PROMPT_EN.md) — plain-text agent prompt
+- [PROJECT.md](PROJECT.md) — AI handover / project status (Chinese)
+- [e2e-user-test/测试报告-第三轮.md](e2e-user-test/测试报告-第三轮.md) — user-perspective E2E report, round 3 (Chinese)
