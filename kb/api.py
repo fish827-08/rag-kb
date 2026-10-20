@@ -811,11 +811,9 @@ def create_app(settings: Settings | None = None,
         try:
             return kb.ask(body.question, agent_id=body.agent_id,
                           client=body.client, project=body.project)
-        except LLMDisabledError:
+        except LLMDisabledError as exc:
             raise HTTPException(status_code=503, detail={
-                "error": "LLM_DISABLED",
-                "message": "未检测到可用的 LLM：请在 .env 配置 KB_LLM_MODE=local "
-                           "（Ollama）或 KB_LLM_API_KEY 启用云端（任意 OpenAI 兼容服务商）"})
+                "error": "LLM_DISABLED", "message": str(exc)})
 
     @app.get("/api/v1/audit")
     def audit(client: str | None = None, project: str | None = None,

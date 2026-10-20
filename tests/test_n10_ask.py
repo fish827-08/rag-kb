@@ -51,4 +51,6 @@ def test_禁用转503(env_isolated):
         r = c.post("/api/v1/ask", json={"question": "测试"})
         assert r.status_code == 503
         assert r.json()["error"] == "LLM_DISABLED"
-        assert "Ollama" in r.json()["message"]
+        # 默认 KB_LLM_MODE=off：必须说明是主动关闭，而不是误报 Ollama 不可用
+        assert "已关闭" in r.json()["message"]
+        assert "KB_LLM_MODE=off" in r.json()["message"]

@@ -107,7 +107,7 @@ class FailingFirstPipRunner(FakeRunner):
         if "pip install kb-memory" in joined \
                 and "--extra-index-url" not in joined:
             return SimpleNamespace(returncode=1, stdout="")
-        return SimpleNamespace(returncode=0, stdout="2.1.1\n")
+        return SimpleNamespace(returncode=0, stdout="2.1.2\n")
 
 
 def test_pip源缺包时自动官方兜底(boot, tmp_path, capsys):
