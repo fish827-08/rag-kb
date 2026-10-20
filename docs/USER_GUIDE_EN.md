@@ -1,6 +1,6 @@
 # User Guide — rag-kb
 
-> A guide for human users. AI assistants: read [AGENTS.md](../AGENTS.md) + [PROJECT.md](../PROJECT.md) instead.
+> A guide for human users. For agent integration, read [AGENT_PROMPT_EN.md](AGENT_PROMPT_EN.md) or `skills/kb-memory/SKILL.md`.
 >
 > Version: v1 (2026-08-24) ｜ Updated with releases
 

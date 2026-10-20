@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.1.1 · 自动化回归全绿，待人工验收）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.1.1）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -100,7 +100,7 @@ curl http://127.0.0.1:8000/api/v1/healthz
 >
 > **CPU 即可运行，不占显卡**：全新安装默认拿到 CPU 版 torch（`device=cpu`），
 > 不占用 GPU 显存，无独立显卡的机器也能完整使用。有显卡想加速（大库、批量入库）
-> 可另装 CUDA 版 torch，见 [AGENTS.md](AGENTS.md) 第 7 节；也可显式 `KB_DEVICE=cuda`。
+> 可另装 CUDA 版 torch 后显式 `KB_DEVICE=cuda` 启用 GPU 加速。
 >
 > **LLM 默认关闭（`KB_LLM_MODE=off`）**：服务启动不会探测/加载/调用任何大模型，
 > 零显存、零成本、纯离线；记忆写入、文档入库、混合检索完整可用。
@@ -348,18 +348,14 @@ python -m kb dedup --threshold 0.92           # 语义去重
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（417 项通过 / 1 跳过，含 eval_zh_50.jsonl 检索评测数据集）
-docs/          核心文档、当前设计（历史 spec/plan 已归档本地，不上传）
+tests/         kb 验收测试（425 项通过 / 1 跳过，含 eval_zh_50.jsonl 检索评测数据集）
+docs/          用户指南、开发者手册与设计文档
 kb_data/       kb 运行数据（gitignore）
-_archive/      旧学习项目 + 历史 spec/plan 归档（仅本地保留，禁止参考）
 ```
 
 ## 更多文档
 
-- **用户使用手册（人类用户入口）**：[docs/USER_GUIDE.md](docs/USER_GUIDE.md)
-- **AI 接力文档（AI 助手入口）**：[PROJECT.md](PROJECT.md)（项目状态 / 进度看板 / 接手指南）
+- **用户使用手册**：[docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 - 设计文档（需求、架构、API、里程碑）：`docs/superpowers/specs/2026-08-23-kb-memory-service-design.md`
 - **v2.1 设计（当前）**：`docs/superpowers/specs/2026-10-20-kb-v2.1-design.md`
 - 开发者维护手册：`docs/DEV_HANDBOOK.md`
-- AI 协作规范：`AGENTS.md`
-- 历史 spec / 节点计划已归档到本地 `_archive/docs/`（不上传，不再作为开发依据）
