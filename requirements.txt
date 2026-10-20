@@ -13,7 +13,7 @@
 # torch：不在此显式指定，由 sentence-transformers 拉取 PyPI 默认版（Windows 为 CPU 版，
 # 约 124MB 轮子）。Linux 源码安装建议先装 CPU 轮子，避免默认 CUDA 轮子带来数 GB 下载：
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
-# 如需 CUDA 加速，按 AGENTS.md 第 7 节换装 CUDA 版 torch。
+# 如需 CUDA 加速，请自行安装对应 CUDA 版 torch 并设置 KB_DEVICE=cuda。
 
 # Web
 fastapi>=0.110,<1.0

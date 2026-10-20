@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.1.1 — automated suite green; manual acceptance pending).
+service (v2.1.1).
 
 ## Why kb
 
@@ -127,7 +127,7 @@ curl.exe http://127.0.0.1:8000/api/v1/healthz
 >
 > **CPU is enough — no GPU required.** A fresh install gets the CPU build of torch
 > (`device=cpu`). To use a GPU, install a CUDA build of torch and set
-> `KB_DEVICE=cuda` (see [AGENTS.md](AGENTS.md) §7; Chinese).
+> Install a CUDA build of torch and set `KB_DEVICE=cuda` to enable GPU acceleration.
 >
 > **LLM is OFF by default (`KB_LLM_MODE=off`)**: the service never probes, loads,
 > or calls any LLM — zero VRAM, zero cost, fully offline. Memory storage and
@@ -351,10 +351,10 @@ python -m kb dedup --threshold 0.92
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (417 passed / 1 skipped, incl. eval_zh_50.jsonl)
+tests/         kb acceptance & regression tests (425 passed / 1 skipped, incl. eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
-docs/          design specs, node plans, user guides
+docs/          design specs, developer handbook, user guides
 ```
 
 ## License
@@ -366,4 +366,3 @@ docs/          design specs, node plans, user guides
 - [README.md](README.md) — Chinese documentation (primary)
 - [docs/USER_GUIDE_EN.md](docs/USER_GUIDE_EN.md) — user guide (English)
 - [docs/AGENT_PROMPT_EN.md](docs/AGENT_PROMPT_EN.md) — plain-text agent prompt
-- [PROJECT.md](PROJECT.md) — AI handover / project status (Chinese)

@@ -18,6 +18,12 @@ orchestra/
 _kb_tmp/
 # 旧学习项目归档（2026-08-23/24）：本地保留历史，解除 git 跟踪不上传远程
 _archive/
+# AI 接力与开发过程文档（项目已完结，仅本地保留，不上传）
+AGENTS.md
+PROJECT.md
+PROJECT_EN.md
+ROADMAP.md
+ROADMAP_EN.md
 # 用户视角 E2E 测试证据（本地历史产物，不上传）
 e2e-user-test/
 # SSH 私钥与凭据（严禁入库，2026-08-27）

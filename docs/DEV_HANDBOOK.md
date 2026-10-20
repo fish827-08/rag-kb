@@ -285,10 +285,10 @@ GET    /                           服务导航页（API 状态/文档链接）
 | 改入库格式支持 | ingest.py `parse_file` 加分支 | ingest 测试 |
 | 改切分策略 | ingest.py `chunk_text`（chunk_size/overlap 在 config） | ingest 测试 + eval |
 | 治理开关行为 | governance.py（纯函数）+ service.py 调用点 | governance 测试 |
-| 换嵌入/重排模型 | config.py `embed_model`/`rerank_model` + AGENTS.md 硬件约束（6GB 显存红线） | 全量测试 |
+| 换嵌入/重排模型 | config.py `embed_model`/`rerank_model` + 硬件约束（6GB 显存红线） | 全量测试 |
 | 性能问题 | 先看 storage.py get_many（N+1）、bm25 add_many（批量重建）、缓存 L745 | 基准测试 |
 
-**通用改码流程（AGENTS.md 红线）**：
+**通用改码流程（红线）**：
 
 1. 改哪个模块，先读对应 spec（设计文档）；冲突时先改文档再改码。
 2. TDD：先写/跑验收测试（红）→ 实现 → 绿 → 相关测试回归。

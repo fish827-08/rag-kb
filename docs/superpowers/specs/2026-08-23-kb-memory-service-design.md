@@ -388,7 +388,7 @@ Embedding 相关测试用真实小模型（如 `bge-small-zh-v1.5`，约 100MB�
 ## 13. 迁移与范围
 
 - 归档：`rag_kb/`、`app/`、`demo.py`、`test_py/`、`step_doc/`、`notes/`、旧 `README.md`、`ROADMAP.md` 已于 2026-08-23 按人工指示移入 `_archive/`（保留历史，不删除；禁止参考其内容）。
-- 新增：`AGENTS.md`（仓库根目录，AI 开发第一入口——声明文档有效性、硬件约束、开发约定与测试职责分工）。
+- 新增：`AGENTS.md`（AI 开发工作规则；2026-10-20 项目完结后仅本地保留，不随仓库上传）。
 - 重写：`README.md`（新定位、安装、Claude Code / Cursor 挂载 MCP 的配置示例）；`requirements.txt`。
 - 保留：`data/` 样例文档（M4 摄取人工验证用）。
 - 明确不做（本期）：鉴权与多用户、Qdrant 实际接入（仅留接口）、记忆遗忘/摘要（P2）、Web UI、Docker。
@@ -405,5 +405,5 @@ Embedding 相关测试用真实小模型（如 `bge-small-zh-v1.5`，约 100MB�
 | P2 追加（A4 易用性，N28） | `kb stats`（类型分布/访问热度/陈旧分布）+ `kb ask`（终端 RAG 问答，LLM 缺席降级输出检索命中）；**Web UI 砍掉**（评估报告定论） | spec 见 `2026-08-28-a4-cli-design.md` | ✅ 2026-08-28 完成（分支 `feature/a-line-remaining`） |
 
 每个里程碑附带对应测试。全量回归 339 项全绿（2026-08-28，`tests/` 全目录）。
-当前基线（2026-10-20）：`tests/` **417 项通过 / 1 项跳过**；用户视角 E2E 两轮
+当前基线（2026-10-20）：`tests/` **425 项通过 / 1 项跳过**；用户视角 E2E 两轮
 28/28 + 34/34。

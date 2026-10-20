@@ -1,6 +1,6 @@
 # 用户使用手册 — rag-kb
 
-> 面向人类用户的使用指南。AI 助手请改读 [AGENTS.md](../AGENTS.md) + [PROJECT.md](../PROJECT.md)。
+> 面向人类用户的使用指南。Agent 接入请读 [AGENT_PROMPT.md](AGENT_PROMPT.md) 或 `skills/kb-memory/SKILL.md`。
 >
 > 版本：v1（2026-08-24）｜ 随版本迭代更新
 >
