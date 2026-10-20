@@ -138,7 +138,9 @@ class LLMClient:
         try:
             from openai import OpenAI, OpenAIError
         except ImportError as exc:
-            raise LLMError("未安装 openai SDK，无法调用云端 LLM") from exc
+            raise LLMError(
+                "未安装 openai SDK，无法调用云端 LLM："
+                "请运行 pip install \"kb-memory[llm]\"") from exc
         client = OpenAI(api_key=self._settings.cloud_api_key,
                         base_url=self._settings.cloud_base_url)
         try:

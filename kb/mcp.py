@@ -50,15 +50,14 @@ def _client_from_ctx(ctx) -> str:
 
 def _check_identity(ctx, client: str | None,
                     project: str | None) -> str | None:
-    """身份字段规约校验（v3：client/project 仅审计归类，不参与隔离）。
+    """身份字段规约校验（v2.1：project 选择项目子库，client 仅审计归类）。
 
-    - v3（2026-08-31）：记忆全共享，client/project 不再承担隔离语义，
-      仅用于存取审计归类与记录元数据；仍校验显式传入值的格式。
-    - client/project 可空缺省（client 空=自动识别），显式传入非法值拦截。
-    返回 None=通过，否则返回错误消息。
-    English: Validate the identity fields (v3: client/project are audit-bucketing only,
-    never used for isolation). Only explicitly passed values are format-checked;
-    empty client = auto-detected from MCP clientInfo. Returns None on pass, else an error message."""
+    - project 决定读写哪个项目子库（空=全局库），须通过目录名白名单校验。
+    - client 仅用于存取审计归类，从 MCP clientInfo 自动识别。
+    - 显式传入非法值拦截；返回 None=通过，否则返回错误消息。
+    English: Validate identity fields (v2.1: project selects the project sub-store and
+    client is audit-bucketing only). Explicit invalid values are rejected; returns None
+    on pass, else an error message."""
     err = validate_client(client or _client_from_ctx(ctx))
     if err:
         return err
@@ -86,13 +85,12 @@ def write_memory(content: str,
                  ctx: Context | None = None) -> dict:
     """写入一条记忆短文本（事实/笔记/摘要），可选标签；返回 {"id": 记录ID}。
     内容为空串或纯空白时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。
-    v3（2026-08-31）：所有记忆全共享——client（MCP 握手 clientInfo 自动识别）与
-    project（可选）仅用于审计归类，不再隔离读写；记录主键由服务端生成。
+    project 指定项目子库（空=全局库）；client 仅用于审计归类（自动识别）；
+    记录主键由服务端生成。
     English: Write a memory short text (fact/note/summary) with optional tags; returns {"id": record_id}.
     Returns {"error": "INVALID_ARGUMENT", "message": reason} when content is empty or blank.
-    v3: all memories are fully shared — client (auto-detected from the MCP clientInfo) and
-    project (optional) are audit-bucketing only and never isolate access. The record primary
-    key is generated server-side."""
+    project selects the project sub-store (empty = global); client is audit-bucketing only
+    (auto-detected). The record primary key is generated server-side."""
     if not content or not content.strip():
         return {"error": "INVALID_ARGUMENT", "message": "content 不能为空或纯空白"}
     err = _check_identity(ctx, client, project)
@@ -111,16 +109,18 @@ def search_memory(query: str, top_k: int = 5,
                   project: str | None = None,
                   client: str | None = None,
                   ctx: Context | None = None) -> list[dict] | dict:
-    """混合检索记忆与知识（向量语义 + BM25 关键词，RRF 融合）；
+    """混合检索记忆与知识（向量语义 + BM25 关键词，归一化融合）；
     返回命中列表，每项含 id/content/score/type/source。
-    v3（2026-08-31）：所有记忆与知识全共享，不限 client/project。
+    project 指定项目子库时，检索范围 = 该项目子库 + 全局库（项目命中加分）；
+    不传 project 时只检索全局库。
     top_k 小于 1 时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。
-    client：来源客户端（可选，缺省从 clientInfo 自动识别）。
-    English: Hybrid retrieval over memories and knowledge (vector semantics + BM25 keywords, RRF-fused);
+    client：来源客户端（可选，缺省从 clientInfo 自动识别，仅审计）。
+    English: Hybrid retrieval over memories and knowledge (vector semantics + BM25 keywords, normalized fusion);
     returns a hit list, each item having id/content/score/type/source.
-    v3: all memories and knowledge are fully shared, unrestricted by client/project.
+    With project, the scope is that project's sub-store plus the global store (project hits boosted);
+    without project, only the global store is searched.
     Returns {"error": "INVALID_ARGUMENT", "message": reason} when top_k is less than 1.
-    client: source client (optional; auto-detected from clientInfo when omitted)."""
+    client: source client (optional; auto-detected from clientInfo when omitted; audit only)."""
     if top_k < 1:
         return {"error": "INVALID_ARGUMENT", "message": "top_k 必须为不小于 1 的整数"}
     if not query or not query.strip():
@@ -141,11 +141,11 @@ def read_memory(record_id: str,
                 client: str | None = None,
                 ctx: Context | None = None) -> dict:
     """按 ID 读取单条记忆完整内容；记录不存在返回 {"error": "NOT_FOUND"}。
-    client：来源客户端（可选，缺省从 clientInfo 自动识别）。
-    project：项目归属（可选，仅审计归类）。
-    v3（2026-08-31）：所有记忆全共享，无 FORBIDDEN。
+    project：先查该项目子库，再查全局库；不传时先查全局库再查各项目子库。
+    client：来源客户端（可选，缺省从 clientInfo 自动识别，仅审计）。
     English: Read the full content of a single memory by ID; returns {"error": "NOT_FOUND"} when absent.
-    v3: all memories are fully shared — there is no FORBIDDEN."""
+    project: search that project's sub-store first, then the global store; when omitted,
+    global first and then each project store. client is audit-only."""
     err = _check_identity(ctx, client, project)
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
@@ -163,11 +163,12 @@ def update_memory(record_id: str, content: str,
                   ctx: Context | None = None) -> dict:
     """按 ID 更新记忆内容（变更后自动重新嵌入）；记录不存在返回 {"error": "NOT_FOUND"}；
     内容为空串或纯空白时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。
-    client：来源客户端（可选，缺省从 clientInfo 自动识别）。
-    v3（2026-08-31）：所有记忆全共享，无 FORBIDDEN。
+    project：先查该项目子库，再查全局库；不传时先查全局库再查各项目子库。
+    client：来源客户端（可选，缺省从 clientInfo 自动识别，仅审计）。
     English: Update a memory's content by ID (auto re-embed on change); returns {"error": "NOT_FOUND"}
     when absent; empty content returns {"error": "INVALID_ARGUMENT", "message": reason}.
-    v3: all memories are fully shared — there is no FORBIDDEN."""
+    project: locate in that project's sub-store, then the global store; when omitted,
+    global first and then each project store. client is audit-only."""
     if not content or not content.strip():
         return {"error": "INVALID_ARGUMENT", "message": "content 不能为空或纯空白"}
     err = _check_identity(ctx, client, project)
@@ -190,10 +191,11 @@ def delete_memory(record_id: str,
                   client: str | None = None,
                   ctx: Context | None = None) -> dict:
     """按 ID 删除一条记忆；成功返回 {"ok": true}，记录不存在返回 {"error": "NOT_FOUND"}。
-    client：来源客户端（可选，缺省从 clientInfo 自动识别）。
-    v3（2026-08-31）：所有记忆全共享，无 FORBIDDEN。
+    project：先查该项目子库，再查全局库；不传时先查全局库再查各项目子库。
+    client：来源客户端（可选，缺省从 clientInfo 自动识别，仅审计）。
     English: Delete a memory by ID; returns {"ok": true} on success and {"error": "NOT_FOUND"} when
-    it does not exist. v3: all memories are fully shared — there is no FORBIDDEN."""
+    it does not exist. project: locate in that project's sub-store then the global store;
+    when omitted, global first and then each project store. client is audit-only."""
     err = _check_identity(ctx, client, project)
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
@@ -211,12 +213,11 @@ def add_document(path: str,
     """导入本地文档（PDF/DOCX/MD/TXT 及 Office 格式）切分入库；
     返回 {"source": 文件名, "chunks": 块数}；文件不存在或格式不支持时
     返回 {"error": "FILE_NOT_FOUND" | "UNSUPPORTED_FORMAT", "message": 原因}。
-    project/client：仅用于审计归类；文档 chunk 为共享知识，所有客户端可检索。
-    client：来源客户端（可选，缺省从 clientInfo 自动识别）。
+    project：文档 chunk 落入该项目子库（空=全局库）；client：仅用于审计归类。
     English: Import a local document (PDF/DOCX/MD/TXT and Office formats), split and ingest it;
     returns {"source": filename, "chunks": count}; when the file is missing or the format is unsupported
     returns {"error": "FILE_NOT_FOUND" | "UNSUPPORTED_FORMAT", "message": reason}.
-    project/client: audit bucketing only; document chunks are shared knowledge, searchable by all clients."""
+    project: chunks go to that project's sub-store (empty = global); client is audit-only."""
     err = _check_identity(ctx, client, project)
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
@@ -238,11 +239,10 @@ def add_webpage(url: str,
                 ctx: Context | None = None) -> dict:
     """抓取网页正文并切分入库；返回 {"source": url, "chunks": 块数}；
     抓取/正文提取失败时返回 {"error": "WEB_FETCH_FAILED", "message": 原因}。
-    project/client：仅用于审计归类；web chunk 为共享知识，所有客户端可检索。
-    client：来源客户端（可选，缺省从 clientInfo 自动识别）。
+    project：web chunk 落入该项目子库（空=全局库）；client：仅用于审计归类。
     English: Fetch a webpage body and ingest it after splitting; returns {"source": url, "chunks": count};
     on fetch/body-extraction failure returns {"error": "WEB_FETCH_FAILED", "message": reason}.
-    project/client: audit bucketing only; web chunks are shared knowledge, searchable by all clients."""
+    project: chunks go to that project's sub-store (empty = global); client is audit-only."""
     err = _check_identity(ctx, client, project)
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
@@ -261,12 +261,12 @@ def ask_kb(question: str,
            client: str | None = None,
            ctx: Context | None = None) -> dict:
     """基于知识库的 RAG 问答（检索 → 上下文拼装 → 护栏生成），返回 answer 与 sources；
-    v3：检索记忆与知识全共享（无 client/project 隔离），并写 ask 存取审计；
-    client：来源客户端（可选，缺省从 clientInfo 自动识别）；
+    project：检索该项目子库 + 全局库（空=仅全局库），并写 ask 存取审计；
+    client：来源客户端（可选，缺省从 clientInfo 自动识别，仅审计）；
     LLM 不可用时返回 {"error": "LLM_DISABLED", "message": 配置指引}。
     English: Knowledge-base RAG Q&A (retrieve → build context → guarded generation), returning answer and sources;
-    v3: retrieval is fully shared over memories and knowledge (no client/project isolation); an ask
-    access-audit is emitted; client: source client (optional; auto-detected from clientInfo when omitted);
+    project: search that project's sub-store plus the global store (empty = global only); an ask
+    access-audit is emitted; client is audit-only;
     returns {"error": "LLM_DISABLED", "message": setup guidance} when the LLM is unavailable."""
     err = _check_identity(ctx, client, project)
     if err:
@@ -289,9 +289,9 @@ def create_mcp_server(service: KBService) -> MCPServer:
     Injecting the service also overrides the module-level singleton, so MCP tools and REST share the same KBService."""
     global _service
     _service = service
-    # v3（2026-08-31）：MCPServer instructions 承载全局接入规约——任何客户端挂载 MCP 即自动
-    # 注入 AI 上下文（跨客户端全局提示词，无需 skill/客户端全局规则）；中英双语按系统语言选一套。
-    # 核心：不要求先做健康探测、反馈极简（记了/没记+原因）、记忆全共享。
+    # v2.1：MCPServer instructions 承载接入规约——任何客户端挂载 MCP 即自动注入 AI 上下文；
+    # 语言按 KB_MEMORY_LANG/系统语言选择，并注入用户自定义记忆规则（~/.kb/rules.md、
+    # kb_data/rules.md）。核心：不要求先做健康探测、反馈极简、项目记忆按 project 隔离。
     mcp = MCPServer(name="kb", version=__version__,
                     instructions=mcp_instructions())
     for fn in (write_memory, search_memory, read_memory, update_memory,

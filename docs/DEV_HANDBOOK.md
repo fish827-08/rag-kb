@@ -1,7 +1,7 @@
 # kb 开发者维护手册
 
 > 面向项目维护者（人类）的架构与函数级手册。由代码 AST 全量扫描生成（2026-09-05，对应 v2.0.0；
-> 2026-10-19 按交付加固后的代码校订）。
+> 2026-10-19 按交付加固后的代码校订；2026-10-20 按 v2.1.0 项目分库/空闲卸载校订）。
 > 行号锚点格式 `kb/xxx.py:Lnn` 是生成时快照，代码演进后可能漂移；**以函数/类名在 IDE 搜索为准**，
 > 代码改动后本手册以代码为准。
 >
@@ -27,6 +27,7 @@ REST / MCP / CLI 三个接入壳 → 全部委托给唯一的业务中枢 `KBSer
                        ▼  全部委托（薄壳，无业务逻辑）
 ┌─ 服务层 ─────────────────────────────────────────────┐
 │  service.py KBService 编排中枢 (910行)  ★精读        │
+│  scopes.py ScopeManager 全局/项目子库路由 + LRU ★     │
 │  ingest.py 文档/网页入库    llm.py LLM 接入路由      │
 └──────────────────────┬───────────────────────────────┘
                        ▼
@@ -41,8 +42,9 @@ REST / MCP / CLI 三个接入壳 → 全部委托给唯一的业务中枢 `KBSer
 │  storage.py ChromaStore（VectorStore 抽象接口）      │
 └──────────────────────────────────────────────────────┘
 支撑（横切，按需查阅）：config.py 配置 · models.py 数据模型 · audit.py 审计 ·
-logging_setup.py 日志 · i18n.py 双语 · watcher.py 目录监听 · monitor.py 监控 ·
-governance.py 治理(衰减/去重) · consolidation.py 智能归并 · eval.py 检索评测
+logging_setup.py 日志 · i18n.py 双语/记忆语言/自定义规则 · watcher.py 目录监听 ·
+monitor.py 监控 · governance.py 治理(衰减/去重) · consolidation.py 智能归并 · eval.py 检索评测 ·
+discovery.py 安装清单/服务发现/登录自启（`kb where`、`kb autostart`）
 ```
 
 ### 1.3 关键设计决策（改了会牵一发动全身）
@@ -50,7 +52,8 @@ governance.py 治理(衰减/去重) · consolidation.py 智能归并 · eval.py 
 | 决策 | 位置 | 后果 |
 |---|---|---|
 | 三协议共享一个 `KBService` 单例，挂 `app.state.kb` | [api.py create_app](file:///./kb/api.py) | 改 service 构造函数，三端同时受影响 |
-| 记忆全共享 v3：无 (client,project) 隔离，仅审计归类 | spec 2026-08-31 | 不要再加隔离过滤逻辑 |
+| 全局库 + 项目子库 v2.1：`project` 选择 `projects/<project>/`，不传走全局 | spec 2026-10-20；scopes.py | 读写/检索/按 ID 定位都必须先过 ScopeManager，不要直接碰全局 store |
+| 项目子库懒打开 + LRU（`KB_PROJECT_CACHE_SIZE`），全局库永不淘汰 | scopes.py | 新读写入口必须经 `scopes.get(project)` / `scopes.locate` |
 | `Record` 统一承载记忆与文档 chunk，靠 `type` 字段区分 | models.py L17 | 检索/删除都按 type 过滤 |
 | Chroma metadata 不支持 None/空串/list | models.py L38、storage.py L47 | 新增字段必须过 `to_metadata`/`_clean_metadata` |
 | 模型全部懒加载（实例化不加载，首次用才加载） | embedder/reranker/llm | 不要在 `__init__` 里加载模型 |
@@ -67,14 +70,15 @@ REST POST /api/v1/memories  api.py:L546 (MemoryCreate 校验 L160)
 MCP write_memory            mcp.py:L73
         │
         ▼
-KBService.add_memory        service.py:L253
-   ├─ validate_agent_id     service.py:L44
-   ├─ governance.check_duplicate  governance.py:L157（dedup_enabled 时）
-   ├─ Embedder.embed_texts  embedder.py:L26（首次调用触发模型加载 L13）
-   ├─ ChromaStore.add       storage.py:L74
-   ├─ BM25Index.add         bm25.py:L57（同步重建索引）
-   ├─ _sparse_add           service.py:L233（sparse_enabled 时）
-   └─ _audit_access         service.py:L486 → audit.py:L223
+KBService.add_memory        service.py
+   ├─ scopes.get(project)  scopes.py（空=全局库；项目库懒打开 + LRU）
+   ├─ validate_agent_id / validate_project
+   ├─ governance.check_duplicate  governance.py（dedup_enabled 时）
+   ├─ Embedder.embed_texts  embedder.py（首次调用触发模型加载）
+   ├─ scope.store.add       storage.py
+   ├─ scope.bm25.add        bm25.py（每个子库独立 BM25）
+   ├─ _sparse_add           service.py（sparse_enabled 时）
+   └─ _audit_access         service.py → audit.py
 ```
 
 ### 2.2 混合检索
@@ -84,18 +88,21 @@ REST POST /api/v1/search    api.py:L605 (SearchRequest 校验 L207)
 MCP search_memory           mcp.py:L98
         │
         ▼
-KBService.search            service.py:L577
+KBService.search            service.py
+   ├─ project 非空且子库存在 → scope.retriever.search（项目子库）
+   ├─ 同时检索全局 retriever（合并去重，项目命中 +KB_PROJECT_BOOST）
+   └─ 不传 project → 仅全局 retriever
         ▼
-HybridRetriever.search      retriever.py:L94   ★核心
-   ├─ 向量路：embed_query(embedder.py:L34) → ChromaStore.query(storage.py:L154)
-   ├─ 关键词路：BM25Index.search(bm25.py:L89)
-   ├─ 稀疏路（可选）：SparseIndex.search(sparse.py:L197)
-   ├─ 融合：weighted_fuse(retriever.py:L48，min-max 归一加权) 或 rrf_fuse(L13)
-   ├─ 重排（可选）：Reranker.rerank(reranker.py:L36)
+HybridRetriever.search      retriever.py   ★核心（每个 scope 一个实例）
+   ├─ 向量路：embed_query(embedder.py) → ChromaStore.query(storage.py)
+   ├─ 关键词路：BM25Index.search(bm25.py)
+   ├─ 稀疏路（可选）：SparseIndex.search(sparse.py)
+   ├─ 融合：weighted_fuse(retriever.py，min-max 归一加权) 或 rrf_fuse
+   ├─ 重排（可选）：Reranker.rerank(reranker.py)
    └─ 每路取 max(30, 3*top_k) 候选
         │
         ▼
-ChromaStore.increment_access  storage.py:L170（命中计数，异步）
+ChromaStore.increment_access  storage.py（命中计数，异步）
 ```
 
 ### 2.3 RAG 问答
@@ -154,15 +161,15 @@ GET    /                           服务导航页（API 状态/文档链接）
 
 | 函数/类 | 行 | 职责 |
 |---|---|---|
-| `class KBService` | L125 | 核心类；`__init__` L129 组装 store/embedder/bm25/retriever/llm，BM25 启动优先加载持久化语料 |
-| `.add_memory` | L253 | 写记忆（校验→去重→嵌入→入库→建索引→审计） |
-| `.get_memory / .update_memory / .delete_memory` | L299/L326/L360 | 单条读/改（变更重新嵌入）/删 |
-| `.list_memories / .list_records` | L316/L321 | 过滤分页列表（后者供 watcher/测试内部用） |
-| `.add_document / .add_webpage` | L382/L422 | 解析→切分→逐 chunk 建 Record 入库 |
+| `class KBService` | L125 | 核心类；`__init__` 组装全局 scope + ScopeManager + embedder + llm，BM25 启动优先加载持久化语料 |
+| `.add_memory` | L253 | 写记忆（校验→路由 scope→去重→嵌入→入库→建索引→审计） |
+| `.get_memory / .update_memory / .delete_memory` | L299/L326/L360 | 单条读/改（变更重新嵌入）/删；经 `scopes.locate` 定位子库 |
+| `.list_memories / .list_records` | L316/L321 | 过滤分页列表（支持 project） |
+| `.add_document / .add_webpage` | L382/L422 | 解析→切分→逐 chunk 写入 project 子库 |
 | `.list_documents / .delete_document` | L456/L473 | 按 source 聚合/级联删除 |
-| `.search` | L577 | 检索入口（委托 retriever + 审计） |
+| `.search` | L577 | 检索入口：项目子库 + 全局库合并（+boost）+ 审计 |
 | `.ask` | L601 | RAG 问答编排（见 2.3） |
-| `.stats` | L593 | 运行统计 |
+| `.stats` | L593 | 运行统计（记录数走 count.txt 缓存，不加载全部子库） |
 | `._ask_auto / ._classify / ._is_sensitive / ._answer_complex_cloud` | L639-717 | auto 智能路由四件套 |
 | `._cache_lookup / ._cache_put` | L745/L761 | 问答缓存（向量相似度命中 + LRU） |
 | `._build_context / ._build_messages` | L772/L791 | 上下文截断拼装 + 护栏 prompt |
@@ -251,11 +258,14 @@ GET    /                           服务导航页（API 状态/文档链接）
 | 文件 | 行数 | 职责 |
 |---|---|---|
 | config.py | 121 | `Settings` 全部配置（KB_ 前缀环境变量 + .env），`get_settings()` lru_cache 单例 |
-| ingest.py | 105 | `parse_file`（PDF/DOCX/markitdown 兜底）→ `chunk_text`（递归切分）；`fetch_webpage`（httpx + trafilatura） |
+| scopes.py | 190 | `Scope`（store/bm25/retriever 三件套）+ `ScopeManager`（全局库 + 项目子库懒打开、LRU、locate、count.txt 计数）+ `validate_scope_name` |
+| discovery.py | 150 | `~/.kb/install.json` 清单 → PATH → importlib.metadata 发现顺序；`autostart_enable/disable/status`（Windows 启动目录 / systemd / launchd） |
+| ingest.py | 105 | `parse_file`（PDF/DOCX/markitdown 兜底，可选依赖缺失给 `[ingest]` 指引）→ `chunk_text`（递归切分）；`fetch_webpage`（httpx + trafilatura） |
 | models.py | 101 | `Record` 统一模型 ↔ Chroma metadata 互转；`RecordType` 类型枚举 |
 | logging_setup.py | 74 | `setup_logging` 控制台+轮转文件双 handler |
 | reranker.py | 61 | `Reranker.rerank` 交叉编码精排（懒加载） |
-| embedder.py | 92 | `Embedder.embed_texts/embed_query` 向量编码（默认 bge-small-zh-v1.5，可选 BGE-M3；懒加载、离线优先、cuda fp16、失败状态/503 错误） |
+| embedder.py | 150 | `Embedder.embed_texts/embed_query` 向量编码（默认 bge-small-zh-v1.5，可选 BGE-M3；懒加载、离线优先、cuda fp16、失败状态/503）；`unload/unload_if_idle` 空闲释放 |
+| skills/kb-memory/bootstrap.py | 280 | skill 引导安装（仅标准库）：`build_plan` 纯计划 → 用户 `--yes` → venv/PyPI/CPU torch → 写 manifest → 分离启动；`--status` / `--start-only` |
 
 ---
 
@@ -268,6 +278,10 @@ GET    /                           服务导航页（API 状态/文档链接）
 | 检索不准/排序问题 | **retriever.py**（融合策略、候选池大小）；向量路看 embedder/storage.query，关键词路看 bm25.py | `kb eval` + test_n32 回归 |
 | 回答质量问题 | service.py `_build_messages`（prompt）/ `_build_context`（预算）/ config.py 护栏参数 | ask 相关测试 + 人工对比 |
 | 新增配置项 | config.py `Settings` 加字段（注释写用途），.env.example 补键名 | 配置相关测试 |
+| 项目隔离/路由 | **scopes.py**（ScopeManager）；所有读写入口必须 `scopes.get/locate`，禁止绕过 | test_agent_isolation + v2.1 测试 |
+| 服务发现/自启 | discovery.py（清单/PATH/metadata、三种平台自启文件） | test_v21_runtime |
+| skill 安装流程 | skills/kb-memory/bootstrap.py（只标准库，`--yes` 才安装） | test_v21_bootstrap |
+| 空闲资源释放 | embedder.py `unload/unload_if_idle` + cli.py `start_idle_watchdog` | test_v21_runtime |
 | 改入库格式支持 | ingest.py `parse_file` 加分支 | ingest 测试 |
 | 改切分策略 | ingest.py `chunk_text`（chunk_size/overlap 在 config） | ingest 测试 + eval |
 | 治理开关行为 | governance.py（纯函数）+ service.py 调用点 | governance 测试 |
@@ -300,6 +314,11 @@ GET    /                           服务导航页（API 状态/文档链接）
 | KB_MONITOR_ENABLED | false | 监控常驻线程（默认按需触发） |
 | KB_CONTEXT_TOKEN_LIMIT / KB_LLM_MAX_TOKENS / KB_LLM_TEMPERATURE | 2000/800/0.2 | 问答护栏 |
 | KB_CACHE_SIZE / KB_CACHE_SIM_THRESHOLD | 100/0.95 | 问答缓存 |
+| KB_PROJECT_CACHE_SIZE | 4 | 同时打开的项目子库上限（LRU；全局库永不淘汰） |
+| KB_PROJECT_BOOST | 0.05 | 项目子库命中在合并排序时的加分 |
+| KB_IDLE_UNLOAD_SECONDS | 600 | 嵌入模型空闲卸载阈值（0=关闭）；serve 启动 watchdog 线程 |
+| KB_MEMORY_LANG | auto | 记忆书写语言：auto=系统语言，或 zh/en/ja/... |
+| KB_RULES_MAX_CHARS | 4000 | `~/.kb/rules.md` + `<data_dir>/rules.md` 注入 MCP 的最大字符数 |
 
 ## 6. 硬件与运维红线
 

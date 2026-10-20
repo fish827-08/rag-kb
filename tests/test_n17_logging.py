@@ -1,6 +1,6 @@
 """N17 验收：日志配置项 + logging_setup 装配 + 生命周期日志 + 文件轮转。
 
-对应日志设计文档 docs/superpowers/specs/2026-08-24-logging-design.md：
+对应日志设计（历史 spec，已本地归档）：
 - 第 3 节：KB_LOG_LEVEL / KB_LOG_DIR / KB_LOG_MAX_BYTES / KB_LOG_BACKUP_COUNT
 - 第 4.1 节：生命周期日志（logger kb.serve：服务启动/就绪/停止）
 - 第 6 节：setup_logging 双 handler（控制台精简 + RotatingFileHandler 完整）

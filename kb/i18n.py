@@ -1,10 +1,17 @@
-"""双语消息（i18n）：服务端错误/校验消息按系统语言环境输出（B4 节点 spec 2.6）。
+"""双语消息（i18n）与 MCP 接入规约。
 
-- `KB_LANG` 配置：zh / en / auto（默认 auto = 检测系统 locale，中文系统用中文，否则英文）
-- 工具描述/错误消息收敛到这里，避免双语长描述 double token 成本（MCP 端按语言选一套）
-- 使用：`from kb.i18n import t; t("content_blank")` → 按当前系统语言返回消息
+- `KB_LANG`：服务端错误/校验消息语言（zh/en/auto，默认 auto）
+- `KB_MEMORY_LANG`：记忆书写语言（auto/zh/en/...，默认 auto = 操作系统默认语言）
+- 自定义记忆规则：`~/.kb/rules.md` + `<data_dir>/rules.md`，截断后注入 MCP instructions
+
+English: Bilingual messages plus the MCP instructions contract.
+- KB_LANG: language of server error/validation messages (zh/en/auto).
+- KB_MEMORY_LANG: language used when writing memories (auto = OS default language).
+- Custom memory rules: ~/.kb/rules.md plus <data_dir>/rules.md, truncated and injected
+  into the MCP instructions.
 """
 import locale
+from pathlib import Path
 
 from kb.config import get_settings
 
@@ -28,6 +35,55 @@ def detect_lang() -> str:
     return "en"
 
 
+# 常见语言代码 → 语言名（供 MCP instructions 明确要求 agent 使用的书写语言）
+_LANG_NAMES: dict[str, str] = {
+    "zh": "Chinese (简体中文)",
+    "en": "English",
+    "ja": "Japanese (日本語)",
+    "ko": "Korean (한국어)",
+    "de": "German (Deutsch)",
+    "fr": "French (Français)",
+    "es": "Spanish (Español)",
+    "pt": "Portuguese (Português)",
+    "it": "Italian (Italiano)",
+    "ru": "Russian (Русский)",
+    "ar": "Arabic (العربية)",
+    "hi": "Hindi (हिन्दी)",
+    "nl": "Dutch (Nederlands)",
+    "pl": "Polish (Polski)",
+    "tr": "Turkish (Türkçe)",
+}
+
+
+def system_language_code() -> str:
+    """操作系统默认语言代码（如 zh-CN / fr-FR）；检测失败回退 en。
+    English: OS default language code (e.g. zh-CN / fr-FR); falls back to en."""
+    code = ""
+    try:
+        code = locale.getlocale()[0] or ""
+    except Exception:
+        pass
+    if not code:
+        try:
+            code, _ = locale.getdefaultlocale()
+        except Exception:
+            pass
+    return (code or "en").replace("_", "-")
+
+
+def memory_lang() -> str:
+    """记忆书写语言名：KB_MEMORY_LANG 显式指定优先，auto 按操作系统语言。
+    English: Display name of the memory-writing language: KB_MEMORY_LANG wins;
+    auto follows the OS language."""
+    try:
+        cfg = (get_settings().memory_lang or "auto").strip().lower()
+    except Exception:
+        cfg = "auto"
+    code = system_language_code() if cfg == "auto" else cfg
+    base = code.replace("_", "-").split("-")[0].lower()
+    return _LANG_NAMES.get(base, code or "English")
+
+
 # 消息表：key → {zh, en}
 _MESSAGES: dict[str, dict[str, str]] = {
     # 校验类（service.validate_* 供 MCP/REST 共用）
@@ -44,8 +100,8 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "en": "invalid client: only letters/digits/CJK/underscore/hyphen/space/dot allowed, 1~64 chars (got {v!r}; omit for auto-detect)",
     },
     "project_format": {
-        "zh": "project 格式非法：仅允许字母/数字/中文/下划线/连字符，1~64 字符（当前：{v!r}）",
-        "en": "invalid project: only letters/digits/CJK/underscore/hyphen allowed, 1~64 chars (got {v!r})",
+        "zh": "project 格式非法：仅允许字母/数字/中文/下划线/连字符，1~64 字符且不能是系统保留名（当前：{v!r}）",
+        "en": "invalid project: only letters/digits/CJK/underscore/hyphen allowed, 1~64 chars, reserved OS names rejected (got {v!r})",
     },
     # 业务错误（MCP 工具返回的错误消息）
     "content_blank": {
@@ -98,16 +154,44 @@ def t(key: str, **fmt) -> str:
         return text
 
 
-# ---- MCP server instructions（v3 全共享接入规约，2026-08-31）----
-# 跨客户端全局提示词载体：任何客户端挂载 MCP 后自动注入 AI 上下文，
-# 无需手动加 skill / 客户端全局规则；中英双语按系统语言选一套（KB_LANG=auto 检测）。
-# 核心：不先做健康探测（agent 探测 localhost 极易被代理/沙箱拦截而误报"服务未启动"）、
-# 反馈极简（只报记了/没记+原因）、记忆全共享。
+def custom_rules() -> str:
+    """读取用户自定义记忆规则：全局 ~/.kb/rules.md 在前，本安装 rules.md 在后，
+    拼接后按 KB_RULES_MAX_CHARS 截断（默认 4000）。
+    English: Load user-defined memory rules: the global ~/.kb/rules.md first, then
+    this installation's rules.md, joined and truncated to KB_RULES_MAX_CHARS (4000)."""
+    try:
+        settings = get_settings()
+    except Exception:
+        return ""
+    paths = [Path.home() / ".kb" / "rules.md", settings.rules_file]
+    parts: list[str] = []
+    for path in paths:
+        try:
+            if path.is_file():
+                text = path.read_text(encoding="utf-8").strip()
+                if text:
+                    parts.append(text)
+        except OSError:
+            continue
+    limit = max(0, int(settings.rules_max_chars or 0))
+    return "\n\n".join(parts)[:limit]
+
+
+# ---- MCP server instructions（v2.1 接入规约，2026-10-20）----
+# 跨客户端全局提示词载体：任何客户端挂载 MCP 后自动注入 AI 上下文；
+# 语言按 KB_MEMORY_LANG/系统语言确定，并注入用户自定义记忆规则。
+# 核心：不要求先做健康探测、反馈极简、project 隔离项目记忆、全局记忆共享。
 _MCP_INSTRUCTIONS: dict[str, str] = {
     "zh": """你是连接到 kb（本地 Agent 记忆与知识服务）的助手。kb 是本机常驻服务，你现在就能直接调用它的 MCP 工具写入/检索记忆与知识，默认情况下服务在正常运行，无需也不要求事前探测（health check）——直接调用工具即可，一切正常时请继续工作。
 
-【身份与共享】
-- 记忆与知识全共享：任何客户端/任务写入的记忆对所有会话可见，无需传 client/project（它们仅用于审计归类）；client 通常由系统自动识别，你不需要自报身份。
+【身份与项目】
+- client 由系统自动识别，你不需要自报身份，也不要展示。
+- project 用于区分不同项目的记忆：当用户明确在某个项目上下文中工作（提到项目名、仓库名或项目目录）时，将该项目的稳定短名传给 project 参数；同一项目始终用同一个名字。
+- 项目记忆只在该 project 下可见；不传 project 写入的是全局记忆（所有项目可见），适合用户偏好、通用事实与跨项目约定。不确定项目名时不要猜测：写全局或先问用户。
+- 检索时传 project 会同时覆盖该项目与全局记忆；不传只看全局。
+
+【记忆语言】
+- 写入记忆一律使用 {memory_lang}；专有名词、代码、命令、路径保持原文，不要翻译。
 
 【何时写入记忆（write_memory，内容精炼 1~3 句）】
 1. 用户偏好：主题、工具链、代码风格、命名习惯、沟通方式。
@@ -128,8 +212,14 @@ _MCP_INSTRUCTIONS: dict[str, str] = {
 - 若 MCP 工具调用报连接失败（服务确实不可达），简提"kb 服务未启动，需先运行 python -m kb serve"，不要臆造结果。""",
     "en": """You are connected to kb, a local Agent memory & knowledge service. kb is a resident local service whose MCP tools you can call right now to write/retrieve memories and knowledge. It is normally running; no health check or pre-probing is required — just call the tools directly and keep working when things are normal.
 
-[Identity & sharing]
-- Memories and knowledge are fully shared: anything written by any client/task is visible to every session. You do not need to pass client/project (they are audit-bucketing only); client is auto-detected — never self-report identity.
+[Identity & projects]
+- The client is auto-detected; never self-report or display it.
+- project separates memories between projects: when the user is clearly working in a project context (project name, repository name, or project directory), pass that project's stable short name as project; always use the same name for the same project.
+- Project memories are visible only under that project. Without project, writes go to global memory (visible to every project) — suitable for user preferences, general facts, and cross-project conventions. Never guess a project name: write globally or ask the user.
+- Searching with project covers that project plus global memory; without it, only global memory.
+
+[Memory language]
+- Always write memories in {memory_lang}; keep proper nouns, code, commands, and paths unchanged — do not translate them.
 
 [When to write memory (write_memory, 1-3 concise sentences)]
 1. User preferences: themes, toolchain, code style, naming habits, communication style.
@@ -153,6 +243,15 @@ Do NOT write: chit-chat, transient computation, implementation details directly 
 
 
 def mcp_instructions() -> str:
-    """按当前系统语言返回 MCP server instructions 全文（zh/en）。
-    English: Return the full MCP server instructions for the current system language."""
-    return _MCP_INSTRUCTIONS.get(detect_lang()) or _MCP_INSTRUCTIONS["en"]
+    """按当前系统语言返回 MCP instructions，并注入记忆语言与用户自定义规则。
+    English: Return the MCP instructions for the current system language, with the
+    memory language and user-defined rules injected."""
+    lang = detect_lang()
+    text = (_MCP_INSTRUCTIONS.get(lang) or _MCP_INSTRUCTIONS["en"]).format(
+        memory_lang=memory_lang())
+    rules = custom_rules()
+    if not rules:
+        return text
+    if lang == "zh":
+        return text + "\n\n【用户自定义记忆规则（优先遵守）】\n" + rules
+    return text + "\n\n[User-defined memory rules (take precedence)]\n" + rules

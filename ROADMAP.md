@@ -3,7 +3,7 @@
 > **给你看的**：项目全貌、发展路线、当前进度，一页读完。树形结构，从根到叶。
 > AI 助手请读 AGENTS.md + PROJECT.md（含实施细节）；本文件是总线视角的人类入口。
 >
-> 最后更新：2026-10-19 ｜ 总线版本：v3.2（kb 单主线；v2.0.0 交付加固收口）
+> 最后更新：2026-10-20 ｜ 总线版本：v3.3（kb 单主线；v2.1.0 项目记忆 / PyPI 分发 / 资源占用）
 >
 > English: [ROADMAP_EN.md](ROADMAP_EN.md)
 
@@ -59,6 +59,12 @@ rag-kb —— 本地 Agent 记忆与知识服务
 │       ├── ✅ Windows 一键启停脚本（.env 端口 / 无控制台不卡 GPU 询问 / 三路停止）
 │       └── ✅ 用户视角 E2E 28/28 + 34/34；全量回归 395 项全绿
 │
+│   └── A6 v2.1.0 项目记忆与分发 ……………… ✅ 已交付（2026-10-20）
+│       ├── ✅ 项目分库（projects/<project>/ 物理隔离，项目检索=子库+全局，LRU 缓存）
+│       ├── ✅ PyPI 包 kb-memory 2.1.0（核心依赖精简 + [ingest]/[llm]/[full] extras）
+│       ├── ✅ skill 引导安装 bootstrap.py（先计划、用户确认后安装）+ 服务发现 kb where / 自启
+│       ├── ✅ 空闲卸载（默认 600s）+ 记忆语言跟随系统 + 自定义规则注入 + 文档瘦身
+│
 ├── 🌱 支线（按需启动，不占主线资源）
 │   └── 🔲 L2 终端 REPL（系统终端做交互点，备选方案）
 │
@@ -72,11 +78,11 @@ rag-kb —— 本地 Agent 记忆与知识服务
 ```
 A1 ✅ → A2 鉴权 ✅ → A2.5 生态合规 🚧（仅剩 MCP Registry 提交，待用户操作）
         → A3 记忆治理 ✅ → A3.5 检索质量 ✅ → A4 易用性 ✅（CLI 交付，Web UI 砍掉）
-        → A5 v2.0.0 交付加固 ✅（2026-10-19）
+        → A5 v2.0.0 交付加固 ✅（2026-10-19）→ A6 v2.1.0 项目记忆与分发 ✅（2026-10-20）
         —— 规划内节点全部完成，后续新需求先修订设计文档再立项
 ```
 
-**当前位置**（2026-10-19）：**v2.0.0 交付加固已收口**——轻量默认模型、嵌入失败可诊断、同源原子替换、Windows 一键脚本、Agensi 独立 skill 包均已落地；用户视角 E2E 两轮 28/28 + 34/34，`tests/` 全量 395 项全绿，待人工验收。A2.5 仅剩 MCP Registry / awesome-mcp-servers 提交（待用户确认合并）。战略依据：根目录《评估报告》双报告 + 用户决策。
+**当前位置**（2026-10-20）：**v2.1.0 已交付**——项目分库（`kb_data/projects/<project>/` 物理隔离，项目检索 = 子库 + 全局）、PyPI 包 `kb-memory` 2.1.0（依赖瘦身 + extras + Linux CPU torch 引导）、skill 自举安装 / 服务发现 / 开机自启、空闲卸载、记忆语言与自定义规则、历史文档本地归档均已落地；`tests/` 全量 417 项通过 / 1 跳过，待人工验收。A2.5 仅剩 MCP Registry / awesome-mcp-servers 提交（待用户确认合并）。
 
 ## 3. 优先级原则（为什么这么排）
 
@@ -120,11 +126,8 @@ A1 ✅ → A2 鉴权 ✅ → A2.5 生态合规 🚧（仅剩 MCP Registry 提交
 
 | 总线节点 | 详细计划文档 |
 |---|---|
-| A1.2 日志 | `docs/superpowers/specs/2026-08-24-logging-design.md`（N17-N18） |
-| A2-A4 | `docs/superpowers/plans/2026-08-24-p2-roadmap.md` |
-| A2 | `docs/superpowers/specs/2026-08-26-p2-auth-design.md`（已交付，2026-08-27） |
-| A3.5 | `docs/superpowers/specs/2026-08-28-a35-retrieval-quality-design.md`（已交付，2026-08-28） |
-| A4 | `docs/superpowers/specs/2026-08-28-a4-cli-design.md`（已交付，2026-08-28；Web UI 砍掉） |
-| A5 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` §3.1（2026-10-19 轻量优先修订） |
+| A1.2 / A2 / A3.5 / A4 | 历史 spec 已交付，归档本地 `_archive/docs/`（不上传） |
+| A5 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` §3.1（轻量优先修订） |
+| **A6（当前）** | `docs/superpowers/specs/2026-10-20-kb-v2.1-design.md`（项目分库/分发/资源/语言/规则/验收） |
 | 项目状态/接力 | `PROJECT.md`（AI 接力入口） |
 | 使用方法 | `docs/USER_GUIDE.md`（人类使用入口） |

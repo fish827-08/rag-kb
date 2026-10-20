@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kb-memory"
-version = "2.0.0"
+version = "2.1.0"
 description = "Local-first agent memory & knowledge service: hybrid retrieval + memory governance (decay / dedup / freshness), REST + MCP dual protocol, fully usable offline without an LLM"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,8 +20,8 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
-    # 与 requirements.txt 同步（设计文档第 3 节）；全部带上界防版本漂移（§3.2，2026-10-19）
-    # torch 不显式指定，由 sentence-transformers 拉取 PyPI 默认版（Windows 为 CPU 版）
+    # 核心：服务运行 + 记忆存取 + 混合检索（torch 由 sentence-transformers 拉取；
+    # Linux 安装脚本会先装 CPU 轮子，避免默认 CUDA 轮子带来数 GB 下载）
     "fastapi>=0.110,<1.0",
     "uvicorn[standard]>=0.29,<1.0",
     "mcp>=2.0,<3.0",
@@ -30,18 +30,33 @@ dependencies = [
     "jieba>=0.42,<0.43",
     "sentence-transformers>=3.0,<7.0",
     "transformers>=4.40,<6",
-    "openai>=1.0,<4.0",
     "httpx>=0.27,<1.0",
+    "langchain-text-splitters>=0.3,<2.0",
+    "pydantic-settings>=2.0,<3.0",
+    "typer>=0.12,<1.0",
+    "rich>=13.0,<16.0",
+]
+
+[project.optional-dependencies]
+# 文档/网页摄取 + 目录监听（缺省安装只做记忆存取与纯文本/Markdown 摄取）
+ingest = [
     "pypdf>=4.0,<7.0",
     "python-docx>=1.1,<2.0",
     "markitdown>=0.1,<0.2",
     "trafilatura>=1.8,<3.0",
     "lxml_html_clean>=0.4,<1.0",
     "watchdog>=4.0,<7.0",
-    "langchain-text-splitters>=0.3,<2.0",
-    "pydantic-settings>=2.0,<3.0",
-    "typer>=0.12,<1.0",
-    "rich>=13.0,<16.0",
+]
+# 云端 LLM（/ask 的 cloud/auto 模式）
+llm = ["openai>=1.0,<4.0"]
+full = [
+    "pypdf>=4.0,<7.0",
+    "python-docx>=1.1,<2.0",
+    "markitdown>=0.1,<0.2",
+    "trafilatura>=1.8,<3.0",
+    "lxml_html_clean>=0.4,<1.0",
+    "watchdog>=4.0,<7.0",
+    "openai>=1.0,<4.0",
 ]
 
 [project.urls]

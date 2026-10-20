@@ -31,7 +31,7 @@ Works from anywhere in the repo (auto-resolves the repo root).
 
 ## kb-memory skill（客户端无关的接入规约）
 
-仓库内 `skills/kb-memory/SKILL.md` 是 kb 接入规约（v3 全共享、MCP 8 工具、HTTP 兜底端点、
+仓库内 `skills/kb-memory/SKILL.md` 是 kb 接入规约（v2.1 项目子库、MCP 8 工具、HTTP 兜底端点、
 极简反馈原则——成功只轻提"已记住你的偏好"，失败才说原因，不要求先探测服务），
 采用 **Anthropic Skills 开格式**，与具体客户端无关，
 供任意 AI 客户端（TraeWork / Claude Code / Cursor / 自建 Agent）作为可触发 skill 使用。

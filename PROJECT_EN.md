@@ -3,7 +3,7 @@
 > **For any AI assistant taking over**: first read [AGENTS.md](AGENTS.md) (work rules & red lines), then this document (project status); then act per "Chapter 5: Handoff Guide".
 > Reading these two is enough to take over — no need to ask the user for history.
 >
-> Last updated: 2026-10-19 ｜ Maintainer: docs/test AI (per AGENTS.md role split) ｜ Updated with every milestone/node
+> Last updated: 2026-10-20 ｜ Maintainer: docs/test AI (per AGENTS.md role split) ｜ Updated with every milestone/node
 
 ## 1. What This Project Is
 
@@ -27,7 +27,7 @@
 
 ## 2. Current Progress (dashboard)
 
-### kb memory service — v2.0.0 delivery hardening (P1/P2 continuous iteration)
+### kb memory service — v2.1.0 project memory & distribution (P1/P2 continuous iteration)
 
 | Milestone | Content | Status |
 |---|---|---|
@@ -37,7 +37,7 @@
 | M4 (N13-N16) | doc ingestion (pdf/docx/md/txt), web fetch, dir watcher, README | ✅ 2026-08-24 |
 | v1.0.1 hotfix | top_k/mode/empty-content validation → 422, MCP entry validation, SSE charset | ✅ 2026-08-24 |
 
-- Test baseline: **395 green** (full regression on 2026-10-19; historically +68 added by A3.5+A4: reranker/sparse/eval/perf/cli five test files, branch `feature/a-line-remaining`)
+- Test baseline: **417 passed / 1 skipped** (full regression on 2026-10-20; historically +68 added by A3.5+A4: reranker/sparse/eval/perf/cli five test files, branch `feature/a-line-remaining`)
 - Bench: hybrid search 26ms, /ask end-to-end ~2s (local qwen3:4b)
 - Tags: `node-01`~`node-16`, `v1.0.0`, `v1.0.1` (all pushed to Gitee)
 - v1.0.2: JSON charset fixed (TASK-0003/0038/0045, with test asserts)
@@ -55,8 +55,9 @@
 - **A4 usability delivered** (2026-08-28, N28, CLI-first; **Web UI cancelled** — eval-report conclusion, spec: `2026-08-28-a4-cli-design.md`):
   - `kb stats`: type distribution / hot top / stale distribution (read-only)
   - `kb ask`: terminal RAG Q&A; LLM-absent degrades to retrieval hits (exit code 1)
-- **v3 shared memory shipped** (2026-08-31): (client, project) isolation removed; all
-  memories/knowledge are shared and client/project remain audit metadata only.
+- **v3 shared memory** (2026-08-31, historical spec archived): (client, project)
+  isolation removed; **superseded by v2.1** — `project` now writes to an isolated
+  sub-store, while global (no project) memory remains shared.
 - **Hybrid fusion hardening** (2026-09-01, N32/N33): min-max normalized, evenly weighted
   fusion across active retrieval legs; fixes cross-language/proper-noun recall regressions.
 - **v2.0.0 delivery hardening** (2026-10-19, for real first-time users and Agensi delivery):
@@ -72,6 +73,24 @@
     (SKILL.md at zip root; no tests, runtime data or secrets)
   - User-perspective E2E: baseline 28/28 + supplemental 34/34 (isolated auth/bad-model
     instances, CLI, MCP stdio, skill zip)
+- **v2.1.0: project memory / PyPI distribution / resource footprint** (2026-10-20, spec:
+  `docs/superpowers/specs/2026-10-20-kb-v2.1-design.md`):
+  - Per-project sub-stores `kb_data/projects/<project>/` with physical isolation; project
+    search = sub-store + global (default +0.05 boost); LRU cap `KB_PROJECT_CACHE_SIZE=4`
+  - PyPI package `kb-memory` 2.1.0 with slim core deps and `[ingest]` / `[llm]` / `[full]`
+    extras; Linux bootstrap pre-installs the CPU torch wheel
+  - Skill bootstrap `skills/kb-memory/bootstrap.py` (stdlib only): detect → show plan →
+    install from PyPI and start only after `--yes`; `--status` / `--start-only` answer
+    "where is kb installed and how do I start it"
+  - Discovery and autostart: `~/.kb/install.json` → PATH → importlib.metadata;
+    `kb where`, `kb autostart enable|disable|status`
+  - Idle unload: embedding model unloads after `KB_IDLE_UNLOAD_SECONDS=600`
+    (state back to `unloaded`, CUDA cache released); `serve` runs a watchdog thread
+  - Memory language: `KB_MEMORY_LANG=auto` follows the OS language via MCP instructions
+  - Custom rules: `~/.kb/rules.md` + `<data_dir>/rules.md` injected into MCP instructions,
+    truncated at `KB_RULES_MAX_CHARS`
+  - Docs slimming: repo keeps core docs + base design + v2.1 spec; historical specs/plans
+    archived locally under `_archive/docs/` (not uploaded)
 
 ### Development bus — kb single mainline (2026-08-27 strategic shift)
 
@@ -95,7 +114,7 @@ rag-kb/
 ├── ROADMAP.md           # project bus (human entry, tree+progress)
 ├── README.md            # kb product doc (quick start/MCP mount/endpoint cheat-sheet)
 ├── kb/                  # kb service source (see design doc 4.2; incl. reranker/sparse/eval)
-├── tests/               # kb acceptance tests (395, incl. eval_zh_50.jsonl dataset)
+├── tests/               # kb acceptance tests (417 passed / 1 skipped, incl. eval_zh_50.jsonl)
 ├── scripts/             # one-click start/stop scripts (windows/ + linux/ reserved)
 ├── docs/superpowers/    # kb design docs (specs) & node plans (plans)
 ├── kb_data/             # kb runtime data (ChromaDB + runtime.json, gitignored)
@@ -111,7 +130,7 @@ python -m kb serve                    # default 127.0.0.1:8000
 # or one-click: scripts\windows\start_kb.bat / start_kb_console.bat / stop_kb.bat
 
 # kb tests (inside venv)
-venv\Scripts\python.exe -m pytest tests/ -q            # 395
+venv\Scripts\python.exe -m pytest tests/ -q            # 417 passed / 1 skipped
 ```
 
 ## 5. Handoff Guide (new AI act per this)
@@ -128,10 +147,13 @@ venv\Scripts\python.exe -m pytest tests/ -q            # 395
 |---|---|
 | `ROADMAP.md` | **project dev bus** (human entry: tree+routes+progress) |
 | `docs/USER_GUIDE.md` | **user manual** (human user entry: install/mount/FAQ) |
-| `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | kb only design (req/arch/API/bench) |
-| `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | kb node plan N1-N16 (all ✅) |
-| `docs/superpowers/specs/2026-08-24-logging-design.md` | logging design (bus A1.2, N17-N18) |
-| `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | kb feature route (bus A2-A4) |
+| `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | kb base design (req/arch/API/bench; v2.1 wins on conflict) |
+| `docs/superpowers/specs/2026-10-20-kb-v2.1-design.md` | **current v2.1 design** (projects/distribution/resources/language/rules/acceptance) |
+| `docs/DEV_HANDBOOK.md` | developer handbook (layers, call chains, function index, config, red lines) |
+| `skills/kb-memory/` | standalone skill package (`SKILL.md` + `bootstrap.py`), built by `python scripts/build_skill_package.py` |
+
+Historical specs/plans were moved to local `_archive/docs/` (git-ignored, never uploaded)
+and are no longer a development basis.
 
 ## 7. Environment Notes (see AGENTS.md §7)
 

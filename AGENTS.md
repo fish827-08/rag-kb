@@ -6,7 +6,7 @@
 
 1. **开始任何编码工作前，先阅读与本次改动相关的设计文档**：改动涉及哪个模块/功能，就通读对应的 spec 与计划（完整文档清单见第 1 节）。核心基线 `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` 定义需求、架构与 API 的方式适用于全项目，是新人入门必读。
 2. 实现与设计文档冲突时：停下来向用户确认，先修订文档再改代码。
-3. 仓库内除设计文档与本文件外的所有文档均已作废（见第 1 节），**禁止从中提取需求、架构或约定**。
+3. **未在第 1 节列出的文档均已作废**，禁止从中提取需求、架构或约定；`_archive/` 仅本地保留、不上传。
 
 ### 验证协议（2026-08-31 定稿）
 
@@ -21,22 +21,19 @@
 
 | 路径 | 状态 | 说明 |
 |---|---|---|
-| `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | ✅ 唯一有效设计 | 需求、架构、API、里程碑全在这里（已实施完成，2026-08-24 收口） |
+| `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | ✅ 有效（基础基线） | 需求、架构、API、里程碑基础定义；与 v2.1 冲突时以 v2.1 为准 |
+| `docs/superpowers/specs/2026-10-20-kb-v2.1-design.md` | ✅ 有效（当前设计） | **v2.1 唯一新增设计依据**：项目分库、PyPI 分发、skill 引导安装、空闲卸载、记忆语言、自定义规则、文档策略、验收 |
 | `AGENTS.md`（本文件） | ✅ 有效 | AI 工作规则 |
-| `ROADMAP.md` | ✅ 有效 | **项目发展总线设计书**（人类入口：树形路线+进度；2026-08-24 v2 总线定稿） |
-| `PROJECT.md` | ✅ 有效 | **接力文档**（项目状态/进度看板/接手指南；新 AI 必读第 2 份，2026-08-24 新增） |
-| `docs/USER_GUIDE.md` | ✅ 有效 | **用户使用手册**（人类用户入口：kb 使用 + MCP 挂载，2026-08-24 新增） |
-| `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | ✅ 有效 | 节点计划（门禁与验收测试，N1-N16 全部完成） |
-| `docs/superpowers/specs/2026-08-24-logging-design.md` | ✅ 有效 | 日志设计（总线 A1.2，N17-N18 实施依据） |
-| `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | ✅ 有效 | kb 功能路线（总线 A2-A4：鉴权→遗忘→CLI/Web UI） |
-| `README.md` | ✅ 有效 | 项目说明（N16 按新定位重写：快速开始 / MCP 挂载 / 端点速查） |
-| `docs/AGENT_PROMPT.md` / `AGENT_PROMPT_EN.md` | ✅ 有效 | 通用 Agent 接入提示词（客户端无关；另封装为 `skills/kb-memory/SKILL.md`，安装见 scripts/README.md） |
-| `skills/kb-memory/` + `scripts/build_skill_package.py` | ✅ 有效 | **Agensi 独立 skill 包**（zip 根 `SKILL.md` + MCP/env 模板；不含测试、运行数据或密钥） |
-| `docs/DEV_HANDBOOK.md` | ✅ 有效 | **开发者维护手册**（架构分层、调用链、函数索引、配置与红线；按代码校订，行号锚点为快照） |
-| `docs/superpowers/specs/2026-08-30-memory-scope-refactor-design.md` | ✅ 有效（隔离语义已取代） | **记忆范围重构 v2（2026-08-30 收口）**：隔离键改 client+project（agent_id 降为主键冗余）、MCP 工具去 agent_id、审计文件 client__project、遗忘时钟注入验证；**其 (client, project) 隔离语义已被 v3 取代**（见下行） |
-| `docs/superpowers/specs/2026-08-31-memory-share-refactor-design.md` | ✅ 有效 | **记忆全共享 v3（2026-08-31 定稿）**：去除 (client, project) 隔离——所有记忆/知识全共享，client/project 降级为审计归类与元数据；取代 v2 的隔离语义 |
+| `ROADMAP.md` / `ROADMAP_EN.md` | ✅ 有效 | **项目发展总线设计书**（人类入口：树形路线+进度） |
+| `PROJECT.md` / `PROJECT_EN.md` | ✅ 有效 | **接力文档**（项目状态/进度看板/接手指南；新 AI 必读第 2 份） |
+| `README.md` / `README_EN.md` | ✅ 有效 | 项目说明（快速开始 / MCP 挂载 / 端点速查 / PyPI 安装） |
+| `docs/USER_GUIDE.md` / `USER_GUIDE_EN.md` | ✅ 有效 | **用户使用手册**（人类用户入口：kb 使用 + MCP 挂载） |
+| `docs/AGENT_PROMPT.md` / `AGENT_PROMPT_EN.md` | ✅ 有效 | 通用 Agent 接入提示词（客户端无关；另封装为 `skills/kb-memory/SKILL.md`） |
+| `skills/kb-memory/` + `scripts/build_skill_package.py` | ✅ 有效 | **独立 skill 包**（zip 根 `SKILL.md` + `bootstrap.py` 引导安装 + MCP/env 模板；不含测试、运行数据或密钥） |
+| `docs/DEV_HANDBOOK.md` | ✅ 有效 | **开发者维护手册**（架构分层、调用链、函数索引、配置与红线；行号锚点为快照） |
+| `SECURITY.md` / `SECURITY_EN.md` | ✅ 有效 | 安全说明（本地优先、鉴权、敏感数据边界） |
 | `.mcp.json` | ✅ 有效 | 项目级 MCP 挂载配置（Claude Code 等在本目录启动即连 kb 服务） |
-| `_archive/`（含旧 `README.md`、旧 `ROADMAP.md`、`step_doc/`、`notes/`、`rag_kb/`、`app/`、`demo.py`、`test_py/`、`data/`） | ❌ 已归档（2026-08-23/24） | 旧学习项目全部内容；**禁止参考其架构与实现，不在其上续写**（注意：归档内旧 ROADMAP.md 与根目录新 ROADMAP.md 无关） |
+| `_archive/`（旧学习项目 + `_archive/docs/` 历史 spec/plan） | ❌ 已归档，**不上传** | 历史设计/计划与旧学习项目仅本地保留；**禁止从中提取当前需求**，不在其上续写 |
 
 ## 2. 项目定位（一句话）
 
@@ -72,9 +69,9 @@
 
 ### 开发流程（节点门禁制）
 
-1. 开发严格按节点计划串行推进：**`docs/superpowers/plans/2026-08-23-kb-dev-nodes.md`**。
-2. 每个节点必须：**相关测试**通过（重大变更按第 0 节验证协议跑全量）→ git 提交（含测试）→ 打节点 tag（如 `node-01`）→ 人工确认后才能进入下一节点。**禁止并行开发多个节点，禁止跳过未通过门禁的节点**。
-3. 节点验收测试由文档/测试 AI 提供或评审；开发 AI 也可补充单元测试，但验收测试不得自行修改（发现测试本身有误时提出，由文档 AI 修正）。
+1. 开发按当前有效设计推进：新功能以 `docs/superpowers/specs/2026-10-20-kb-v2.1-design.md` 为准，基础需求/架构见 `2026-08-23-kb-memory-service-design.md`。历史节点计划（N1-N16）已归档至 `_archive/docs/`，不再随仓库上传。
+2. 每个改动必须：**相关测试**通过（重大变更按第 0 节验证协议跑全量）→ git 提交（含测试）→ 人工确认后才能进入下一阶段。**禁止跳过未通过门禁的改动**。
+3. 验收测试由文档/测试 AI 提供或评审；开发 AI 也可补充单元测试，但验收测试不得自行修改（发现测试本身有误时提出，由文档 AI 修正）。
 4. 红线：**任何 AI 不得代替人工声称"验收已完成"**；自动化测试全绿只是进入人工验收的前置条件。交付时明确说明"自动化已覆盖 / 待人工验证"两部分。
 
 ### 自动推进模式（2026-08-23 人工授权启用）
@@ -94,9 +91,9 @@
 
 ## 6. 实施顺序
 
-> **状态：✅ 已全部完成（2026-08-24 收口）**。N1-N16 按计划串行推进完毕，M1-M4 四个人工门禁点均通过，tag `node-01` ~ `node-16` 及版本 tag `v1.0.0` 均已推送远程。
+> **状态：N1-N16 已完成（kb v1.0.x），P2（日志/鉴权/治理/CLI）已收口，v2.0.0 已发布到远程；当前为 v2.1.0**（项目分库、PyPI 分发、skill 引导安装、空闲卸载、记忆语言、自定义规则）。
 
-P1（N1-N16，kb v1.0.1）已收口；当前进入 **P2**：按 `docs/superpowers/plans/2026-08-24-p2-roadmap.md` 顺序推进——**P2-1 日志（N17-N18）→ P2-2 鉴权 → P2-3 遗忘机制 → P2-4 Web UI/CLI（CLI 优先）**；Qdrant 已砍掉（违反零常驻约束）。不跳步；各功能 spec 定稿后仍走节点门禁制。后续新需求（P2）先修订设计文档再立项，不在本节点计划上续写。
+后续需求先修订设计文档再实现：当前以 `docs/superpowers/specs/2026-10-20-kb-v2.1-design.md` §7 为验收清单；历史 P2 计划已归档，不再作为开发依据。Qdrant 已砍掉（违反零常驻约束）。不跳步，重大变更全量回归。
 
 ## 7. 环境备忘
 

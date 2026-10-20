@@ -21,8 +21,7 @@ from kb.logging_setup import setup_logging
 from kb.monitor import MonitorAgent, run_once_summary
 from kb.mcp import create_mcp_server
 from kb.service import (EmbeddingUnavailableError, KBService, LLMDisabledError,
-                        UnsupportedFormatError, WebFetchError)
-from kb.watcher import KBWatcher
+                        UnsupportedFormatError, WebFetchError, validate_project)
 
 
 # ---- 日志查看端点常量（N18）----
@@ -165,7 +164,7 @@ class MemoryCreate(BaseModel):
     namespace: str = "default"
     agent_id: str = "default"          # 写入方 Agent 身份（A 节点；推荐任务名）；默认 default
     client: str = "HTTP"               # 来源客户端；REST 未显式传时默认 HTTP（审计文件名不再落 default）
-    project: str | None = None         # 项目名（可选，仅用于审计文件名归类）
+    project: str | None = None         # 项目名（可选，选择项目子库；空=全局库）
 
     @field_validator("content")
     @classmethod
@@ -205,9 +204,10 @@ class MemoryUpdate(BaseModel):
 
 class SearchRequest(BaseModel):
     """检索请求；query 必填，top_k/mode 带默认值，type/tag 可选过滤。
-    agent_id/client/project：v3 仅用于审计归类，不参与隔离（记忆与知识全共享）。
+    project：选择项目子库（空=仅全局库；非空=项目子库+全局库）；agent_id/client 仅审计。
     English: Search request; query is required, top_k/mode have defaults, and type/tag are optional filters.
-    agent_id/client/project: v3 audit-bucketing only — memories and knowledge are fully shared."""
+    project selects the project sub-store (empty = global only; non-empty = project + global);
+    agent_id/client are audit-only."""
     query: str
     top_k: int = Field(default=5, ge=1)
     mode: Literal["hybrid", "vector", "keyword"] = "hybrid"
@@ -215,7 +215,7 @@ class SearchRequest(BaseModel):
     tag: str | None = None
     agent_id: str = "default"
     client: str = "HTTP"
-    project: str | None = None  # 项目名（可选，仅用于审计文件名归类）
+    project: str | None = None  # 项目名（可选，选择项目子库；空=全局库）
 
     @field_validator("query")
     @classmethod
@@ -249,7 +249,7 @@ class AskRequest(BaseModel):
     question: str
     agent_id: str = "default"
     client: str = "HTTP"
-    project: str | None = None  # 项目名（可选，v3 仅用于审计文件名归类）
+    project: str | None = None  # 项目名（可选，选择项目子库；空=全局库）
 
     @field_validator("question")
     @classmethod
@@ -277,9 +277,26 @@ class AskRequest(BaseModel):
 
 
 class WebIngestRequest(BaseModel):
-    """网页摄取请求；url 必填。
-    English: Web-ingest request; url is required."""
+    """网页摄取请求；url 必填，project 可选（指定项目子库）。
+    English: Web-ingest request; url is required, project optionally selects a project sub-store."""
     url: str
+    agent_id: str = "default"
+    client: str = "HTTP"
+    project: str | None = None
+
+    @field_validator("agent_id", "client", "project")
+    @classmethod
+    def identity_fields_valid(cls, v: str | None, info) -> str | None:
+        from kb.service import validate_agent_id, validate_client, validate_project
+        if info.field_name == "agent_id":
+            err = validate_agent_id(v)
+        elif info.field_name == "client":
+            err = validate_client(v)
+        else:
+            err = validate_project(v)
+        if err:
+            raise ValueError(err)
+        return v
 
 
 def _wrap_sse_charset(app):
@@ -508,7 +525,7 @@ def create_app(settings: Settings | None = None,
     # （内部懒创建会话管理器，随后由主应用 lifespan 托管启停）
     mcp_server = create_mcp_server(kb)
     mcp_app = mcp_server.streamable_http_app(streamable_http_path="/")
-    watcher: KBWatcher | None = None
+    watcher = None  # 延迟导入 KBWatcher：未启用目录监听时不加载 watchdog 依赖
     monitor: MonitorAgent | None = None
 
     @asynccontextmanager
@@ -531,8 +548,16 @@ def create_app(settings: Settings | None = None,
             serve_log.warning(warn)
         wd = kb.settings.watch_dir
         if enable_watcher and str(wd) not in ("", "."):
-            watcher = KBWatcher(kb, wd)
-            watcher.start()
+            try:
+                from kb.watcher import KBWatcher
+            except ImportError:
+                # watchdog 属可选 [ingest]：缺失时禁用监听而非拒绝启动
+                serve_log.warning(
+                    "未安装 watchdog，目录监听已禁用"
+                    "（pip install \"kb-memory[ingest]\" 可启用）")
+            else:
+                watcher = KBWatcher(kb, wd)
+                watcher.start()
         # 本地监控 Agent（TASK-0017）：serve 模式默认启用，仅读配置决定间隔；
         # TestClient 测试默认不启动（monitor_enabled 默认 False，测试按需开）
         if kb.settings.monitor_enabled and str(wd) not in ("", "."):
@@ -596,15 +621,25 @@ def create_app(settings: Settings | None = None,
     @app.get("/api/v1/memories")
     def list_memories(type: str | None = None, tag: str | None = None,
                       source: str | None = None, q: str | None = None,
+                      project: str | None = None,
                       limit: int = 100, offset: int = 0) -> dict:
-        records, total = kb.list_memories(type=type, tag=tag, source=source,
-                                          q=q, limit=limit, offset=offset)
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
+        records, total = kb.list_memories(project=project, type=type, tag=tag,
+                                          source=source, q=q, limit=limit,
+                                          offset=offset)
         return {"items": [r.model_dump() for r in records], "total": total}
 
     @app.get("/api/v1/memories/{record_id}")
     def get_memory(record_id: str, agent_id: str = "default",
                    client: str = "HTTP",
                    project: str | None = None) -> dict:
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
         r = kb.get_memory(record_id, agent_id=agent_id, client=client,
                           project=project)
         if r is None:
@@ -617,6 +652,10 @@ def create_app(settings: Settings | None = None,
                       agent_id: str = "default",
                       client: str = "HTTP",
                       project: str | None = None) -> dict:
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
         r = kb.update_memory(record_id, content=body.content, tags=body.tags,
                              agent_id=agent_id, client=client, project=project)
         if r is None:
@@ -628,6 +667,10 @@ def create_app(settings: Settings | None = None,
     def delete_memory(record_id: str, agent_id: str = "default",
                       client: str = "HTTP",
                       project: str | None = None) -> dict:
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
         if not kb.delete_memory(record_id, agent_id=agent_id, client=client,
                                 project=project):
             raise HTTPException(status_code=404,
@@ -636,9 +679,9 @@ def create_app(settings: Settings | None = None,
 
     @app.post("/api/v1/search")
     def search(body: SearchRequest) -> dict:
-        """混合检索（v3：记忆与知识全共享，无 client/project 隔离；身份仅审计）。
-        English: Hybrid retrieval (v3: memories and knowledge fully shared without
-        client/project isolation; identity is audit-bucketing only)."""
+        """混合检索；带 project 时检索该项目子库 + 全局库（项目命中加分）。
+        English: Hybrid retrieval; with project, search that project sub-store plus
+        the global store (project hits are boosted)."""
         results = kb.search(body.query, top_k=body.top_k, mode=body.mode,
                             type=body.type, tag=body.tag,
                             agent_id=body.agent_id, client=body.client,
@@ -666,12 +709,19 @@ def create_app(settings: Settings | None = None,
                         "error": "BAD_REQUEST",
                         "message": "multipart 上传需提供文件字段 file"})
                 name = Path(upload.filename or "upload").name
+                project = form.get("project")
+                if project is not None and not isinstance(project, str):
+                    project = None
+                err = validate_project(project)
+                if err:
+                    raise HTTPException(status_code=422, detail={
+                        "error": "INVALID_ARGUMENT", "message": err})
                 with tempfile.NamedTemporaryFile(
                         suffix=Path(name).suffix, delete=False) as tmp:
                     tmp.write(await upload.read())
                     tmp_path = Path(tmp.name)
                 try:
-                    return kb.add_document(tmp_path, source=name)
+                    return kb.add_document(tmp_path, source=name, project=project)
                 finally:
                     tmp_path.unlink(missing_ok=True)
             try:
@@ -683,10 +733,14 @@ def create_app(settings: Settings | None = None,
                 raise HTTPException(status_code=400, detail={
                     "error": "BAD_REQUEST",
                     "message": "需提供 multipart file 字段或 JSON path 字段"})
-            # JSON path 模式可带 agent_id/client/project（记录归属，仅审计）
+            # JSON path 模式可带 agent_id/client/project（project 选择子库）
             body_agent = (body or {}).get("agent_id", "default")
             body_client = (body or {}).get("client", "HTTP")
             body_project = (body or {}).get("project")
+            err = validate_project(body_project)
+            if err:
+                raise HTTPException(status_code=422, detail={
+                    "error": "INVALID_ARGUMENT", "message": err})
             if not Path(path).is_file():
                 raise HTTPException(status_code=400, detail={
                     "error": "FILE_NOT_FOUND",
@@ -698,34 +752,47 @@ def create_app(settings: Settings | None = None,
                 "error": "UNSUPPORTED_FORMAT", "message": str(exc)})
 
     @app.get("/api/v1/documents")
-    def list_documents() -> dict:
-        """按 source 聚合的文档列表。
-        English: Document list aggregated by source."""
-        return {"items": kb.list_documents()}
+    def list_documents(project: str | None = None) -> dict:
+        """按 source 聚合的文档列表；project 指定子库。
+        English: Document list aggregated by source; project selects the sub-store."""
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
+        return {"items": kb.list_documents(project=project)}
 
     @app.delete("/api/v1/documents/{source}")
-    def delete_document(source: str) -> dict:
-        """按 source 删除文档全部记录。
-        English: Delete all records of a document by source."""
-        return {"deleted": kb.delete_document(source)}
+    def delete_document(source: str, project: str | None = None) -> dict:
+        """按 source 删除文档全部记录；project 指定子库。
+        English: Delete all records of a document by source; project selects the sub-store."""
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
+        return {"deleted": kb.delete_document(source, project=project)}
 
     @app.delete("/api/v1/documents")
-    def delete_document_by_query(source: str = Query(..., min_length=1)) -> dict:
+    def delete_document_by_query(source: str = Query(..., min_length=1),
+                                 project: str | None = None) -> dict:
         """按查询参数删除文档（URL 等含斜杠的 source 必须走这里）。
 
         示例：DELETE /api/v1/documents?source=https%3A%2F%2Fexample.com
         English: Delete a document by query parameter. Sources containing slashes
         (e.g. URLs) must use this route, since a path parameter cannot carry them.
         """
-        return {"deleted": kb.delete_document(source)}
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
+        return {"deleted": kb.delete_document(source, project=project)}
 
     @app.post("/api/v1/ingest/web")
     def ingest_web(body: WebIngestRequest) -> dict:
         """抓取网页正文切分入库；抓取/正文提取失败返回 400 与原因。
         English: Fetch a webpage body, split and ingest it; returns 400 with the reason on fetch/body-extraction failure."""
         try:
-            return kb.add_webpage(body.url, agent_id="default",
-                                 client="HTTP")
+            return kb.add_webpage(body.url, agent_id=body.agent_id,
+                                 client=body.client, project=body.project)
         except WebFetchError as exc:
             raise HTTPException(status_code=400, detail={
                 "error": "WEB_FETCH_FAILED", "message": str(exc)})

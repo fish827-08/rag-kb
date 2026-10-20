@@ -4,7 +4,7 @@
 > Tree-shaped, from root to leaves.
 > AI assistants: read AGENTS.md + PROJECT.md (implementation details); this file is the human-facing bus view.
 >
-> Last updated: 2026-10-19 ｜ Bus version: v3.2 (kb single mainline; v2.0.0 delivery hardening shipped)
+> Last updated: 2026-10-20 ｜ Bus version: v3.3 (kb single mainline; v2.1.0 project memory / PyPI distribution / resource footprint)
 
 ## 0. Vision (one sentence)
 
@@ -58,6 +58,12 @@ rag-kb —— local Agent memory & knowledge service
 │       ├── ✅ Windows one-click start/stop scripts (.env port / no console prompt hang / three-pass stop)
 │       └── ✅ user-perspective E2E 28/28 + 34/34; full regression 395 green
 │
+│   └── A6 v2.1.0 project memory & distribution ………… ✅ delivered (2026-10-20)
+│       ├── ✅ per-project sub-stores (physical isolation; project search = sub-store + global; LRU)
+│       ├── ✅ PyPI package kb-memory 2.1.0 (slim core + [ingest]/[llm]/[full] extras)
+│       ├── ✅ skill bootstrap (plan first, install after user confirmation) + kb where / autostart
+│       ├── ✅ idle unload (600s default) + OS-language memories + custom rules + docs slimming
+│
 ├── 🌱 Side lines (start on demand, no mainline resources)
 │   └── 🔲 L2 terminal REPL (interactive point at system terminal, backup)
 │
@@ -71,11 +77,11 @@ rag-kb —— local Agent memory & knowledge service
 ```
 A1 ✅ → A2 auth ✅ → A2.5 ecosystem 🚧 (only MCP Registry left, user action)
         → A3 memory governance ✅ → A3.5 retrieval quality ✅ → A4 usability ✅ (CLI shipped, Web UI cancelled)
-        → A5 v2.0.0 delivery hardening ✅ (2026-10-19)
+        → A5 v2.0.0 delivery hardening ✅ (2026-10-19) → A6 v2.1.0 project memory & distribution ✅ (2026-10-20)
         —— all in-plan nodes done; new needs: update design docs first, then initiate
 ```
 
-**Current position** (2026-10-19): **v2.0.0 delivery hardening shipped** — lightweight default model, actionable embedding failures, atomic same-source replacement, Windows one-click scripts and the Agensi standalone skill package all landed; user-perspective E2E 28/28 + 34/34, `tests/` full regression 395 green, manual acceptance pending. A2.5 only MCP Registry submission remains (user action). Strategy basis: root-folder 《Evaluation Report》 dual reports + user decision.
+**Current position** (2026-10-20): **v2.1.0 delivered** — per-project sub-stores (`kb_data/projects/<project>/`, project search = sub-store + global), PyPI package `kb-memory` 2.1.0 (slim deps + extras + Linux CPU torch guidance), skill bootstrap / discovery / autostart, idle unload, OS-language memories and custom rules, and local archiving of historical docs all landed; `tests/` full regression 417 passed / 1 skipped, manual acceptance pending. A2.5 only MCP Registry / awesome-mcp-servers submission remains (user action).
 
 ## 3. Priority Principles (why this order)
 
@@ -119,11 +125,8 @@ A1 ✅ → A2 auth ✅ → A2.5 ecosystem 🚧 (only MCP Registry left, user act
 
 | Bus node | Detailed plan doc |
 |---|---|
-| A1.2 logging | `docs/superpowers/specs/2026-08-24-logging-design.md` (N17-N18) |
-| A2-A4 | `docs/superpowers/plans/2026-08-24-p2-roadmap.md` |
-| A2 | `docs/superpowers/specs/2026-08-26-p2-auth-design.md` (delivered, 2026-08-27) |
-| A3.5 | `docs/superpowers/specs/2026-08-28-a35-retrieval-quality-design.md` (delivered, 2026-08-28) |
-| A4 | `docs/superpowers/specs/2026-08-28-a4-cli-design.md` (delivered, 2026-08-28; Web UI cancelled) |
-| A5 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` §3.1 (2026-10-19 lightweight-first revision) |
+| A1.2 / A2 / A3.5 / A4 | Delivered historical specs, archived locally under `_archive/docs/` (not uploaded) |
+| A5 | `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` §3.1 (lightweight-first revision) |
+| **A6 (current)** | `docs/superpowers/specs/2026-10-20-kb-v2.1-design.md` (projects/distribution/resources/language/rules/acceptance) |
 | Project status/relay | `PROJECT.md` (AI handoff entry) |
 | Usage | `docs/USER_GUIDE.md` (human entry) |

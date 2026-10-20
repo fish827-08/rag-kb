@@ -14,6 +14,12 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("kb_data")            # 运行数据根目录
     device: str = ""                            # 空=自动检测；显式设 cpu/cuda 覆盖
+    # ---- v2.1 项目记忆与资源占用 ----
+    project_cache_size: int = 4                 # 同时打开的项目子库上限（LRU）；全局库不计入
+    project_boost: float = 0.05                 # 项目子库命中加分（检索合并时优先项目记忆）
+    idle_unload_seconds: int = 600              # 嵌入模型空闲卸载秒数；0=不卸载
+    memory_lang: str = "auto"                   # 记忆书写语言：auto=系统 locale，或 zh/en
+    rules_max_chars: int = 4000                 # 自定义规则注入上限，防止提示词膨胀
     embed_model: str = "BAAI/bge-small-zh-v1.5"   # 轻量优先（设计文档 §3.1，2026-10-19）：~92MB/512维；可显式换 BAAI/bge-m3
     llm_mode: str = "off"                      # off(默认,完全不加载/调用LLM) | local | auto | cloud
     ollama_base_url: str = "http://localhost:11434"
@@ -80,8 +86,18 @@ class Settings(BaseSettings):
 
     @property
     def chroma_dir(self) -> Path:
-        """ChromaDB 持久化目录。"""
+        """全局库 ChromaDB 持久化目录。"""
         return self.data_dir / "chroma"
+
+    @property
+    def projects_dir(self) -> Path:
+        """项目子库根目录：每个项目一个独立 Chroma/BM25。"""
+        return self.data_dir / "projects"
+
+    @property
+    def rules_file(self) -> Path:
+        """本安装的自定义记忆规则文件。"""
+        return self.data_dir / "rules.md"
 
     @property
     def runtime_file(self) -> Path:

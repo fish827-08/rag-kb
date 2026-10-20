@@ -3,10 +3,11 @@ REM ============================================================
 REM  kb-memory skill 一键安装到常用客户端的用户级 skill 目录。
 REM
 REM   kb-memory 是 kb 记忆服务的接入规约 skill（MCP 工具表 +
-REM   agent_id 身份强制 + 存取审计 + HTTP 兜底），SKILL.md 为
+REM   记忆/项目/语言/自定义规则约定 + HTTP 兜底），SKILL.md 为
 REM   Anthropic 开格式，客户端无关。仓库内 skills\kb-memory\ 是
-REM   唯一事实来源；本脚本把它复制到各客户端的用户级 skills 目录，
-REM   让该客户端的任意项目会话都能识别/触发。
+REM   唯一事实来源；本脚本把它（含 bootstrap.py 引导安装脚本）
+REM   复制到各客户端的用户级 skills 目录，让该客户端的任意项目
+REM   会话都能识别/触发，并可在用户确认后从 PyPI 安装 kb 服务。
 REM
 REM   Usage:
 REM     scripts\windows\install_skill_kb_memory.bat [all|trae|claude|cursor]
@@ -124,6 +125,30 @@ if not "%SRC_SIZE%"=="%DST_SIZE%" (
 )
 
 echo [OK] 已安装并校验通过: %DST_FILE%
+
+REM --- 5. 复制 skill 包其余文件（bootstrap.py 是引导安装/启动入口） ---
+call :copy_extra "bootstrap.py" "%DST_DIR%"
+call :copy_extra "mcp.json" "%DST_DIR%"
+call :copy_extra "env.example" "%DST_DIR%"
+call :copy_extra "README.md" "%DST_DIR%"
+exit /b 0
+
+:copy_extra
+set "EXT_NAME=%~1"
+set "EXT_DST_DIR=%~2"
+if not exist "%CD%\skills\kb-memory\%EXT_NAME%" exit /b 0
+copy /Y "%CD%\skills\kb-memory\%EXT_NAME%" "%EXT_DST_DIR%\%EXT_NAME%" >nul 2>&1
+if errorlevel 1 (
+    echo [FAIL] 复制失败: %EXT_DST_DIR%\%EXT_NAME%
+    exit /b 0
+)
+for %%F in ("%CD%\skills\kb-memory\%EXT_NAME%") do set "EXT_SRC_SIZE=%%~zF"
+for %%F in ("%EXT_DST_DIR%\%EXT_NAME%") do set "EXT_DST_SIZE=%%~zF"
+if not "%EXT_SRC_SIZE%"=="%EXT_DST_SIZE%" (
+    echo [FAIL] 校验失败: %EXT_DST_DIR%\%EXT_NAME% 大小不一致
+    exit /b 0
+)
+echo [OK] 已安装并校验通过: %EXT_DST_DIR%\%EXT_NAME%
 exit /b 0
 
 :finish

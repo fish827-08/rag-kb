@@ -8,9 +8,23 @@ Office 等已知格式（.xlsx/.pptx/...）→ markitdown 兜底；
 提取正文；抓取/提取失败抛 WebFetchError（API 层转 400 + 原因）。
 
 重依赖（pypdf / python-docx / markitdown / langchain-text-splitters /
-httpx / trafilatura）均在函数内延迟导入，服务启动不加载。
+httpx / trafilatura）均在函数内延迟导入，服务启动不加载；其中
+pypdf/python-docx/markitdown/trafilatura 属于可选 extra `[ingest]`，
+缺失时返回带安装指引的可读错误。
 """
 from pathlib import Path
+
+_INGEST_HINT = "请运行 pip install \"kb-memory[ingest]\" 后重试"
+
+
+def _ingest_import(module: str, what: str):
+    """导入摄取可选依赖；缺失时抛带 extra 安装指引的 UnsupportedFormatError。"""
+    import importlib
+    try:
+        return importlib.import_module(module)
+    except ImportError as exc:
+        raise UnsupportedFormatError(
+            f"{what}需要可选依赖 {module}：{_INGEST_HINT}") from exc
 
 # 直接解析的扩展名（.md / .txt 直读原文，不做任何清洗）
 _DIRECT_EXTS = {".md", ".txt"}
@@ -51,22 +65,22 @@ def parse_file(path: Path | str) -> str:
 
 def _parse_pdf(path: Path) -> str:
     """pypdf 逐页提取文本，空页跳过。"""
-    from pypdf import PdfReader
+    PdfReader = _ingest_import("pypdf", "解析 PDF ").PdfReader
     reader = PdfReader(str(path))
     return "\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 def _parse_docx(path: Path) -> str:
     """python-docx 提取全部段落文本。"""
-    from docx import Document
+    Document = _ingest_import("docx", "解析 DOCX ").Document
     doc = Document(str(path))
     return "\n".join(p.text for p in doc.paragraphs)
 
 
 def _parse_markitdown(path: Path) -> str:
     """markitdown 兜底解析（Office 全格式）；解析失败抛 UnsupportedFormatError。"""
+    MarkItDown = _ingest_import("markitdown", "解析 Office 文档 ").MarkItDown
     try:
-        from markitdown import MarkItDown
         return MarkItDown().convert(str(path)).text_content
     except Exception as exc:
         raise UnsupportedFormatError(f"文档解析失败（{path.name}）：{exc}") from exc
@@ -98,7 +112,10 @@ def fetch_webpage(url: str) -> str:
         html = _fetch_html(url)
     except Exception as exc:
         raise WebFetchError(f"网页抓取失败（{url}）：{exc}") from exc
-    import trafilatura
+    try:
+        trafilatura = _ingest_import("trafilatura", "提取网页正文 ")
+    except UnsupportedFormatError as exc:
+        raise WebFetchError(str(exc)) from exc
     text = trafilatura.extract(html)
     if not text:
         raise WebFetchError(f"网页正文提取失败（{url}）：未识别到正文内容")

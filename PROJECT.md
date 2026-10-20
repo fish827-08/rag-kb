@@ -2,7 +2,7 @@
 
 > **给任何接手的 AI 助手**：先读 [AGENTS.md](AGENTS.md)（工作规则与红线），再读本文档（项目状态），然后按第 5 节"接手指南"行动。两份文档读完即可接力，无需追问用户历史。
 >
-> 最后更新：2026-10-19 ｜ 维护者：文档/测试 AI（按 AGENTS.md 角色分工）｜ 本文件随每个里程碑/节点更新
+> 最后更新：2026-10-20 ｜ 维护者：文档/测试 AI（按 AGENTS.md 角色分工）｜ 本文件随每个里程碑/节点更新
 >
 > English: [PROJECT_EN.md](PROJECT_EN.md)
 
@@ -26,7 +26,7 @@
 
 ## 2. 当前进度（看板）
 
-### kb 记忆服务 — v2.0.0 交付加固（P1/P2 主线持续迭代）
+### kb 记忆服务 — v2.1.0 项目记忆与分发（P1/P2 主线持续迭代）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
@@ -36,7 +36,7 @@
 | M4（N13-N16） | 文档摄取（pdf/docx/md/txt）、网页抓取、目录监听、README | ✅ 2026-08-24 |
 | v1.0.1 hotfix | top_k/mode/空内容校验 → 422、MCP 入口校验、SSE charset | ✅ 2026-08-24 |
 
-- 测试基线：**395 项全绿**（2026-10-19 全量回归；历史：A3.5+A4 新增 68 项：reranker/sparse/eval/perf/cli 五个测试文件，分支 `feature/a-line-remaining`）
+- 测试基线：**417 项通过 / 1 项跳过**（2026-10-20 全量回归；历史：A3.5+A4 新增 68 项：reranker/sparse/eval/perf/cli 五个测试文件，分支 `feature/a-line-remaining`）
 - 基准：混合检索 26ms、/ask 端到端 ~2s（本地 qwen3:4b）
 - tag：`node-01`~`node-16`、`v1.0.0`、`v1.0.1`（均已推 Gitee）
 - v1.0.2：JSON charset 已修复（TASK-0003/0038/0045 交付，含测试断言）
@@ -54,11 +54,8 @@
 - **A4 易用性已交付**（2026-08-28，N28，CLI 优先；**Web UI 砍掉**——评估报告定论，spec：`2026-08-28-a4-cli-design.md`）：
   - `kb stats`：类型分布 / 访问热度 top / 陈旧分布（纯读）
   - `kb ask`：终端 RAG 问答，LLM 缺席时降级输出检索命中（退出码 1）
-- **v3 记忆全共享已收口**（2026-08-31，spec：`docs/superpowers/specs/2026-08-31-memory-share-refactor-design.md`）：
-  - 取消 (client, project) 隔离：所有记忆/知识全共享，跨 agent/任务可读同一份用户偏好
-  - client/project 降级为**审计归类与元数据**，不隔离读写（MCP/REST/CLI/检索全部同步）
-  - 验证协议定稿：小改动只跑相关测试、核心架构改变才全量（AGENTS.md §0）
-  - 测试：395 项全绿（2026-10-19 全量回归，隔离断言已反转测试隔离语义）
+- **v3 记忆全共享**（2026-08-31，历史 spec 已归档）：取消 (client, project) 隔离，所有记忆全共享；
+  **该语义已被 v2.1 取代**——现在 `project` 写入独立子库，不传 project 的全局记忆仍全共享
 - **混合检索融合修复收口**（2026-09-01，N32/N33，回归测试 `tests/test_n32_hybrid_fusion_recall.py` 7 项）：
   - hybrid 默认融合从 RRF 排名融合改为**归一化评分加权融合**（每路 min-max 归一化后按**生效路数**均权，候选池放宽 `max(3×top_k, 30)`）
   - 解决跨语言/专有名词召回：中文 query 查不到英文歌名（Poker Face）、纯英文/日文记忆缺席 BM25 路时不再被 ÷总路数稀释挤出 top_k；同语言场景零行为变化
@@ -71,6 +68,15 @@
   - Windows 一键脚本：`.env` 端口解析、pythonw 无控制台不卡 GPU 询问、PID+端口+命令行三路停止
   - 独立 skill 包：`skills/kb-memory/` + `scripts/build_skill_package.py`（zip 根 `SKILL.md`，不含测试/密钥），打包校验 7 项
   - 用户视角 E2E：基础 28/28 + 补充 34/34（隔离实例验证鉴权/坏模型/CLI/MCP stdio/skill 包）
+- **v2.1.0：项目记忆 / PyPI 分发 / 资源占用**（2026-10-20，spec：`docs/superpowers/specs/2026-10-20-kb-v2.1-design.md`）：
+  - 项目分库：`kb_data/projects/<project>/{chroma,bm25_corpus.json,count.txt}` 物理隔离；项目检索 = 子库 + 全局库（默认 +0.05 加分）；LRU 上限 `KB_PROJECT_CACHE_SIZE=4`
+  - 分发：PyPI 包 `kb-memory` 2.1.0，核心依赖精简，新增 `[ingest]` / `[llm]` / `[full]` extras；Linux 引导脚本先装 CPU torch 轮子
+  - skill 自举：`skills/kb-memory/bootstrap.py`（仅标准库）检测 → 展示计划 → 用户 `--yes` 确认后装 venv/PyPI 并启动；`--status` / `--start-only` 解决“不知道服务在哪”
+  - 服务发现与自启：`~/.kb/install.json` → PATH → importlib.metadata；`kb where`、`kb autostart enable|disable|status`
+  - 后台占用：嵌入模型空闲 `KB_IDLE_UNLOAD_SECONDS=600` 自动卸载（状态回 `unloaded`，CUDA 同步释放缓存），`serve` 启 watchdog 线程
+  - 记忆语言：`KB_MEMORY_LANG=auto` 跟随系统语言，经 MCP instructions 约束书写语言
+  - 自定义规则：`~/.kb/rules.md` + `<data_dir>/rules.md` 注入 MCP instructions，超长截断
+  - 文档瘦身：仓库仅保留核心文档 + 基础设计 + v2.1 spec；历史 spec/plan 归档本地 `_archive/docs/`（不上传）
 
 ### 发展总线 — kb 单主线（2026-08-27 战略调整）
 
@@ -94,7 +100,7 @@ rag-kb/
 ├── ROADMAP.md           # 项目发展总线设计书（人类入口，树形路线+进度）
 ├── README.md            # kb 产品说明（快速开始/MCP 挂载/端点速查）
 ├── kb/                  # kb 服务源码（见设计文档 4.2；含 reranker/sparse/eval 等 A3.5/A4 模块）
-├── tests/               # kb 验收测试（395 项，含 eval_zh_50.jsonl 评测数据集）
+├── tests/               # kb 验收测试（417 项通过 / 1 跳过，含 eval_zh_50.jsonl 评测数据集）
 ├── docs/superpowers/    # kb 设计文档（specs）与节点计划（plans）
 ├── skills/kb-memory/    # kb 接入规约 skill（Anthropic 开格式、客户端无关；AGENT_PROMPT 的可触发封装，安装见 scripts/README.md）
 ├── kb_data/             # kb 运行数据（ChromaDB + runtime.json，gitignore）
@@ -109,7 +115,7 @@ rag-kb/
 python -m kb serve                    # 默认 127.0.0.1:8000
 
 # kb 测试（venv 内）
-venv\Scripts\python.exe -m pytest tests/ -q            # 395 项
+venv\Scripts\python.exe -m pytest tests/ -q            # 417 passed / 1 skipped
 ```
 
 ## 5. 接手指南（新 AI 按此行动）
@@ -118,7 +124,7 @@ venv\Scripts\python.exe -m pytest tests/ -q            # 395 项
 2. **读状态**：本文档 + 当前正在实施的设计文档（见第 6 节索引）
 3. **验证环境**：`python -m kb serve` 能启动、测试全绿、git 状态干净
 4. **确认角色**：你是开发 AI（写实现）还是文档/测试 AI（写验收/核验）？按 AGENTS.md 第 5 节职责行动
-5. **接续总线**：读 `ROADMAP.md` 确认当前位置，按对应计划节点走 TDD + 节点门禁制
+5. **接续总线**：读 `ROADMAP.md` 确认当前位置，按当前 v2.1 spec 走 TDD + 验证协议（AGENTS.md §0）
 
 ## 6. 文档索引（唯一有效集）
 
@@ -126,10 +132,12 @@ venv\Scripts\python.exe -m pytest tests/ -q            # 395 项
 |---|---|
 | `ROADMAP.md` | **项目发展总线设计书**（人类入口：树形路线+进度+优先级） |
 | `docs/USER_GUIDE.md` | **用户使用手册**（人类用户入口：安装/挂载/FAQ） |
-| `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | kb 唯一设计（需求/架构/API/基准） |
-| `docs/superpowers/plans/2026-08-23-kb-dev-nodes.md` | kb 节点计划 N1-N16（全部 ✅） |
-| `docs/superpowers/specs/2026-08-24-logging-design.md` | 日志设计（总线 A1.2，N17-N18） |
-| `docs/superpowers/plans/2026-08-24-p2-roadmap.md` | kb 功能路线（总线 A2-A4） |
+| `docs/superpowers/specs/2026-08-23-kb-memory-service-design.md` | kb 基础设计（需求/架构/API/基准；与 v2.1 冲突时以 v2.1 为准） |
+| `docs/superpowers/specs/2026-10-20-kb-v2.1-design.md` | **v2.1 当前设计**（项目分库/分发/资源/语言/规则/验收） |
+| `docs/DEV_HANDBOOK.md` | 开发者维护手册（分层、调用链、函数索引、配置与红线） |
+| `skills/kb-memory/` | 独立 skill 包（`SKILL.md` + `bootstrap.py`），`python scripts/build_skill_package.py` 打包 |
+
+历史 spec/plan 已移至本地 `_archive/docs/`（git 忽略，不上传），不再作为开发依据。
 
 ## 7. 环境备忘（详见 AGENTS.md 第 7 节）
 

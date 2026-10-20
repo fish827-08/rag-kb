@@ -25,11 +25,39 @@
 
 ### 2.1 Install (one-time)
 
+**Option A: install from PyPI (recommended)**
+
+```powershell
+pip install "kb-memory[ingest]"   # core + document/web ingestion; [llm] for Q&A, [full] for both
+```
+
+CPU-only Linux machines should install the CPU torch wheel first (the default CUDA
+wheel is far larger):
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "kb-memory[ingest]"
+```
+
+**Option B: let the skill bootstrap it (needs user confirmation)**
+
+`bootstrap.py` in the skill package uses only the standard library. It prints the
+plan first and never installs without `--yes`:
+
+```bash
+python bootstrap.py --status   # is kb installed, where, is it running?
+python bootstrap.py            # print the install plan only (changes nothing)
+python bootstrap.py --yes      # after confirmation: ~/.kb/venv → PyPI install → start
+```
+
+**Option C: source checkout (development)**
+
 ```powershell
 cd rag-kb
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+pip install -e ".[full]"
 ```
 
 ### 2.2 Start the service
@@ -45,12 +73,15 @@ python -m kb serve
   `embedder.state=error` means the model failed to load and write/search return
   503 `EMBED_MODEL_UNAVAILABLE`
 - **Keep that terminal window open** (or run it in the background); closing it stops the service
+- Not sure where kb is installed or how to start it? `kb where`, or
+  `python bootstrap.py --status` / `--start-only`
 
 > One-click: `scripts\windows\start_kb.bat` (background), `scripts\windows\start_kb_console.bat` (debug console), `scripts\windows\stop_kb.bat` (stop).
 
 ### 2.3 Stop & restart
 
 - Stop: `Ctrl+C` in the service terminal
+- Login autostart: `kb autostart enable` (`disable` / `status` to manage)
 - After restart: MCP-mounted AI clients may show disconnected; refresh/reconnect in the client's MCP panel, or open a new session
 
 ## 3. kb service: daily use
@@ -268,8 +299,10 @@ Copy `.env.example` to `.env` and fill as needed (`.env` isn't committed; keys s
 | Performance tuning | `KB_DEVICE=cuda/cpu`; `KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` |
 | LAN/multi-agent auth | `KB_API_KEY=<≥32 random chars>` enables Bearer/X-API-Key auth (see 4.1) |
 | Memory governance | `KB_DEDUP_ENABLED` / `KB_DECAY_ENABLED` / `KB_FRESHNESS_ENABLED`, all default off (see 3.5) |
-| Fully shared memory | v3 (2026-08-31): all memories/knowledge are shared; (client, project) are audit-only tags, never read/write isolation (see 4.3) |
-| Access audit | `KB_ACCESS_AUDIT_ENABLED` (default on): every access writes a JSON line to `logs/agent-audit/<client>__<project>.log`; query via REST `GET /api/v1/audit?client=<name>[&project=<name>]` or `kb audit --client <name>` (see 4.3) |
+| Project memory | v2.1: `project` writes to `kb_data/projects/<project>/` with physical isolation; omit it for the global store (see 4.1) |
+| Memory language / custom rules | `KB_MEMORY_LANG=auto` (follow OS) or `zh/en/...`; `~/.kb/rules.md` + `<data dir>/rules.md` injected into MCP instructions (see 4.2) |
+| Background footprint | `KB_IDLE_UNLOAD_SECONDS=600`: unload the embedding model after 10 idle minutes (0 = off); reload on next search |
+| Access audit | `KB_ACCESS_AUDIT_ENABLED` (default on): every access writes a JSON line to `logs/agent-audit/<client>__<project>.log`; query via REST `GET /api/v1/audit?client=<name>[&project=<name>]` or `kb audit --client <name>` (see 4.1) |
 
 Full key list: [`.env.example`](../.env.example).
 
@@ -280,21 +313,46 @@ Full key list: [`.env.example`](../.env.example).
 - **Fallback**: the plain-text prompt in `docs/AGENT_PROMPT.md` — paste it into any agent to connect;
   no skill mechanism required. Both sources stay in sync.
 
-### 4.1 Fully shared memory & access audit (v3: client + project as audit-only tags, 2026-08-31)
+### 4.1 Project memory (v2.1), language and custom rules
 
-**Memory is fully shared** (local single-user positioning — all agents/tasks read the same memory):
+**Global store + per-project sub-stores** (v2.1, replacing the v3 "fully shared" model):
 
-- **All memories (`memory`) and knowledge (`doc/web` chunks) are fully shared**: any client,
-  task, or AI can search / read / update / delete every record — no more (client, project)
-  read/write isolation; preferences and decisions are visible across agents and tasks
-- **v2 isolation removed (2026-08-31)**: the (client, project) dual-key isolation proved
-  unworkable for local single-user use — client detection works, but project/task attribution
-  relies on connection/directory context, and missing isolation keys made memories invisible
-  entirely; security boundaries remain `KB_API_KEY`'s job (a real tenant model can come later)
-- **`client` / `project` remain optional**, used only for **audit categorization and metadata**
-  (which client/project a record came from) — they never affect read/write visibility;
-  format validation is kept (invalid values → REST 422 / MCP `INVALID_ARGUMENT`)
-- Old records (long stored under per-project isolation) need no migration — fully searchable from v3 on
+- **No `project`**: the memory goes to the global store, visible to every client/task —
+  use it for user preferences and cross-project facts.
+- **`project="X"`**: the memory goes to `kb_data/projects/X/`, physically isolated from
+  other projects — use it for codebase decisions, architecture facts, task progress and
+  project documents.
+- **`search_memory(project="X")`** searches project X **plus** the global store, with
+  project hits boosted by `KB_PROJECT_BOOST` (default 0.05); omitting `project` searches
+  only the global store.
+- **Read/update/delete by ID**: with `project`, X is checked first and then the global
+  store; without it, global first and then project stores in directory order.
+- Project sub-stores open lazily; `KB_PROJECT_CACHE_SIZE` (default 4) caps concurrently
+  open stores with LRU eviction.
+- Project names: letters/digits/CJK/underscore/hyphen, 1–64 chars; Windows reserved
+  names (CON/NUL/COM1…) are rejected.
+- **`client` remains audit-only** (usually auto-detected) and never affects visibility.
+- Old records from the v3 era stay in the global store; no migration required.
+
+CLI examples:
+
+```powershell
+python -m kb add "this project uses PostgreSQL 16" --project rag-kb
+python -m kb search "database choice" --project rag-kb
+python -m kb add "user prefers Chinese replies"        # no project → global
+```
+
+**Memory language**: `KB_MEMORY_LANG=auto` (default) follows the OS language; set
+`zh` / `en` / `ja` etc. to force one. The server injects this into MCP instructions;
+proper nouns, identifiers and code stay verbatim.
+
+**Custom rules** (when/what to remember, privacy boundaries):
+
+1. `~/.kb/rules.md` — user-level, applies to every project.
+2. `<data dir>/rules.md` — rules for this kb installation.
+
+Both are concatenated and truncated to `KB_RULES_MAX_CHARS` (default 4000), then
+injected into MCP instructions. Rules do not bypass server-side validation.
 
 **Access audit** (who stored/read what, from which client/project):
 

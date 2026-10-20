@@ -2,17 +2,17 @@
 English: Unified business orchestration that assembles store / embedder / bm25 / retriever / llm."""
 import math
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
 
-from kb.bm25 import BM25Index
 from kb.config import Settings, get_settings
 from kb.embedder import Embedder, EmbeddingUnavailableError
 from kb.ingest import (UnsupportedFormatError, WebFetchError, chunk_text,
                        fetch_webpage, parse_file)
 from kb.llm import LLMClient, LLMStatus
 from kb.models import Record, RecordType
-from kb.retriever import HybridRetriever
+from kb.scopes import ScopeManager
 from kb.sparse import SparseEmbedder as _SparseEmbedderClass
 from kb.sparse import SparseIndex
 from kb.storage import ChromaStore
@@ -82,16 +82,25 @@ def validate_client(client: str | None) -> str | None:
     return None
 
 
+_WINDOWS_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
 def validate_project(project: str | None) -> str | None:
     """校验 project（项目名）格式；空值视为未提供。
-    同 agent_id 白名单（字母数字中文、下划线、连字符，1~64）。
-    English: Validate a project name; empty means not provided."""
+    同 agent_id 白名单（字母数字中文、下划线、连字符，1~64），并拒绝 Windows 保留目录名。
+    English: Validate a project name; empty means not provided. Same whitelist as
+    agent_id (1-64 chars), and reject Windows reserved directory names."""
     if not project:
         return None
     v = str(project).strip()
-    if v in _FORBIDDEN_IDENTS or len(v) > 64 or not _IDENT_RE.match(v):
+    if (v in _FORBIDDEN_IDENTS or len(v) > 64 or not _IDENT_RE.match(v)
+            or v.upper() in _WINDOWS_RESERVED):
         return ("project 格式非法：仅允许字母/数字/中文/下划线/连字符，"
-                f"1~64 字符（当前：{v!r}）")
+                f"1~64 字符且不能是系统保留名（当前：{v!r}）")
     return None
 
 
@@ -215,52 +224,51 @@ class KBService:
     English: Core memory service; shared by REST / MCP / CLI."""
 
     def __init__(self, settings: Settings | None = None, llm=None):
-        """组装各组件；BM25 启动优先加载持久化语料（N27），漂移/缺失才全量分词重建。
+        """组装各组件；全局库启动时打开，项目子库按需懒加载。
         llm 未注入时自建 LLMClient(settings)；注入时直接用（测试替身）。
-        English: Assemble components; BM25 loads the persisted corpus on startup (N27), rebuilding
-        by full tokenization only on drift/missing. When llm is not injected, build an LLMClient(settings);
-        when injected, use it directly (test double)."""
+        English: Assemble components; the global store opens at startup and project scopes
+        are lazy-loaded. When llm is not injected, build an LLMClient(settings); when
+        injected, use it directly (test double)."""
         self.settings = settings or get_settings()
         self.device = self.settings.device or "cpu"
-        self.store = ChromaStore(self.settings.chroma_dir)
-        self.bm25 = BM25Index()
-        self._bm25_cache = self.settings.data_dir / "bm25_corpus.json"
-        # 并发写入锁（改进项 2）：ChromaDB PersistentClient / BM25 内存索引 / 稀疏索引
-        # 均非线程安全，所有写路径（CRUD/文档/网页/删除/访问计数）串行化；
-        # 读路径（search/get/list）不加锁，检索不被写入阻塞（CPython GIL 下内存索引
-        # 读与写交错安全，Chroma 读与写并发风险主要在写侧）。
+        # 并发写入锁（改进项 2）：ChromaDB / BM25 / 稀疏索引均非线程安全，
+        # 所有作用域的写路径统一串行化；读路径不加锁。
         self._write_lock = threading.RLock()
-        all_records = list(self.store.iter_all())
-        # 嵌入模型解析（设计文档 §3.1）：库中已有数据则沿用其当初使用的模型，
-        # 避免新轻量默认静默套用到旧库导致向量维度不匹配；随后再建 Embedder。
+        store = ChromaStore(self.settings.chroma_dir)
+        all_records = list(store.iter_all())
+        # 嵌入模型解析（设计文档 §3.1）：全局库已有数据则沿用其建库模型；
+        # 项目子库首次创建时沿用同一模型，避免同一安装出现维度不一致。
         self.settings.embed_model = resolve_embed_model(self.settings, bool(all_records))
-        self.embedder = Embedder(self.settings.embed_model, device=self.device)
-        if not self.bm25.load_corpus(self._bm25_cache, [r.id for r in all_records]):
-            self.bm25.rebuild(all_records)
-            self._persist_bm25()
-        # 改进项 3：无论 load 成功与否，都从库内记录回填 (client, project, type)
-        # 轻量元信息（BM25 排序前隔离过滤用；load 成功路径下 _meta 需要回填）
-        self.bm25.set_meta(all_records)
-        # N25：稀疏第三路组装（sparse_enabled 且探测成功才启用，失败降级双路）
-        self.sparse_embedder, self.sparse_index = self._build_sparse(all_records)
-        self.retriever = HybridRetriever(self.store, self.bm25, self.embedder,
-                                         settings=self.settings,
-                                         reranker=self._build_reranker(),
-                                         sparse_embedder=self.sparse_embedder,
-                                         sparse_index=self.sparse_index,
-                                         write_lock=self._write_lock)
+        self.embedder = Embedder(
+            self.settings.embed_model, device=self.device,
+            idle_unload_seconds=self.settings.idle_unload_seconds)
+        self.scopes = ScopeManager(
+            self.settings, self.embedder, self._write_lock,
+            reranker=self._build_reranker(),
+            sparse_builder=self._build_sparse,
+            global_store=store, global_records=all_records)
+        # 兼容别名：既有测试/调用方直接访问全局库组件
+        g = self.scopes.global_scope
+        self.store = g.store
+        self.bm25 = g.bm25
+        self._bm25_cache = g.bm25_cache
+        self.sparse_embedder = g.sparse_embedder
+        self.sparse_index = g.sparse_index
+        self.retriever = g.retriever
         self.llm = llm or LLMClient(self.settings)
         # 云端客户端注入点：None=无独立云端客户端（真实云端由 self.llm 统一承担）
         self._cloud_client = None
         # /ask 答案缓存（LRU）：key=问题原文，条目含问题向量/答案/来源/后端
         self._cache: OrderedDict[str, dict] = OrderedDict()
+        self._stats_cache: tuple[float, int] = (0.0, 0)
 
-    def _persist_bm25(self) -> None:
+    def _persist_bm25(self, scope=None) -> None:
         """BM25 语料落盘；失败记 WARNING 不阻塞主流程（N27）。
         English: Persist the BM25 corpus; on failure log a WARNING without blocking the main flow (N27)."""
         import logging
+        scope = scope or self.scopes.global_scope
         try:
-            self.bm25.save_corpus(self._bm25_cache)
+            scope.bm25.save_corpus(scope.bm25_cache)
         except OSError as e:
             logging.getLogger("kb.service").warning("BM25 语料落盘失败: %s", e)
 
@@ -274,17 +282,12 @@ class KBService:
 
     # ---- N25 稀疏第三路（A3.5 spec §3.2/§3.4）----
 
-    def _build_sparse(self, all_records):
+    def _build_sparse(self, all_records, base_dir):
         """sparse_enabled 时组装 (SparseEmbedder, SparseIndex)；失败降级 (None, None)。
 
-        探测失败（非 BGE-M3 族 / sparse_linear.pt 缺失 / 加载异常）记 WARNING，
-        稀疏路自动关闭（检索退回双路，行为等同 sparse_enabled=false）。
-        索引优先加载持久化（sparse_index.json，id 集合校验），漂移/缺失才全量 encode 重建。
-        English: Assemble (SparseEmbedder, SparseIndex) when sparse_enabled; degrade to (None, None) on failure.
-        On probe failure (non-BGE-M3 / missing sparse_linear.pt / load error) log a WARNING and disable
-        the sparse route automatically (retrieval falls back to dual-route, same as sparse_enabled=false).
-        The index prefers loading the persisted file (sparse_index.json, id-set validated); rebuild by
-        full encode only on drift/missing."""
+        每个作用域独立索引，落盘到各自 base_dir/sparse_index.json。
+        English: Build per-scope (SparseEmbedder, SparseIndex) when sparse_enabled;
+        degrade to (None, None) on failure. Each scope persists its own index file."""
         import logging
         if not getattr(self.settings, "sparse_enabled", False):
             return None, None
@@ -296,49 +299,49 @@ class KBService:
             logging.getLogger("kb.service").warning(
                 "稀疏第三路不可用，降级双路检索: %s", e)
             return None, None
+        cache = Path(base_dir) / "sparse_index.json"
         sparse_index = SparseIndex()
-        self._sparse_cache = self.settings.data_dir / "sparse_index.json"
         valid_ids = [r.id for r in all_records]
-        if not sparse_index.load(self._sparse_cache, valid_ids):
+        if not sparse_index.load(cache, valid_ids):
             vecs = sparse_embedder.encode([r.content for r in all_records])
             sparse_index.rebuild(zip(valid_ids, vecs))
-            # 注意：此时 self.sparse_index 尚未赋值，直接落盘局部实例
+            # 注意：调用方尚未持有索引引用，直接落盘局部实例
             try:
-                sparse_index.save(self._sparse_cache)
+                sparse_index.save(cache)
             except OSError as e:
                 logging.getLogger("kb.service").warning(
                     "稀疏索引落盘失败: %s", e)
         return sparse_embedder, sparse_index
 
-    def _persist_sparse(self) -> None:
+    def _persist_sparse(self, scope) -> None:
         """稀疏索引落盘；失败记 WARNING 不阻塞主流程（同 BM25 模式）。
         English: Persist the sparse index; on failure log a WARNING without blocking the main flow (same as BM25)."""
         import logging
-        if self.sparse_index is None:
+        if scope.sparse_index is None:
             return
         try:
-            self.sparse_index.save(self._sparse_cache)
+            scope.sparse_index.save(scope.base_dir / "sparse_index.json")
         except OSError as e:
             logging.getLogger("kb.service").warning("稀疏索引落盘失败: %s", e)
 
-    def _sparse_add(self, records) -> None:
+    def _sparse_add(self, scope, records) -> None:
         """写入路径维护：批量 encode 并入稀疏索引 + 落盘。
         English: Write-path maintenance: batch-encode and merge into the sparse index and persist."""
-        if self.sparse_embedder is None or not records:
+        if scope.sparse_embedder is None or not records:
             return
-        vecs = self.sparse_embedder.encode([r.content for r in records])
+        vecs = scope.sparse_embedder.encode([r.content for r in records])
         for r, v in zip(records, vecs):
-            self.sparse_index.add(r.id, v)
-        self._persist_sparse()
+            scope.sparse_index.add(r.id, v)
+        self._persist_sparse(scope)
 
-    def _sparse_remove(self, record_ids) -> None:
+    def _sparse_remove(self, scope, record_ids) -> None:
         """删除路径维护：增量移出稀疏索引 + 落盘。
         English: Delete-path maintenance: incrementally remove from the sparse index and persist."""
-        if self.sparse_index is None:
+        if scope.sparse_index is None:
             return
         for rid in record_ids:
-            self.sparse_index.remove(rid)
-        self._persist_sparse()
+            scope.sparse_index.remove(rid)
+        self._persist_sparse(scope)
 
     # ---- 记忆 CRUD ----
     def add_memory(self, content: str, tags: list[str] | None = None,
@@ -347,20 +350,23 @@ class KBService:
                    project: str | None = None) -> Record:
         """写入一条记忆短文本并嵌入。
 
-        v3（2026-08-31）：记忆全共享——client/project 仅审计归类，不隔离读写；
-        agent_id 为兼容冗余（Record.agent_id := project 或 "default"，供展示层）。
+        v2.1（2026-10-20）：project 选择项目子库（空=全局库），项目间物理隔离；
+        client 仅用于审计归类；agent_id 为兼容冗余（Record.agent_id := project 或 "default"）。
         N22a/TASK-0069：dedup_enabled 时先做语义去重检查，命中则抛 DuplicateError
         （api 层捕获返回 409）；关闭时零行为变化。
-        English: Write a memory short text and embed it. v3: memories are fully shared —
-        client/project are audit-bucketing only; agent_id is a compatibility redundancy
-        (Record.agent_id := project or "default"), for the display layer. N22a: when
-        dedup_enabled, run a semantic dedup check first and raise DuplicateError on a hit
-        (mapped to 409 by the api layer); zero behavior change when disabled."""
+        English: Write a memory short text and embed it. v2.1: project selects the
+        project sub-store (empty = global) with physical isolation between projects;
+        client is audit-only; agent_id is a compatibility redundancy
+        (Record.agent_id := project or "default"). N22a: when dedup_enabled, run a
+        semantic dedup check first and raise DuplicateError on a hit (mapped to 409 by
+        the api layer); zero behavior change when disabled."""
         with self._write_lock:
+            project = project or ""
+            scope = self.scopes.get(project)
             from kb.governance import DuplicateError, check_duplicate
             if self.settings.dedup_enabled:
                 existing_id, similarity = check_duplicate(
-                    content, self.store, self.embedder,
+                    content, scope.store, self.embedder,
                     threshold=self.settings.dedup_threshold)
                 if existing_id is not None:
                     # N23b/TASK-0073：去重拦截审计日志（默认开，不阻塞主流程）
@@ -372,15 +378,14 @@ class KBService:
                             namespace=namespace)
                     raise DuplicateError(existing_id, similarity)
             # v2：agent_id 冗余 = project 或 default（不再由调用方指定身份）
-            project = project or ""
             record = Record(content=content, tags=tags or [], source=source,
                             namespace=namespace, agent_id=project or "default",
                             client=client, project=project)
             vec = self.embedder.embed_texts([content])[0]
-            self.store.add([record], [vec])
-            self.bm25.add(record)
-            self._persist_bm25()
-            self._sparse_add([record])
+            scope.store.add([record], [vec])
+            scope.bm25.add(record)
+            self._persist_bm25(scope)
+            self._sparse_add(scope, [record])
             self._audit_access("write", agent_id, type="memory",
                                record_id=record.id, content=content,
                                namespace=namespace, client=client,
@@ -391,11 +396,13 @@ class KBService:
                    agent_id: str = "default",
                    client: str = "default",
                    project: str | None = None) -> Record | None:
-        """读取单条记忆；v3（2026-08-31）：全共享——memory 与 doc/web 均
-        返回记录本体；client/project 仅用于审计归类，不参与可见性。
-        English: Read a single memory; v3: fully shared — memory and doc/web records
-        are all returned as-is; client/project are audit-bucketing only, not visibility."""
-        record = self.store.get(record_id)
+        """读取单条记忆（memory 与 doc/web 同规则）。
+
+        v2.1：带 project 时先查项目子库再查全局库；未传时先全局后各项目子库。
+        English: Read a single memory (same rule for doc/web records). v2.1: with
+        project, look in that project's sub-store then the global store; without it,
+        global first and then each project store."""
+        _, record = self.scopes.locate(record_id, project)
         if record is None:
             return None
         self._audit_access("read", agent_id, type=record.type.value,
@@ -404,15 +411,18 @@ class KBService:
                            project=project)
         return record
 
-    def list_memories(self, **filters) -> tuple[list[Record], int]:
-        """列表（过滤 + 分页），返回 (记录, 总数)。
-        English: List (filter + pagination), returning (records, total)."""
-        return self.store.list_records(**filters)
+    def list_memories(self, project: str | None = None,
+                      **filters) -> tuple[list[Record], int]:
+        """列表（过滤 + 分页），返回 (记录, 总数)；project 指定子库，空=全局库。
+        English: List (filter + pagination), returning (records, total);
+        project selects the sub-store, empty means the global store."""
+        return self.scopes.get(project).store.list_records(**filters)
 
-    def list_records(self, **filters) -> tuple[list[Record], int]:
-        """记录列表（过滤 + 分页），直接委托 store；watcher 等内部与验收测试使用。
-        English: List records (filter + pagination) delegating directly to store; used by watcher and acceptance tests."""
-        return self.store.list_records(**filters)
+    def list_records(self, project: str | None = None,
+                     **filters) -> tuple[list[Record], int]:
+        """记录列表（过滤 + 分页）；watcher 等内部与验收测试使用。
+        English: List records (filter + pagination); used by watcher and acceptance tests."""
+        return self.scopes.get(project).store.list_records(**filters)
 
     def update_memory(self, record_id: str, content: str | None = None,
                       tags: list[str] | None = None,
@@ -420,12 +430,12 @@ class KBService:
                       client: str = "default",
                       project: str | None = None) -> Record | None:
         """更新记忆；content 变更时重新嵌入并更新 updated_at。
-        v3（2026-08-31）：全共享——不再校验 (client, project) 归属，任何调用方均可更新。
+        按 project 定位子库；未指定时先全局后项目库。
         English: Update a memory; re-embed and refresh updated_at when content changes.
-        v3: fully shared — (client, project) ownership is no longer checked; anyone can update."""
+        The project selects the sub-store; when omitted, global is searched first."""
         with self._write_lock:
             from datetime import datetime
-            record = self.store.get(record_id)
+            scope, record = self.scopes.locate(record_id, project)
             if record is None:
                 return None
             if content is not None:
@@ -434,14 +444,14 @@ class KBService:
                 record.tags = tags
             record.updated_at = datetime.now().isoformat()
             # 先删旧向量，再按同 id 重新嵌入写入（保持主键不变）
-            self.store.delete([record_id])
+            scope.store.delete([record_id])
             vec = self.embedder.embed_texts([record.content])[0]
-            self.store.add([record], [vec])
-            self.bm25.remove(record_id)
-            self.bm25.add(record)
-            self._persist_bm25()
-            self._sparse_remove([record_id])
-            self._sparse_add([record])
+            scope.store.add([record], [vec])
+            scope.bm25.remove(record_id)
+            scope.bm25.add(record)
+            self._persist_bm25(scope)
+            self._sparse_remove(scope, [record_id])
+            self._sparse_add(scope, [record])
             self._audit_access("update", agent_id, type=record.type.value,
                                record_id=record_id, content=record.content,
                                namespace=record.namespace, client=client,
@@ -452,18 +462,17 @@ class KBService:
                       agent_id: str = "default",
                       client: str = "default",
                       project: str | None = None) -> bool:
-        """删除记忆；不存在返回 False。
-        v3（2026-08-31）：全共享——不再校验 (client, project) 归属，任何调用方均可删除。
+        """删除记忆；不存在返回 False。按 project 定位子库。
         English: Delete a memory; return False if it does not exist.
-        v3: fully shared — (client, project) ownership is no longer checked; anyone can delete."""
+        The project selects the sub-store."""
         with self._write_lock:
-            record = self.store.get(record_id)
+            scope, record = self.scopes.locate(record_id, project)
             if record is None:
                 return False
-            self.store.delete([record_id])
-            self.bm25.remove(record_id)
-            self._persist_bm25()
-            self._sparse_remove([record_id])
+            scope.store.delete([record_id])
+            scope.bm25.remove(record_id)
+            self._persist_bm25(scope)
+            self._sparse_remove(scope, [record_id])
             self._audit_access("delete", agent_id, type=record.type.value,
                                record_id=record_id, namespace=record.namespace,
                                client=client, project=project)
@@ -480,13 +489,13 @@ class KBService:
         返回 {"source": 文件名, "chunks": 入库块数}；
         source 缺省取文件名，multipart 上传时以上传文件名入库（覆盖临时文件名）。
         空文档切不出 chunk，不入库直接返回 chunks=0。
-        A 节点：doc/web 为共享知识库，记录归属 agent_id 仅用于审计，检索不隔离。
+        v2.1：project 选择项目子库（空=全局库），文档与记忆同样隔离。
         English: Parse local document → split → store each chunk as a doc_chunk Record.
         Returns {"source": filename, "chunks": count ingested}; source defaults to the file name,
         and on multipart upload the uploaded file name is stored (overriding the temp file name).
         An empty document yields no chunks and is not ingested, returning chunks=0 directly.
-        A-node: doc/web chunks form the shared knowledge base; agent_id is recorded for audit only,
-        not used for retrieval isolation."""
+        v2.1: project selects the project sub-store (empty = global); documents are
+        isolated exactly like memories."""
         with self._write_lock:
             path = Path(path)
             text = parse_file(path)
@@ -495,15 +504,17 @@ class KBService:
             doc_source = source or path.name
             if not chunks:
                 return {"source": doc_source, "chunks": 0}
+            scope = self.scopes.get(project)
             records = [Record(content=c, type=RecordType.DOC_CHUNK,
-                              source=doc_source, agent_id=agent_id, client=client)
+                              source=doc_source, agent_id=agent_id, client=client,
+                              project=project or "")
                        for c in chunks]
             vecs = self.embedder.embed_texts([r.content for r in records])
-            replaced = self._replace_source_locked(doc_source, records, vecs)
+            replaced = self._replace_source_locked(scope, doc_source, records, vecs)
             # 改进项 1B：批量并入语料后单次重建（此前每个 chunk 触发一次全量重建）
-            self.bm25.add_many(records)
-            self._persist_bm25()
-            self._sparse_add(records)
+            scope.bm25.add_many(records)
+            self._persist_bm25(scope)
+            self._sparse_add(scope, records)
             self._audit_access("ingest", agent_id, type="doc_chunk",
                                source=doc_source, content=records[0].content,
                                namespace=records[0].namespace, client=client,
@@ -531,27 +542,29 @@ class KBService:
                                 self.settings.chunk_overlap)
             if not chunks:
                 return {"source": url, "chunks": 0}
+            scope = self.scopes.get(project)
             records = [Record(content=c, type=RecordType.WEB_CHUNK,
-                              source=url, agent_id=agent_id, client=client) for c in chunks]
+                              source=url, agent_id=agent_id, client=client,
+                              project=project or "") for c in chunks]
             vecs = self.embedder.embed_texts([r.content for r in records])
-            replaced = self._replace_source_locked(url, records, vecs)
+            replaced = self._replace_source_locked(scope, url, records, vecs)
             # 改进项 1B：批量并入语料后单次重建
-            self.bm25.add_many(records)
-            self._persist_bm25()
-            self._sparse_add(records)
+            scope.bm25.add_many(records)
+            self._persist_bm25(scope)
+            self._sparse_add(scope, records)
             self._audit_access("ingest", agent_id, type="web_chunk",
                                source=url, content=records[0].content,
                                namespace=records[0].namespace, client=client,
                                project=project)
             return {"source": url, "chunks": len(records), "replaced": replaced}
 
-    def list_documents(self) -> list[dict]:
+    def list_documents(self, project: str | None = None) -> list[dict]:
         """按 source 聚合文档列表（source 非空的所有记录，不限 type）。
         chunks=该 source 记录数；chars=content 总字符数；last_imported=最大 created_at。
         English: Aggregate a document list by source (all records with a non-empty source, any type).
         chunks=record count for the source; chars=total content chars; last_imported=max created_at."""
         docs: dict[str, dict] = {}
-        for r in self.store.iter_all():
+        for r in self.scopes.get(project).store.iter_all():
             if not r.source:
                 continue
             d = docs.setdefault(r.source, {
@@ -562,7 +575,7 @@ class KBService:
                 d["last_imported"] = r.created_at
         return sorted(docs.values(), key=lambda d: d["source"])
 
-    def _replace_source_locked(self, source: str, records: list[Record],
+    def _replace_source_locked(self, scope, source: str, records: list[Record],
                                vectors: list[list[float]]) -> int:
         """同一 source 重新入库时先删旧再写新，返回替换掉的旧记录数。
 
@@ -572,25 +585,26 @@ class KBService:
         ones, returning the number replaced. Caller must hold _write_lock; vectors
         are computed before deletion so an embedding failure cannot destroy old data.
         """
-        ids = [r.id for r in self.store.iter_all() if r.source == source]
+        ids = [r.id for r in scope.store.iter_all() if r.source == source]
         if ids:
-            self.store.delete_by_source(source)
-            self.bm25.remove_many(ids)
-            self._persist_bm25()
-            self._sparse_remove(ids)
-        self.store.add(records, vectors)
+            scope.store.delete_by_source(source)
+            scope.bm25.remove_many(ids)
+            self._persist_bm25(scope)
+            self._sparse_remove(scope, ids)
+        scope.store.add(records, vectors)
         return len(ids)
 
-    def delete_document(self, source: str) -> int:
+    def delete_document(self, source: str, project: str | None = None) -> int:
         """按 source 删除文档全部记录，返回删除数量；同步清理 BM25 索引。
         English: Delete all records of a document by source, returning the count; also clean the BM25 index."""
         with self._write_lock:
-            ids = [r.id for r in self.store.iter_all() if r.source == source]
-            n = self.store.delete_by_source(source)
+            scope = self.scopes.get(project)
+            ids = [r.id for r in scope.store.iter_all() if r.source == source]
+            n = scope.store.delete_by_source(source)
             # 改进项 1B：批量移出语料后单次重建
-            self.bm25.remove_many(ids)
-            self._persist_bm25()
-            self._sparse_remove(ids)
+            scope.bm25.remove_many(ids)
+            self._persist_bm25(scope)
+            self._sparse_remove(scope, ids)
             return n
 
     # ---- 检索与统计 ----
@@ -690,23 +704,45 @@ class KBService:
                agent_id: str = "default",
                client: str = "default",
                project: str | None = None) -> list[dict]:
-        """混合检索（v3：全共享，无 (client, project) 隔离；client/project 仅审计）。
-        English: Hybrid retrieval (v3: fully shared without (client, project) isolation;
-        client/project are audit-bucketing only)."""
-        results = self.retriever.search(
-            query, top_k=top_k, mode=mode, type=type, tag=tag,
-            agent_id=agent_id, client=client, project=project or "")
+        """混合检索；带 project 时合并项目子库与全局库，项目命中加分。
+
+        English: Hybrid retrieval; with a project, merge that project's sub-store and
+        the global store, boosting project hits."""
+        if project and self.scopes.has_project(project):
+            scope = self.scopes.get(project)
+            project_hits = scope.retriever.search(
+                query, top_k=top_k, mode=mode, type=type, tag=tag,
+                agent_id=agent_id, client=client, project=project)
+            global_hits = self.retriever.search(
+                query, top_k=top_k, mode=mode, type=type, tag=tag,
+                agent_id=agent_id, client=client, project="")
+            boost = float(self.settings.project_boost or 0.0)
+            merged: dict[str, dict] = {}
+            for hit in project_hits:
+                item = dict(hit)
+                item["score"] = float(item.get("score", 0.0)) + boost
+                merged[item["id"]] = item
+            for hit in global_hits:
+                merged.setdefault(hit["id"], hit)
+            results = sorted(merged.values(),
+                             key=lambda r: r.get("score", 0.0), reverse=True)[:top_k]
+        else:
+            results = self.retriever.search(
+                query, top_k=top_k, mode=mode, type=type, tag=tag,
+                agent_id=agent_id, client=client, project=project or "")
         self._audit_access("search", agent_id, query=query,
                            hits=len(results), namespace="default",
                            client=client, project=project or "")
         return results
 
     def stats(self) -> dict:
-        """运行统计；llm 为当前 LLM 状态，embedder 为嵌入模型加载状态。
-        English: Runtime stats; llm is the current LLM status and embedder is the
-        embedding-model load state."""
-        _, total = self.store.list_records()
-        return {"records": total, "device": self.device,
+        """运行统计；records 为全局 + 项目库总数（5 秒缓存，避免探针频繁开库）。
+        English: Runtime stats; records is the global + project total (5s cache to avoid
+        reopening stores on every probe)."""
+        now = time.monotonic()
+        if now - self._stats_cache[0] >= 5:
+            self._stats_cache = (now, self.scopes.total_records())
+        return {"records": self._stats_cache[1], "device": self.device,
                 "llm": self.llm.status.value,
                 "embedder": self.embedder.status()}
 
@@ -721,15 +757,15 @@ class KBService:
         - llm_mode=local/cloud：走 N10 原路径（后端由 llm.chat 内部按 status/mode 决定）；
         - llm_mode=auto：智能路由（缓存 → 本地分类 → 敏感覆盖 → 分支路由），见 _ask_auto；
         - LLM 禁用时抛 LLMDisabledError（API 层转 503 + 配置指引）。
-        - v3（2026-08-31）：检索全共享，无 (client, project) 隔离（doc/web 亦共享），
-          并写 ask 存取审计。
+        - v2.1（2026-10-20）：带 project 时检索该项目子库 + 全局库，并写 ask 存取审计。
         English: RAG Q&A: retrieve → build context (truncated by char budget) → guarded prompt → generate → attach sources.
         - top_k=5 retrieval, results joined into context in descending score order;
         - char budget = context_token_limit * 2 (~2:1 token-to-char estimate);
         - llm_mode=local/cloud: the N10 original path (backend decided inside llm.chat by status/mode);
         - llm_mode=auto: smart routing (cache → local classify → sensitive override → branch), see _ask_auto;
         - throws LLMDisabledError when LLM is disabled (mapped to 503 with guidance by the API layer).
-        - A-node: retrieval isolates memory by agent_id (doc/web shared); an ask access-audit is emitted."""
+        - v2.1: with project, retrieval covers that project's sub-store plus the global store;
+          an ask access-audit is emitted."""
         if self.llm.status is LLMStatus.DISABLED:
             raise LLMDisabledError("LLM 不可用：本地 Ollama 未响应且未配置云端 Key")
         results = sorted(self.search(question, top_k=5, agent_id=agent_id,
@@ -815,7 +851,7 @@ class KBService:
             if "sensitive" in (r.get("tags") or []):
                 return True
             if sensitive_ns:
-                rec = self.store.get(r["id"])
+                _, rec = self.scopes.locate(r["id"])
                 if rec is not None and rec.namespace in sensitive_ns:
                     return True
         return False
