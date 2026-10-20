@@ -47,10 +47,16 @@ def _is_supported(path: Path) -> bool:
 class KBWatcher:
     """目录监听器：watchdog Observer 采集事件 + 后台 worker 去抖处理。"""
 
-    def __init__(self, service, watch_dir: Path, debounce_seconds: float = 2.0):
-        """service 为 KBService；watch_dir 为监听目录（仅顶层，不递归）。"""
+    def __init__(self, service, watch_dir: Path, debounce_seconds: float = 2.0,
+                 ignore_dir: Path | None = None):
+        """service 为 KBService；watch_dir 为监听目录（仅顶层，不递归）。
+
+        ignore_dir 为服务数据目录：与 watch_dir 重合时 start() 跳过监听，
+        避免把 bm25_corpus.json 等数据文件反复入库（自我入库死循环）。
+        """
         self.service = service
         self.watch_dir = Path(watch_dir)
+        self.ignore_dir = Path(ignore_dir) if ignore_dir is not None else None
         self.debounce_seconds = debounce_seconds
         self._pending: dict[Path, float] = {}        # 待入库路径 → 最近一次事件时间
         self._deletes: queue.Queue[str] = queue.Queue()  # 待删除 source（文件名）
@@ -60,6 +66,15 @@ class KBWatcher:
         self._worker: threading.Thread | None = None
 
     # ---- 生命周期 ----
+    def _overlaps_data_dir(self) -> bool:
+        """监听目录是否就是数据目录（相对路径/符号链接解析后比较）。"""
+        if self.ignore_dir is None:
+            return False
+        try:
+            return self.watch_dir.resolve() == self.ignore_dir.resolve()
+        except OSError:
+            return False
+
     def start(self) -> None:
         """启动 watchdog Observer 与后台处理线程。
 
@@ -74,6 +89,11 @@ class KBWatcher:
         if not self.watch_dir.is_dir():
             logger.info("监听目录不存在或不可用，跳过目录监听：%s",
                         self.watch_dir)
+            return
+        if self._overlaps_data_dir():
+            logger.warning(
+                "监听目录与数据目录相同（%s），已跳过目录监听以避免自我入库；"
+                "请把 KB_WATCH_DIR 指向数据目录之外", self.watch_dir)
             return
         self._observer = Observer()
         self._observer.schedule(_EventHandler(self), str(self.watch_dir),

@@ -39,3 +39,38 @@ def test_文件删除级联清理(env_isolated):
         assert s.list_records(q="将被删除")[1] == 0
     finally:
         w.stop()
+
+
+def test_监听目录与数据目录相同时跳过(tmp_path, caplog):
+    """watch_dir == data_dir 时 listener 会把自己的 bm25 语料反复入库，必须跳过。"""
+    from kb.watcher import KBWatcher
+
+    class FakeService:
+        def add_document(self, path):  # pragma: no cover - 不应被调用
+            raise AssertionError("不应入库")
+
+    data = tmp_path / "data"
+    data.mkdir()
+    w = KBWatcher(FakeService(), data, ignore_dir=data)
+    with caplog.at_level("WARNING", logger="kb.watcher"):
+        w.start()
+    try:
+        assert w._observer is None
+        assert w._worker is None
+        assert "自我入库" in caplog.text
+    finally:
+        w.stop()
+
+
+def test_监听目录与数据目录不同仍正常监听(tmp_path):
+    """ignore_dir 只拦截与监听目录重合的数据目录，不影响正常监听。"""
+    from kb.watcher import KBWatcher
+
+    watch = tmp_path / "watch"; watch.mkdir()
+    data = tmp_path / "data"; data.mkdir()
+    w = KBWatcher(object(), watch, ignore_dir=data)
+    w.start()
+    try:
+        assert w._observer is not None and w._worker is not None
+    finally:
+        w.stop()
