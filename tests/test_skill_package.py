@@ -89,10 +89,14 @@ def test_build_script产物结构正确(tmp_path):
     assert target.exists() and target.name.startswith("kb-memory-skill-")
     with zipfile.ZipFile(target) as zf:
         names = set(zf.namelist())
-        assert "SKILL.md" in names, "SKILL.md 必须位于 zip 根目录"
-        assert {"README.md", "bootstrap.py", "mcp.json", "env.example", "LICENSE"} <= names
-        assert all("/" not in n for n in names), "交付包应平铺在 zip 根目录"
-        skill = zf.read("SKILL.md").decode("utf-8")
+        # Agensi 要求：单一顶层目录，SKILL.md 位于该目录根（不是 zip 根）
+        assert {n.split("/")[0] for n in names} == {"kb-memory"}
+        assert "kb-memory/SKILL.md" in names
+        assert {"README.md", "bootstrap.py", "mcp.json", "env.example",
+                "LICENSE"} <= {n.removeprefix("kb-memory/") for n in names}
+        assert all(n.startswith("kb-memory/") and n.count("/") == 1
+                   for n in names), "交付包应只含一层 kb-memory/ 目录"
+        skill = zf.read("kb-memory/SKILL.md").decode("utf-8")
         assert skill.startswith("---\n")
 
 
