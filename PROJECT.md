@@ -26,7 +26,7 @@
 
 ## 2. 当前进度（看板）
 
-### kb 记忆服务 — v2.1.0 项目记忆与分发（P1/P2 主线持续迭代）
+### kb 记忆服务 — v2.1.1 项目记忆与分发（P1/P2 主线持续迭代）
 
 | 里程碑 | 内容 | 状态 |
 |---|---|---|
@@ -36,7 +36,7 @@
 | M4（N13-N16） | 文档摄取（pdf/docx/md/txt）、网页抓取、目录监听、README | ✅ 2026-08-24 |
 | v1.0.1 hotfix | top_k/mode/空内容校验 → 422、MCP 入口校验、SSE charset | ✅ 2026-08-24 |
 
-- 测试基线：**417 项通过 / 1 项跳过**（2026-10-20 全量回归；历史：A3.5+A4 新增 68 项：reranker/sparse/eval/perf/cli 五个测试文件，分支 `feature/a-line-remaining`）
+- 测试基线：**423 项通过 / 1 项跳过**（2026-10-20 全量回归；v2.1.1 新增 6 项：空闲卸载生命周期、`--version`、`where` 绝对路径、`ask` 关闭提示、bootstrap PyPI 兜底 ×2；历史：A3.5+A4 新增 68 项：reranker/sparse/eval/perf/cli 五个测试文件，分支 `feature/a-line-remaining`）
 - 基准：混合检索 26ms、/ask 端到端 ~2s（本地 qwen3:4b）
 - tag：`node-01`~`node-16`、`v1.0.0`、`v1.0.1`（均已推 Gitee）
 - v1.0.2：JSON charset 已修复（TASK-0003/0038/0045 交付，含测试断言）
@@ -70,13 +70,18 @@
   - 用户视角 E2E：基础 28/28 + 补充 34/34（隔离实例验证鉴权/坏模型/CLI/MCP stdio/skill 包）
 - **v2.1.0：项目记忆 / PyPI 分发 / 资源占用**（2026-10-20，spec：`docs/superpowers/specs/2026-10-20-kb-v2.1-design.md`）：
   - 项目分库：`kb_data/projects/<project>/{chroma,bm25_corpus.json,count.txt}` 物理隔离；项目检索 = 子库 + 全局库（默认 +0.05 加分）；LRU 上限 `KB_PROJECT_CACHE_SIZE=4`
-  - 分发：PyPI 包 `kb-memory` 2.1.0，核心依赖精简，新增 `[ingest]` / `[llm]` / `[full]` extras；Linux 引导脚本先装 CPU torch 轮子
+  - 分发：PyPI 包 `kb-memory` 2.1.1，核心依赖精简，新增 `[ingest]` / `[llm]` / `[full]` extras；Linux 引导脚本先装 CPU torch 轮子
   - skill 自举：`skills/kb-memory/bootstrap.py`（仅标准库）检测 → 展示计划 → 用户 `--yes` 确认后装 venv/PyPI 并启动；`--status` / `--start-only` 解决“不知道服务在哪”
   - 服务发现与自启：`~/.kb/install.json` → PATH → importlib.metadata；`kb where`、`kb autostart enable|disable|status`
   - 后台占用：嵌入模型空闲 `KB_IDLE_UNLOAD_SECONDS=600` 自动卸载（状态回 `unloaded`，CUDA 同步释放缓存），`serve` 启 watchdog 线程
   - 记忆语言：`KB_MEMORY_LANG=auto` 跟随系统语言，经 MCP instructions 约束书写语言
   - 自定义规则：`~/.kb/rules.md` + `<data_dir>/rules.md` 注入 MCP instructions，超长截断
   - 文档瘦身：仓库仅保留核心文档 + 基础设计 + v2.1 spec；历史 spec/plan 归档本地 `_archive/docs/`（不上传）
+- **v2.1.1 体验修复**（2026-10-20，PyPI 重发版）：
+  - 空闲卸载修复：watchdog 移入 `create_app` lifespan（ASGI 中间件包装后无 `.state`），发布版不再刷 `'function' object has no attribute 'state'` 日志
+  - `kb where` 数据目录一律显示绝对路径（相对 `KB_DATA_DIR` 不再误导）；新增 `kb --version/-V`
+  - skill bootstrap：默认源缺包时自动追加官方 PyPI 兜底重试（`--extra-index-url https://pypi.org/simple/`）
+  - LLM 关闭时 `ask`/`ask_kb` 明确提示“LLM 已关闭（KB_LLM_MODE=off）”，不再误报“Ollama 未响应”
 
 ### 发展总线 — kb 单主线（2026-08-27 战略调整）
 
@@ -100,7 +105,7 @@ rag-kb/
 ├── ROADMAP.md           # 项目发展总线设计书（人类入口，树形路线+进度）
 ├── README.md            # kb 产品说明（快速开始/MCP 挂载/端点速查）
 ├── kb/                  # kb 服务源码（见设计文档 4.2；含 reranker/sparse/eval 等 A3.5/A4 模块）
-├── tests/               # kb 验收测试（417 项通过 / 1 跳过，含 eval_zh_50.jsonl 评测数据集）
+├── tests/               # kb 验收测试（423 项通过 / 1 跳过，含 eval_zh_50.jsonl 评测数据集）
 ├── docs/superpowers/    # kb 设计文档（specs）与节点计划（plans）
 ├── skills/kb-memory/    # kb 接入规约 skill（Anthropic 开格式、客户端无关；AGENT_PROMPT 的可触发封装，安装见 scripts/README.md）
 ├── kb_data/             # kb 运行数据（ChromaDB + runtime.json，gitignore）
@@ -115,7 +120,7 @@ rag-kb/
 python -m kb serve                    # 默认 127.0.0.1:8000
 
 # kb 测试（venv 内）
-venv\Scripts\python.exe -m pytest tests/ -q            # 417 passed / 1 skipped
+venv\Scripts\python.exe -m pytest tests/ -q            # 423 passed / 1 skipped
 ```
 
 ## 5. 接手指南（新 AI 按此行动）

@@ -14,10 +14,26 @@ from rich.table import Table
 
 from kb.config import Settings, get_settings
 from kb.governance import days_since
+from kb.idle import start_idle_watchdog  # 兼容既有导入：kb.cli.start_idle_watchdog
 from kb.service import KBService
 
 app = typer.Typer()
 console = Console()
+
+
+@app.callback(invoke_without_command=True)
+def _version_option(
+        ctx: typer.Context,
+        version: bool = typer.Option(
+            False, "--version", "-V", is_eager=True,
+            help="显示版本并退出 / Show version and exit")):
+    if version:
+        from kb import __version__
+        console.print(f"kb {__version__}")
+        raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        console.print(ctx.get_help())
+        raise typer.Exit()
 
 
 def _default_project() -> str:
@@ -387,8 +403,11 @@ def ask(
     except LLMDisabledError:
         # LLM 不可用：检索结果仍有价值，输出命中并给出配置指引
         hits = svc.search(question, top_k=top_k)
-        console.print("[yellow]LLM 不可用（本地 Ollama 未响应且未配置云端 "
-                      "Key），以下为检索结果（仅检索未生成）[/yellow]")
+        if getattr(getattr(svc, "settings", None), "llm_mode", "") == "off":
+            reason = "LLM 已关闭（KB_LLM_MODE=off，默认不调用 LLM）"
+        else:
+            reason = "LLM 不可用（本地 Ollama 未响应且未配置云端 Key）"
+        console.print(f"[yellow]{reason}，以下为检索结果（仅检索未生成）[/yellow]")
         console.print(f"配置指引：在 .env 设 KB_LLM_MODE=local 并配置 KB_LLM_MODEL=（先用 "
                       "ollama pull 选一个模型，名称以 ollama list 为准），或设"
                       " KB_LLM_API_KEY 启用云端（任意 OpenAI 兼容服务商）")
@@ -407,39 +426,6 @@ def ask(
         else:
             console.print("[dim]无检索结果[/dim]")
         raise typer.Exit(code=1)
-
-
-def start_idle_watchdog(embedder, idle_seconds: int,
-                        check_seconds: float | None = None):
-    """启动空闲卸载守护线程（daemon），返回停止事件；idle_seconds<=0 不启动。
-
-    每轮调用 embedder.unload_if_idle()，空闲超时后卸载模型并释放显存；
-    兜底异常记 WARNING，守护线程永不因单次失败退出。
-    English: Start the idle-unload daemon thread and return its stop event;
-    idle_seconds<=0 disables it. Each tick calls embedder.unload_if_idle(),
-    releasing memory/VRAM after the idle timeout; exceptions are logged as
-    WARNING so the thread never dies on a single failure.
-    """
-    import logging
-    import threading
-    stop = threading.Event()
-    if idle_seconds <= 0:
-        return stop
-    interval = (check_seconds if check_seconds is not None
-                else max(1.0, min(30.0, idle_seconds / 4)))
-
-    def _loop() -> None:
-        log = logging.getLogger("kb.idle")
-        while not stop.wait(interval):
-            try:
-                target = embedder() if callable(embedder) else embedder
-                if target.unload_if_idle():
-                    log.info("嵌入模型空闲超过 %s 秒，已卸载", idle_seconds)
-            except Exception as exc:  # noqa: BLE001 - 守护线程不因单次失败退出
-                log.warning("空闲卸载检查失败：%s", exc)
-
-    threading.Thread(target=_loop, name="kb-idle-unload", daemon=True).start()
-    return stop
 
 
 @app.command()
@@ -468,15 +454,12 @@ def serve(non_interactive: bool = typer.Option(
         console.print(f"[bold red]{warn}[/bold red]")
         console.print(f"[bold red]{'!' * 68}[/bold red]\n")
     app = create_app(s, enable_watcher=True)
-    idle_stop = start_idle_watchdog(lambda: app.state.kb.embedder,
-                                    s.idle_unload_seconds)
     # kb.pid 由服务进程自身管理：启动前写入（真实存活到此处才写，不再由
     # start_kb.bat 猜写）；无论正常退出还是异常，退出时清理，不留指向死进程的旧 pid。
     write_pid_file()
     try:
         uvicorn.run(app, host=s.api_host, port=s.api_port)
     finally:
-        idle_stop.set()
         remove_pid_file()
 
 

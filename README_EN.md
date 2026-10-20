@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.1.0 — automated suite green; manual acceptance pending).
+service (v2.1.1 — automated suite green; manual acceptance pending).
 
 ## Why kb
 

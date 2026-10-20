@@ -4,7 +4,7 @@
 > Tree-shaped, from root to leaves.
 > AI assistants: read AGENTS.md + PROJECT.md (implementation details); this file is the human-facing bus view.
 >
-> Last updated: 2026-10-20 ｜ Bus version: v3.3 (kb single mainline; v2.1.0 project memory / PyPI distribution / resource footprint)
+> Last updated: 2026-10-20 ｜ Bus version: v3.4 (kb single mainline; v2.1.1 experience fixes)
 
 ## 0. Vision (one sentence)
 
@@ -60,9 +60,10 @@ rag-kb —— local Agent memory & knowledge service
 │
 │   └── A6 v2.1.0 project memory & distribution ………… ✅ delivered (2026-10-20)
 │       ├── ✅ per-project sub-stores (physical isolation; project search = sub-store + global; LRU)
-│       ├── ✅ PyPI package kb-memory 2.1.0 (slim core + [ingest]/[llm]/[full] extras)
+│       ├── ✅ PyPI package kb-memory 2.1.1 (slim core + [ingest]/[llm]/[full] extras)
 │       ├── ✅ skill bootstrap (plan first, install after user confirmation) + kb where / autostart
 │       ├── ✅ idle unload (600s default) + OS-language memories + custom rules + docs slimming
+│       └── ✅ v2.1.1 experience fixes: idle-unload lifecycle, absolute where dir, --version, PyPI fallback, disabled-LLM message
 │
 ├── 🌱 Side lines (start on demand, no mainline resources)
 │   └── 🔲 L2 terminal REPL (interactive point at system terminal, backup)
@@ -81,7 +82,7 @@ A1 ✅ → A2 auth ✅ → A2.5 ecosystem 🚧 (only MCP Registry left, user act
         —— all in-plan nodes done; new needs: update design docs first, then initiate
 ```
 
-**Current position** (2026-10-20): **v2.1.0 delivered** — per-project sub-stores (`kb_data/projects/<project>/`, project search = sub-store + global), PyPI package `kb-memory` 2.1.0 (slim deps + extras + Linux CPU torch guidance), skill bootstrap / discovery / autostart, idle unload, OS-language memories and custom rules, and local archiving of historical docs all landed; `tests/` full regression 417 passed / 1 skipped, manual acceptance pending. A2.5 only MCP Registry / awesome-mcp-servers submission remains (user action).
+**Current position** (2026-10-20): **v2.1.1 delivered** — per-project sub-stores (`kb_data/projects/<project>/`, project search = sub-store + global), PyPI package `kb-memory` 2.1.1 (slim deps + extras + Linux CPU torch guidance), skill bootstrap / discovery / autostart, idle unload, OS-language memories and custom rules, and local archiving of historical docs all landed; v2.1.1 fixes the released-build idle-unload failure, relative `where` paths, missing `--version`, missing mirror fallback, and the misleading disabled-LLM message; `tests/` full regression 423 passed / 1 skipped, manual acceptance pending. A2.5 only MCP Registry / awesome-mcp-servers submission remains (user action).
 
 ## 3. Priority Principles (why this order)
 

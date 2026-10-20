@@ -76,6 +76,15 @@ def _running(host: str, port: int) -> bool:
         return False
 
 
+def _absolute_data_dir(value) -> str:
+    """把数据目录解析为绝对路径：相对路径按服务启动时的 cwd 落盘，where 必须显示真实位置。"""
+    path = Path(value).expanduser()
+    try:
+        return str(path.resolve())
+    except OSError:
+        return str(path.absolute())
+
+
 def discover(settings=None) -> dict:
     """按 manifest → PATH → 当前解释器 的顺序发现服务安装。
 
@@ -93,7 +102,8 @@ def discover(settings=None) -> dict:
             "source": "manifest",
             "python": manifest["python"],
             "version": manifest.get("version") or _package_version(),
-            "data_dir": manifest.get("data_dir") or str(settings.data_dir),
+            "data_dir": _absolute_data_dir(
+                manifest.get("data_dir") or settings.data_dir),
             "venv": manifest.get("venv") or "",
             "running": _running(host, port),
             "endpoint": f"http://{host}:{port}/mcp/",
@@ -111,7 +121,7 @@ def discover(settings=None) -> dict:
             "source": "path",
             "python": python,
             "version": _package_version(),
-            "data_dir": str(settings.data_dir),
+            "data_dir": _absolute_data_dir(settings.data_dir),
             "venv": "",
             "running": _running(host, port),
             "endpoint": f"http://{host}:{port}/mcp/",
@@ -121,7 +131,7 @@ def discover(settings=None) -> dict:
         "source": "package",
         "python": sys.executable,
         "version": _package_version(),
-        "data_dir": str(settings.data_dir),
+        "data_dir": _absolute_data_dir(settings.data_dir),
         "venv": "",
         "running": _running(host, port),
         "endpoint": f"http://{host}:{port}/mcp/",

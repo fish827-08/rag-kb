@@ -31,6 +31,7 @@ APP_NAME = "kb"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 PIP_PACKAGE = "kb-memory"
+PYPI_FALLBACK_INDEX = "https://pypi.org/simple/"
 CPU_TORCH_INDEX = "https://download.pytorch.org/whl/cpu"
 
 
@@ -112,9 +113,26 @@ def _display(plan: dict) -> None:
         print("  将执行：")
         for cmd in plan["commands"]:
             print("    " + " ".join(cmd))
+        print(f"  说明：若默认源尚未同步 {PIP_PACKAGE}，将自动追加官方 PyPI 兜底"
+              f"（{PYPI_FALLBACK_INDEX}）重试。")
     print(f"  启动命令 : {' '.join(plan['start_command'])}")
     if not plan["install"]:
         print("  （当前仅启动已安装服务，不执行安装）")
+
+
+def fallback_command(cmd: list[str]) -> list[str] | None:
+    """给安装 kb-memory 的 pip 命令追加官方 PyPI 兜底源。
+
+    国内镜像同步新包有延迟（实测阿里云曾对 kb-memory 返回 404），用户默认
+    index 若指向镜像会安装失败。仅在安装 kb-memory 本身时兜底，其余依赖仍走
+    用户配置的镜像；已带 --extra-index-url 的命令不重复追加。
+    """
+    joined = " ".join(cmd)
+    if PIP_PACKAGE not in joined:
+        return None
+    if any(part.startswith("--extra-index-url") for part in cmd):
+        return None
+    return [*cmd, "--extra-index-url", PYPI_FALLBACK_INDEX]
 
 
 def _run(cmd: list[str], runner, capture: bool = False):
@@ -140,9 +158,16 @@ def install(plan: dict, *, runner=None, popen=None, start: bool = True,
                     and py.exists():
                 continue
             proc = _run(cmd, runner)
-            if getattr(proc, "returncode", 0) != 0:
+            code = getattr(proc, "returncode", 0)
+            if code != 0:
+                retry = fallback_command(cmd)
+                if retry is not None:
+                    print(f"安装命令失败（exit={code}），改用官方 PyPI 兜底重试……")
+                    proc = _run(retry, runner)
+                    code = getattr(proc, "returncode", 0)
+            if code != 0:
                 raise RuntimeError(
-                    f"命令失败（exit={proc.returncode}）：{' '.join(cmd)}")
+                    f"命令失败（exit={code}）：{' '.join(cmd)}")
     version = "unknown"
     try:
         proc = _run([str(py), "-c", "import kb; print(kb.__version__)"],

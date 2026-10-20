@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from kb import __version__
 from kb.config import Settings, get_settings
+from kb.idle import start_idle_watchdog
 from kb.logging_setup import setup_logging
 from kb.monitor import MonitorAgent, run_once_summary
 from kb.mcp import create_mcp_server
@@ -507,7 +508,8 @@ def _wrap_api_key(app, settings):
 
 def create_app(settings: Settings | None = None,
                enable_watcher: bool = False) -> FastAPI:
-    """应用工厂；全局单例 KBService 挂 app.state.kb（REST 与 MCP 共享该实例）。
+    """应用工厂；全局单例 KBService 在工厂内创建，由 REST/MCP 共享。
+    返回经鉴权/charset/访问日志中间件包装的 ASGI 应用（外部拿不到 .state）。
     统一错误 JSON：{"error": "<CODE>", "message": "<人话>"}。
 
     enable_watcher=True 时（仅 serve 模式）在 lifespan 中挂目录监听线程；
@@ -542,6 +544,10 @@ def create_app(settings: Settings | None = None,
             serve_log.info("鉴权已启用（KB_API_KEY 已配置，要求 Bearer/X-API-Key）")
         else:
             serve_log.info("鉴权未启用（本地模式，KB_API_KEY 为空）")
+        # v2.1 空闲卸载：守护线程必须在工厂内部启动——create_app 最终返回
+        # 中间件包装后的 ASGI 函数，外部拿不到 app.state.kb。
+        idle_stop = start_idle_watchdog(lambda: kb.embedder,
+                                        kb.settings.idle_unload_seconds)
         # N29 启动安全警告：非回环监听 + 未鉴权 → warning 日志（终端醒目横幅由 serve 命令负责）
         warn = exposure_warning(kb.settings.api_host, kb.settings.api_key)
         if warn:
@@ -570,6 +576,7 @@ def create_app(settings: Settings | None = None,
                 serve_log.info("服务就绪 records=%s", kb.stats().get("records"))
                 yield
         finally:
+            idle_stop.set()
             if monitor is not None:
                 monitor.stop()
             if watcher is not None:
