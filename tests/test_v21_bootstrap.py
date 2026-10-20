@@ -96,3 +96,37 @@ def test_清单发现与仅启动(boot, tmp_path, capsys):
 def test_无清单时状态提示(boot, capsys):
     assert boot.main(["--status", "--port", "1"]) == 1
     assert "未找到安装清单" in capsys.readouterr().out
+
+
+class FailingFirstPipRunner(FakeRunner):
+    """首次 pip 安装 kb-memory 返回 1，模拟镜像未同步新包。"""
+
+    def __call__(self, cmd, check=False, capture_output=False, text=False):
+        self.calls.append(list(cmd))
+        joined = " ".join(cmd)
+        if "pip install kb-memory" in joined \
+                and "--extra-index-url" not in joined:
+            return SimpleNamespace(returncode=1, stdout="")
+        return SimpleNamespace(returncode=0, stdout="2.1.1\n")
+
+
+def test_pip源缺包时自动官方兜底(boot, tmp_path, capsys):
+    inst = tmp_path / "inst"
+    venv_python = boot.venv_python(inst / "venv")
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("", encoding="utf-8")
+    runner = FailingFirstPipRunner()
+    rc = boot.main(["--yes", "--no-start", "--dir", str(inst),
+                    "--port", "1"], runner=runner)
+    assert rc == 0
+    joined = [" ".join(c) for c in runner.calls]
+    assert any("--extra-index-url https://pypi.org/simple/" in j
+               for j in joined)
+    assert "官方 PyPI 兜底重试" in capsys.readouterr().out
+    assert boot.read_manifest() is not None
+
+
+def test_兜底命令不重复追加(boot):
+    cmd = ["python", "-m", "pip", "install", "kb-memory[ingest]",
+           "--extra-index-url", "https://example.com/simple/"]
+    assert boot.fallback_command(cmd) is None

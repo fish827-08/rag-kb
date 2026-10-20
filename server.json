@@ -3,7 +3,7 @@
   "name": "io.github.fish827-08/kb-memory",
   "title": "kb — Local Memory & Knowledge Service",
   "description": "Local-first agent memory and knowledge service: hybrid retrieval (vector + BM25 normalized fusion) with optional memory governance (semantic dedup, decay, freshness). Single process, works fully offline without any LLM. Default embedding model is lightweight (bge-small-zh-v1.5, ~92 MB); bge-m3 is opt-in. Store memories and documents via REST or MCP, search them from Claude Code, Cursor or any MCP client. Run `python -m kb serve` from the repository to expose the local MCP endpoint.",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "websiteUrl": "https://github.com/fish827-08/rag-kb",
   "repository": {
     "url": "https://github.com/fish827-08/rag-kb",

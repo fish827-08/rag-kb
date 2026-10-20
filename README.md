@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.1.0 · 自动化回归全绿，待人工验收）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.1.1 · 自动化回归全绿，待人工验收）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 

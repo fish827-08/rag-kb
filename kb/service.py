@@ -767,6 +767,10 @@ class KBService:
         - v2.1: with project, retrieval covers that project's sub-store plus the global store;
           an ask access-audit is emitted."""
         if self.llm.status is LLMStatus.DISABLED:
+            if self.settings.llm_mode == "off":
+                raise LLMDisabledError(
+                    "LLM 已关闭（KB_LLM_MODE=off，默认不调用 LLM）；"
+                    "如需 /ask 问答请配置 local/auto/cloud")
             raise LLMDisabledError("LLM 不可用：本地 Ollama 未响应且未配置云端 Key")
         results = sorted(self.search(question, top_k=5, agent_id=agent_id,
                                      client=client, project=project),
