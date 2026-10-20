@@ -562,7 +562,7 @@ def create_app(settings: Settings | None = None,
                     "未安装 watchdog，目录监听已禁用"
                     "（pip install \"kb-memory[ingest]\" 可启用）")
             else:
-                watcher = KBWatcher(kb, wd)
+                watcher = KBWatcher(kb, wd, ignore_dir=kb.settings.data_dir)
                 watcher.start()
         # 本地监控 Agent（TASK-0017）：serve 模式默认启用，仅读配置决定间隔；
         # TestClient 测试默认不启动（monitor_enabled 默认 False，测试按需开）
