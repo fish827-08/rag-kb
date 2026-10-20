@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""构建 Agensi 可交付的 kb-memory skill 包（zip 根目录直接放 SKILL.md）。
+"""构建 Agensi 可交付的 kb-memory skill 包（zip 内为单层 kb-memory/ 目录）。
 
+Agensi 要求 zip 内含且仅含一个与 skill 同名的顶层目录，SKILL.md 位于该目录根；
 只打包 kb 接入所需的最小集合，不包含测试、运行数据或任何密钥。
 English: Build the standalone kb-memory skill package for Agensi. The zip contains
-only the files needed to install/configure/use kb (SKILL.md at the zip root); it
-never includes tests, runtime data or secrets.
+one top-level folder named kb-memory with SKILL.md at its root; it never includes
+tests, runtime data or secrets.
 """
 from __future__ import annotations
 
@@ -18,7 +19,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DIR = REPO_ROOT / "skills" / "kb-memory"
 
-# 包内文件名 → 打包后的 zip 路径（全部位于 zip 根目录）
+# Agensi 要求的单一顶层目录（与 SKILL.md 的 name 一致）
+PACKAGE_DIR = "kb-memory"
+
+# 包内文件名 → 打包后的 zip 路径（相对于 PACKAGE_DIR）
 PACKAGE_FILES = {
     "SKILL.md": "SKILL.md",
     "README.md": "README.md",
@@ -140,9 +144,9 @@ def build(out_dir: Path | None = None) -> Path:
         # 统一 LF：Windows 检出为 CRLF 时，zip 内仍保持跨平台一致
         for source_name, archive_name in PACKAGE_FILES.items():
             data = (SOURCE_DIR / source_name).read_bytes().replace(b"\r\n", b"\n")
-            zf.writestr(archive_name, data)
+            zf.writestr(f"{PACKAGE_DIR}/{archive_name}", data)
         license_data = (REPO_ROOT / "LICENSE").read_bytes().replace(b"\r\n", b"\n")
-        zf.writestr("LICENSE", license_data)
+        zf.writestr(f"{PACKAGE_DIR}/LICENSE", license_data)
     return target
 
 

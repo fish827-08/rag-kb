@@ -113,7 +113,7 @@ python scripts/build_skill_package.py            # 产物：dist/kb-memory-skill
 python scripts/build_skill_package.py --out-dir tmp   # 指定输出目录
 ```
 
-- zip **根目录**直接包含 `SKILL.md`、`README.md`、`mcp.json`、`env.example`、`LICENSE`；
+- zip 内为单一顶层目录 `kb-memory/`，其根目录包含 `SKILL.md`、`README.md`、`mcp.json`、`env.example`、`LICENSE`（Agensi 上架要求）；
 - 只包含 kb 接入所需内容，**不含测试、运行数据、任何密钥**；
 - 构建前自动校验：front matter 是否标准、安装/启动/配置/验证/排障是否齐备、
   JSON 模板是否可解析、env 模板是否为空值、是否混入真实 API Key。

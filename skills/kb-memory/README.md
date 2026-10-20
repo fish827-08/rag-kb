@@ -5,13 +5,16 @@ service (RAG). This package contains everything needed to install, discover,
 start, configure and verify kb locally:
 
 ```
-SKILL.md       # skill instructions (standard YAML front matter, at package root)
+SKILL.md       # skill instructions (standard YAML front matter)
 bootstrap.py   # gated installer/discovery script (stdlib only; requires --yes)
 mcp.json       # MCP client configuration template
 env.example    # server configuration template (no secrets)
 README.md      # this file
 LICENSE        # Apache-2.0
 ```
+
+When zipped for Agensi, these files sit inside one top-level `kb-memory/`
+folder, with `SKILL.md` at that folder's root.
 
 ## What it gives an agent
 
