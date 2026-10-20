@@ -31,7 +31,7 @@ def test_并发写入记忆_无丢失无异常(svc):
         ids = list(ex.map(write, range(40)))
     assert len(ids) == 40
     assert len(set(ids)) == 40  # 主键服务端生成且不重复
-    _, total = svc.list_records(type="memory")
+    _, total = svc.list_records(project="conc", type="memory")
     assert total == 40
     # 全部可检索（隔离键匹配）
     hits = svc.search("并发记忆", client="pytest", project="conc", top_k=40)
@@ -51,5 +51,5 @@ def test_并发文档入库_无异常且块数一致(svc, tmp_path):
     with ThreadPoolExecutor(max_workers=4) as ex:
         results = list(ex.map(ingest, range(8)))
     assert all(r["chunks"] > 0 for r in results)
-    _, total = svc.list_records(type="doc_chunk")
+    _, total = svc.list_records(project="conc", type="doc_chunk")
     assert total == sum(r["chunks"] for r in results)

@@ -21,11 +21,11 @@ class Record(BaseModel):
     content: str
     type: RecordType = RecordType.MEMORY
     namespace: str = "default"
-    # v3（2026-08-31）：client/project 仅审计归类与元数据展示，不参与隔离
-    #（记忆与知识全共享）；agent_id 为兼容冗余（新写入时=project 或 "default"）
+    # v2.1（2026-10-20）：project 记录所属子库（空=全局库），项目间物理隔离；
+    # client 仅审计归类；agent_id 为兼容冗余（新写入时=project 或 "default"）
     agent_id: str = "default"
     client: str = "default"            # 来源客户端（框架自动识别：MCP clientInfo / REST HTTP / CLI）
-    project: str = ""                  # 项目/任务归属（环境承载；仅审计归类）
+    project: str = ""                  # 项目子库名（空=全局库）
     source: str | None = None
     tags: list[str] = Field(default_factory=list)
     importance: float = 0.5

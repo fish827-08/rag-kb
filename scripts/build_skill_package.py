@@ -22,16 +22,19 @@ SOURCE_DIR = REPO_ROOT / "skills" / "kb-memory"
 PACKAGE_FILES = {
     "SKILL.md": "SKILL.md",
     "README.md": "README.md",
+    "bootstrap.py": "bootstrap.py",
     "mcp.json": "mcp.json",
     "env.example": "env.example",
 }
 
-# SKILL.md 必须自包含的关键内容（安装 → 启动 → 配置 → 验证 → 排障）
+# SKILL.md 必须自包含的关键内容（确认安装 → 发现 → 启动 → 配置 → 验证 → 排障）
 REQUIRED_SKILL_MARKERS = (
-    "git clone https://github.com/fish827-08/rag-kb.git",
-    "pip install -r requirements.txt",
-    "pip install -e .",
+    "bootstrap.py --status",
+    "bootstrap.py --yes",
+    'pip install "kb-memory[ingest]"',
     "python -m kb serve",
+    "kb where",
+    "kb autostart",
     "http://127.0.0.1:8000/mcp/",
     "/api/v1/healthz",
     "write_memory",
@@ -39,6 +42,8 @@ REQUIRED_SKILL_MARKERS = (
     "add_document",
     "add_webpage",
     "ask_kb",
+    "KB_MEMORY_LANG",
+    "rules.md",
 )
 
 FORBIDDEN_MARKERS = (

@@ -3,6 +3,9 @@
 English: Embedder: lazy-loaded embedding model, device support, normalized vectors
 (construction never loads the model).
 """
+import gc
+import threading
+import time
 
 
 class EmbeddingUnavailableError(RuntimeError):
@@ -23,20 +26,25 @@ class Embedder:
     and the model is loaded on the first embed call.
     """
 
-    def __init__(self, model_name: str, device: str = "cpu"):
+    def __init__(self, model_name: str, device: str = "cpu",
+                 idle_unload_seconds: int = 0):
         """只存参数不加载模型；_model 延迟到首次使用。
         English: Store parameters only; defer loading until first use."""
         self.model_name = model_name
         self.device = device
+        self.idle_unload_seconds = max(0, int(idle_unload_seconds or 0))
         self._model = None
         self._state = "unloaded"   # unloaded | loading | ok | error
         self._error = ""
+        self._last_used = time.monotonic()
+        self._lock = threading.RLock()
 
     def status(self) -> dict:
         """返回可放进 healthz 的轻量状态（不触发加载）。
         English: Return a lightweight status suitable for healthz (never triggers loading)."""
         return {"state": self._state, "model": self.model_name,
-                "error": self._error}
+                "error": self._error,
+                "idle_unload_seconds": self.idle_unload_seconds}
 
     def _mark_error(self, exc: Exception) -> EmbeddingUnavailableError:
         """记录失败状态并包装成统一异常。
@@ -54,32 +62,66 @@ class Embedder:
         then online download; fp16 under cuda. On failure the state becomes error and
         EmbeddingUnavailableError is raised instead of leaking OSError/HTTPError.
         """
-        if self._model is not None:
-            return
-        self._state = "loading"
-        try:
-            from sentence_transformers import SentenceTransformer
+        with self._lock:
+            if self._model is not None:
+                self._last_used = time.monotonic()
+                return
+            self._state = "loading"
             try:
-                self._model = SentenceTransformer(
-                    self.model_name, device=self.device, local_files_only=True)
-            except Exception:
-                # 缓存未命中（首次部署新模型），走在线下载；HF_ENDPOINT 镜像由环境变量提供
-                self._model = SentenceTransformer(self.model_name, device=self.device)
-            if self.device == "cuda":
-                self._model.half()
-            self._state = "ok"
+                from sentence_transformers import SentenceTransformer
+                try:
+                    self._model = SentenceTransformer(
+                        self.model_name, device=self.device, local_files_only=True)
+                except Exception:
+                    # 缓存未命中（首次部署新模型），走在线下载；HF_ENDPOINT 镜像由环境变量提供
+                    self._model = SentenceTransformer(self.model_name, device=self.device)
+                if self.device == "cuda":
+                    self._model.half()
+                self._state = "ok"
+                self._error = ""
+                self._last_used = time.monotonic()
+            except Exception as exc:  # noqa: BLE001 - 统一转换为可读错误
+                raise self._mark_error(exc) from exc
+
+    def unload(self) -> bool:
+        """卸载模型释放内存；未加载时返回 False。
+        English: Unload the model to free memory; returns False when not loaded."""
+        with self._lock:
+            if self._model is None:
+                return False
+            self._model = None
+            self._state = "unloaded"
             self._error = ""
-        except Exception as exc:  # noqa: BLE001 - 统一转换为可读错误
-            raise self._mark_error(exc) from exc
+            gc.collect()
+            if self.device == "cuda":
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:  # noqa: BLE001 - 释放显存失败不影响卸载
+                    pass
+            return True
+
+    def unload_if_idle(self, now: float | None = None) -> bool:
+        """空闲超过阈值时卸载模型；返回是否真正卸载。
+        English: Unload when idle beyond the threshold; returns whether it actually unloaded."""
+        if self.idle_unload_seconds <= 0 or self._model is None:
+            return False
+        now = time.monotonic() if now is None else now
+        if now - self._last_used < self.idle_unload_seconds:
+            return False
+        return self.unload()
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """批量编码，normalize_embeddings=True（单位向量）。
         English: Batch encode with normalize_embeddings=True (unit vectors)."""
         try:
-            self._ensure_loaded()
-            vecs = self._model.encode(
-                texts, normalize_embeddings=True, convert_to_numpy=True
-            )
+            with self._lock:
+                self._ensure_loaded()
+                vecs = self._model.encode(
+                    texts, normalize_embeddings=True, convert_to_numpy=True
+                )
+                self._last_used = time.monotonic()
         except EmbeddingUnavailableError:
             raise
         except Exception as exc:  # noqa: BLE001 - 推理失败同样视为模型不可用

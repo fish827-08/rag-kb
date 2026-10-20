@@ -98,16 +98,15 @@ class HybridRetriever:
                project: str = "") -> list[dict]:
         """mode: hybrid/vector/keyword；每路取 3*top_k 候选；
         type/tag 过滤在融合后进行（过滤后不足 top_k 属正常）；
-        v3（2026-08-31）：所有记忆（memory）与知识（doc/web）全共享，不再按
-        (client, project) 隔离——任何客户端/任务均可检索全部记录；
-        client/project/agent_id 仅作审计与兼容冗余，不参与过滤；
+        v2.1：检索器只负责单个作用域（全局库或某个项目子库），项目隔离由
+        ScopeManager 在服务层完成；client/project/agent_id 不参与过滤；
         输出 [{id, content, score, type, source, tags, created_at, agent_id}]，
         score 为融合分。
         English: mode: hybrid/vector/keyword; each route takes 3*top_k candidates;
         type/tag filtering happens after fusion;
-        v3: all memories and shared knowledge (doc/web) are fully shared without
-        (client, project) isolation — every client/task can retrieve any record;
-        client/project/agent_id are audit/compatibility only and never filter;
+        v2.1: the retriever covers a single scope (global or one project sub-store);
+        project isolation is handled by ScopeManager above. client/project/agent_id
+        never filter here;
         output is [{id, content, score, type, source, tags, created_at, agent_id}]."""
         candidate = max(30, 3 * top_k)  # N32：候选窗放宽，缓解小 top_k 下相关记录早截断
         if mode in ("hybrid", "vector"):
@@ -254,8 +253,7 @@ class HybridRetriever:
                 continue
             if tag and tag not in rec.tags:
                 continue
-            # v3（2026-08-31）：无 (client, project) 隔离——memory 与 doc/web
-            # 全共享，任何客户端/任务均可读；隔离过滤已移除
+            # v2.1：作用域内不再做归属过滤——项目隔离由 ScopeManager 按库完成
             results.append({
                 "id": rec.id,
                 "content": rec.content,

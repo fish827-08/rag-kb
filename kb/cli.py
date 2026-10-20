@@ -20,6 +20,19 @@ app = typer.Typer()
 console = Console()
 
 
+def _default_project() -> str:
+    """当前目录名规整为合法项目名；无法规整时回退全局库（空串）。
+
+    English: Normalize the current directory name into a valid project name;
+    fall back to the global store (empty string) when it cannot be normalized.
+    """
+    import re
+    from kb.service import validate_project
+    name = re.sub(r"[^A-Za-z0-9_\-\u4e00-\u9fff]", "-", Path.cwd().name)
+    name = name.strip("-")[:64]
+    return name if name and validate_project(name) is None else ""
+
+
 def _force_utf8_stdio() -> None:
     """强制本进程三个标准流以 UTF-8 编解码，Windows 下把控制台代码页切到 65001。
 
@@ -249,10 +262,10 @@ def add(content: str,
         namespace: str = typer.Option("default", "--namespace", help="命名空间"),
         agent: str = typer.Option("default", "--agent", help="Agent 身份（兼容参数，v2 不再参与隔离）"),
         client: str = typer.Option("CLI", "--client", help="来源客户端（默认 CLI）"),
-        project: str | None = typer.Option(None, "--project", help="项目名；缺省自动取当前目录名（默认桶用 - 显式指定）")):
-    """写入一条记忆（v3：全共享，client/project 仅审计归类，任何客户端/任务均可读）。"""
+        project: str | None = typer.Option(None, "--project", help="项目名；缺省自动取当前目录名")):
+    """写入一条记忆（v2.1：缺省落到当前目录名对应的项目子库）。"""
     svc = _service()
-    project = project if project is not None else (Path.cwd().name or "-")
+    project = project if project is not None else _default_project()
     r = svc.add_memory(
         content, tags=[t for t in tags.split(",") if t] if tags else None,
         source=source, namespace=namespace, agent_id=project or "default",
@@ -267,8 +280,8 @@ def search(query: str,
            agent: str = typer.Option("default", "--agent", help="Agent 身份（兼容参数）"),
            client: str = typer.Option("CLI", "--client", help="来源客户端（默认 CLI）"),
            project: str | None = typer.Option(None, "--project", help="项目名；缺省自动取当前目录名")):
-    """混合检索（v3：记忆与知识全共享，无 (client, project) 隔离）。"""
-    project = project if project is not None else (Path.cwd().name or "-")
+    """混合检索（v2.1：项目子库 + 全局库；缺省用当前目录名作为项目）。"""
+    project = project if project is not None else _default_project()
     hits = _service().search(query, top_k=top_k, mode=mode, agent_id=agent,
                              client=client, project=project)
     if not hits:
@@ -344,7 +357,7 @@ def ask(
     top_k: int = typer.Option(5, "--top-k", help="检索条数"),
     agent: str = typer.Option("default", "--agent", help="Agent 身份（推荐用任务名）"),
     client: str = typer.Option("CLI", "--client", help="来源客户端（默认 CLI）"),
-    project: str | None = typer.Option(None, "--project", help="项目名（可选，用于审计文件名归类）"),
+    project: str | None = typer.Option(None, "--project", help="项目名；缺省自动取当前目录名"),
 ):
     """终端 RAG 问答：检索 + 生成，直连 KBService.ask（N28）。
 
@@ -352,10 +365,11 @@ def ask(
 
     LLM 不可用时仍输出检索命中（标注"仅检索未生成"），退出码 1。
     When the LLM is unavailable, still prints retrieval hits (marked "retrieval only"), exit code 1.
-    A 节点 legacy 说明已在 v3（2026-08-31）移除：检索不再按 client/project 隔离。
+    v2.1：带 project 时检索项目子库 + 全局库。
     """
     from kb.service import LLMDisabledError
     svc = _service()
+    project = project if project is not None else _default_project()
     console.print("[dim]正在检索与生成…（首次调用需加载模型，请稍候）[/dim]")
     try:
         result = svc.ask(question, agent_id=agent, client=client, project=project)
@@ -395,8 +409,43 @@ def ask(
         raise typer.Exit(code=1)
 
 
+def start_idle_watchdog(embedder, idle_seconds: int,
+                        check_seconds: float | None = None):
+    """启动空闲卸载守护线程（daemon），返回停止事件；idle_seconds<=0 不启动。
+
+    每轮调用 embedder.unload_if_idle()，空闲超时后卸载模型并释放显存；
+    兜底异常记 WARNING，守护线程永不因单次失败退出。
+    English: Start the idle-unload daemon thread and return its stop event;
+    idle_seconds<=0 disables it. Each tick calls embedder.unload_if_idle(),
+    releasing memory/VRAM after the idle timeout; exceptions are logged as
+    WARNING so the thread never dies on a single failure.
+    """
+    import logging
+    import threading
+    stop = threading.Event()
+    if idle_seconds <= 0:
+        return stop
+    interval = (check_seconds if check_seconds is not None
+                else max(1.0, min(30.0, idle_seconds / 4)))
+
+    def _loop() -> None:
+        log = logging.getLogger("kb.idle")
+        while not stop.wait(interval):
+            try:
+                target = embedder() if callable(embedder) else embedder
+                if target.unload_if_idle():
+                    log.info("嵌入模型空闲超过 %s 秒，已卸载", idle_seconds)
+            except Exception as exc:  # noqa: BLE001 - 守护线程不因单次失败退出
+                log.warning("空闲卸载检查失败：%s", exc)
+
+    threading.Thread(target=_loop, name="kb-idle-unload", daemon=True).start()
+    return stop
+
+
 @app.command()
-def serve():
+def serve(non_interactive: bool = typer.Option(
+        False, "--non-interactive",
+        help="非交互模式（自启/脚本）：不询问设备，按配置/runtime.json/cpu 启动")):
     """启动常驻 REST 服务（python -m kb serve）。"""
     import uvicorn
     from kb.api import create_app, exposure_warning
@@ -409,8 +458,9 @@ def serve():
                       f"Linux：systemctl stop kb 或 kill 对应进程），"
                       f"确认端口释放后重试。[/red]")
         raise typer.Exit(code=1)
-    # 终端交互式设备检测（显式配置/runtime.json/询问），结果注入 settings
-    s.device = resolve_device(s, interactive=True)
+    # 终端交互式设备检测（显式配置/runtime.json/询问），结果注入 settings；
+    # 自启/脚本模式跳过询问，避免无 stdin 时 EOFError
+    s.device = resolve_device(s, interactive=not non_interactive)
     # N29 启动安全警告：非回环监听 + 未鉴权 → 终端醒目横幅（日志侧由 lifespan 记 warning）
     warn = exposure_warning(s.api_host, s.api_key)
     if warn:
@@ -418,13 +468,68 @@ def serve():
         console.print(f"[bold red]{warn}[/bold red]")
         console.print(f"[bold red]{'!' * 68}[/bold red]\n")
     app = create_app(s, enable_watcher=True)
+    idle_stop = start_idle_watchdog(lambda: app.state.kb.embedder,
+                                    s.idle_unload_seconds)
     # kb.pid 由服务进程自身管理：启动前写入（真实存活到此处才写，不再由
     # start_kb.bat 猜写）；无论正常退出还是异常，退出时清理，不留指向死进程的旧 pid。
     write_pid_file()
     try:
         uvicorn.run(app, host=s.api_host, port=s.api_port)
     finally:
+        idle_stop.set()
         remove_pid_file()
+
+
+@app.command("where")
+def where_cmd(as_json: bool = typer.Option(False, "--json", help="输出 JSON")):
+    """显示服务安装位置、解释器、数据目录、版本与运行状态（v2.1）。"""
+    from kb import discovery
+    info = discovery.discover()
+    if as_json:
+        console.print_json(data=info)
+        return
+    console.print(f"安装来源 (source)   : {info['source']}")
+    console.print(f"解释器 (python)     : {info['python']}")
+    console.print(f"版本 (version)      : {info['version']}")
+    console.print(f"数据目录 (data_dir) : {info['data_dir']}")
+    console.print(f"运行状态 (running)  : "
+                  f"{'running' if info['running'] else 'stopped'}")
+    console.print(f"MCP 端点 (endpoint) : {info['endpoint']}")
+    console.print("[dim]启动：kb serve --non-interactive；"
+                  "登录自启：kb autostart enable[/dim]")
+
+
+autostart_app = typer.Typer(help="登录自启管理：enable / disable / status")
+app.add_typer(autostart_app, name="autostart")
+
+
+@autostart_app.command("enable")
+def autostart_enable_cmd():
+    """启用登录自启（Windows 启动目录 / systemd user / LaunchAgent）。"""
+    from kb import discovery
+    result = discovery.autostart_enable()
+    console.print(f"已写入自启文件：{result['file']}")
+    if result["platform"].startswith("linux"):
+        console.print("[dim]已尝试 systemctl --user enable --now kb.service；"
+                      "若失败请检查 systemd 用户实例是否可用。[/dim]")
+
+
+@autostart_app.command("disable")
+def autostart_disable_cmd():
+    """停用登录自启并删除自启文件。"""
+    from kb import discovery
+    result = discovery.autostart_disable()
+    console.print(f"自启文件：{result['file']}"
+                  f"（{'已删除' if result['removed'] else '不存在'}）")
+
+
+@autostart_app.command("status")
+def autostart_status_cmd():
+    """查看登录自启状态。"""
+    from kb import discovery
+    result = discovery.autostart_status()
+    console.print(f"登录自启：{'已启用' if result['enabled'] else '未启用'}")
+    console.print(f"自启文件：{result['file']}")
 
 
 @app.command(name="mcp")
@@ -560,7 +665,7 @@ def audit(
     """
     svc = _service()
     if project is None:
-        project = Path.cwd().name or "-"
+        project = _default_project()
     items = svc.query_access_audit(client=client, project=project,
                                    agent=agent, action=action,
                                    days=days, limit=limit)

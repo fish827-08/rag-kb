@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.0.0 — automated suite green; manual acceptance pending).
+service (v2.1.0 — automated suite green; manual acceptance pending).
 
 ## Why kb
 
@@ -38,9 +38,23 @@ service (v2.0.0 — automated suite green; manual acceptance pending).
   the active retrieval paths.
 - **Dual protocol** — REST for scripts/tools, native streamable-HTTP MCP for AI
   clients, served by the same process.
-- **Shared memory by design (v3)** — memories and knowledge written by any client
-  or session are visible to all sessions. `client` / `project` are audit metadata
-  only; they never isolate reads or writes.
+- **Shared by default** — memories and knowledge written by any client or session
+  are visible to all sessions. `client` is audit metadata only.
+- **Global + per-project memory (v2.1)** — without `project`, records go to the
+  global store; with `project`, they go to an isolated sub-store
+  `kb_data/projects/<project>/` (delete the directory to delete the project's
+  memory). Project searches merge the sub-store with the global store, weighted by
+  `KB_PROJECT_BOOST`.
+- **PyPI install & slim dependencies (v2.1)** — `pip install "kb-memory[ingest]"`;
+  ingestion/LLM deps are optional extras, and Linux users can preinstall CPU torch
+  for a much smaller download.
+- **Skill-driven install & discovery (v2.1)** — the skill ships `bootstrap.py` and
+  installs **only after asking the user** into `~/.kb/venv`; `kb where` reports the
+  install location, `kb autostart enable` starts it at login.
+- **Idle unload (v2.1)** — `KB_IDLE_UNLOAD_SECONDS` unloads the embedding model and
+  releases GPU memory when idle, so background footprint drops to near zero.
+- **Memory language & custom rules (v2.1)** — `KB_MEMORY_LANG=auto` follows the OS
+  language; `~/.kb/rules.md` customizes when the agent should store memories.
 - **Access audit** — every write/read/update/delete/search/ask emits a JSON line
   under `logs/agent-audit/`; query it through `GET /api/v1/audit?client=<client>`
   or `kb audit --client <client>`.
@@ -51,50 +65,53 @@ service (v2.0.0 — automated suite green; manual acceptance pending).
 
 ## Quick Start (Windows / Linux / macOS)
 
-**Windows PowerShell:**
+**Install from PyPI (recommended):**
 
-```powershell
-# 1. Create and activate a virtual environment
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# 2. Install dependencies and the kb CLI
-pip install -r requirements.txt
-pip install -e .
-
-# 3. Start the service (listens on http://127.0.0.1:8000)
+```bash
+pip install "kb-memory[ingest]"   # core + document/web ingestion; [llm] for Q&A, [full] for both
 python -m kb serve
 ```
 
-**Linux / macOS:**
+**CPU-only Linux machines: install the CPU torch wheel first**
+(the default PyPI torch wheel bundles CUDA and is far larger):
 
 ```bash
-# 1. Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "kb-memory[ingest]"
+python -m kb serve
+```
 
-# 2. Install dependencies and the kb CLI
+**Source checkout (development):**
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1          # Linux/macOS: source venv/bin/activate
 pip install -r requirements.txt
-pip install -e .
-
-# 3. Start the service
+pip install -e ".[full]"             # dev/tests need ingestion, watcher and LLM extras
 python -m kb serve
 ```
 
 > **What the first install downloads** (so it doesn't look stuck):
-> - Python dependencies: about **600 MB** (largest wheel: `torch`, 124 MB).
+> - Core Python dependencies: about **400–600 MB** (largest single wheel on
+>   Windows: `torch` CPU, ~124 MB). On Linux install the CPU torch wheel first to
+>   avoid the multi-GB default CUDA wheel.
+> - Optional `[ingest]` adds a few tens of MB (PDF/DOCX/Office parsing, web
+>   extraction, directory watching).
 > - The embedding model is loaded **on the first write/search** (lazy), not at
 >   startup: default `bge-small-zh-v1.5`, about **92 MB** (or ~2.2 GB if you set
 >   `KB_EMBED_MODEL=BAAI/bge-m3`).
 > - China / slow networks: use a pip mirror such as
->   `pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/`
+>   `pip install "kb-memory[ingest]" -i https://mirrors.aliyun.com/pypi/simple/`
 >   (Aliyun tested; Tsinghua may return 403), and set
 >   `HF_ENDPOINT=https://hf-mirror.com` for model downloads.
 >
-> Important: the `kb` command is installed inside the virtual environment.
-> **Activate it in every new terminal** (Windows `.\venv\Scripts\Activate.ps1`,
-> Linux/macOS `source venv/bin/activate`), otherwise you'll see
-> `kb: command not found`. Use `python -m kb <subcommand>` to bypass activation.
+> Important: with a source venv the `kb` command is installed inside the virtual
+> environment. **Activate it in every new terminal** (Windows
+> `.\venv\Scripts\Activate.ps1`, Linux/macOS `source venv/bin/activate`),
+> otherwise you'll see `kb: command not found`. Use `python -m kb <subcommand>`
+> to bypass activation. Not sure where kb lives or how to start it? Run
+> `kb where`, or `python bootstrap.py --status` / `--start-only` from the skill
+> package.
 
 Health check:
 
@@ -247,8 +264,10 @@ Available MCP tools: `write_memory` / `search_memory` / `read_memory` /
 
 ## REST API Reference
 
-All memories and knowledge are **shared** (v3): `client` / `project` are audit
-metadata, not isolation keys. Record IDs are generated server-side.
+All memories and knowledge are **shared** by default (global store); `client` is
+audit metadata. Passing `project` routes the record into an isolated sub-store
+`kb_data/projects/<project>/` (v2.1), and project searches merge that sub-store
+with the global store. Record IDs are generated server-side.
 
 | Method | Path | Description |
 |---|---|---|
@@ -332,7 +351,7 @@ python -m kb dedup --threshold 0.92
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (395, including eval_zh_50.jsonl)
+tests/         kb acceptance & regression tests (417 passed / 1 skipped, incl. eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
 docs/          design specs, node plans, user guides

@@ -36,27 +36,29 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 
    - 已挂载 MCP 的客户端：全局接入规约（何时写、查重、反馈格式）由服务端 instructions 自动注入，无需本段。下面的规约主要供未挂载 MCP 时的 HTTP 兜底使用。
 
-### 三、MCP 工具（8 个，身份仅审计，无 agent\_id）
+### 三、MCP 工具（8 个，无 agent\_id）
 
-> 身份约定（2026-08-31 v3）：**记忆与知识全共享，你无需自报身份**——`client`（来源客户端）
-> 如传则由服务端从 MCP 握手 clientInfo 自动识别（框架级，无法伪造）；`project`（项目/任务）
-> 仅用于**审计归类**，不隔离读写。记录主键由服务端生成。你只需专注存储与查询记忆，不传身份也可完整使用。
+> 身份约定（v2.1）：**`client` 仅用于审计归类**——通常由服务端从 MCP 握手
+> clientInfo 自动识别（框架级，无法伪造），你无需自报身份。
 >
-> - `client`：通常不用传——自动识别；如显式传，须为合法客户端名
+> - `client`：通常不用传；如显式传，须为合法客户端名
 >   （字母/数字/中文/下划线/连字符/空格/点，≤64）。
 >
-> - `project`（可选）：仅审计归类；不传不影响任何读写。
+> - `project`（**不是审计字段**）：传了就把记忆/文档写入该项目独立子库
+>   `kb_data/projects/<project>/`，与其他项目物理隔离；不传写全局库（所有项目可见）。
+>   在代码库/工作区内工作时，传一个**稳定的项目名**（如 `rag-kb`），不要每个任务换名；
+>   用户偏好、跨项目事实不传 project。项目名允许字母/数字/中文/下划线/连字符，1~64。
 
 | 工具              | 参数                                                                  | 说明                                                                                           |
 | --------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `write_memory`  | `content: str`, `tags?: list[str]`, `project?: str`, `client?: str` | 写入一条记忆短文本（client/project 仅审计归类），返回 `{id}`                                                    |
-| `search_memory` | `query: str`, `top_k?: int=5`, `project?: str`, `client?: str`      | 混合检索（向量+关键词融合）；**记忆与知识全共享**，不按 client/project 过滤；返回命中列表 `{id, content, score, type, source}` |
-| `read_memory`   | `record_id: str`, `project?: str`, `client?: str`                   | 按 ID 读单条记忆完整内容；仅不存在时 404/报错，无归属限制                                                            |
-| `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str`   | 更新记忆内容（自动重新嵌入）；无归属限制                                                                         |
-| `delete_memory` | `record_id: str`, `project?: str`, `client?: str`                   | 删除单条记忆；无归属限制                                                                                 |
-| `add_document`  | `path: str`, `project?: str`, `client?: str`                        | 导入本地文档（PDF/DOCX/MD/TXT/Office），切分入库                                                          |
-| `add_webpage`   | `url: str`, `project?: str`, `client?: str`                         | 抓取网页正文切分入库                                                                                   |
-| `ask_kb`        | `question: str`, `project?: str`, `client?: str`                    | 基于知识库的 RAG 问答，返回 `{answer, sources}`；未配 LLM 时返回 `LLM_DISABLED`                               |
+| `write_memory`  | `content: str`, `tags?: list[str]`, `project?: str`, `client?: str` | 写入一条记忆短文本（project 选择子库，空=全局；client 仅审计），返回 `{id}`                                  |
+| `search_memory` | `query: str`, `top_k?: int=5`, `project?: str`, `client?: str`      | 混合检索（向量+关键词融合）；传 project = 该项目子库 + 全局库（项目命中加分），不传只查全局；返回 `{id, content, score, type, source}` |
+| `read_memory`   | `record_id: str`, `project?: str`, `client?: str`                   | 按 ID 读单条记忆；传 project 先查该项目子库再查全局，不传先查全局再查各项目                                                        |
+| `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str`   | 按 ID 更新记忆（自动重新嵌入）；定位规则同上                                                                        |
+| `delete_memory` | `record_id: str`, `project?: str`, `client?: str`                   | 按 ID 删除单条记忆；定位规则同上                                                                             |
+| `add_document`  | `path: str`, `project?: str`, `client?: str`                        | 导入本地文档（PDF/DOCX/MD/TXT/Office），chunk 落入 project 子库（空=全局）                                                          |
+| `add_webpage`   | `url: str`, `project?: str`, `client?: str`                         | 抓取网页正文，chunk 落入 project 子库（空=全局）                                                                                   |
+| `ask_kb`        | `question: str`, `project?: str`, `client?: str`                    | 基于知识库的 RAG 问答，返回 `{answer, sources}`；检索范围同 `search_memory`；未配 LLM 时返回 `LLM_DISABLED`                               |
 
 > 存取审计：每次 write/search/read/update/delete/ask/ingest 都会在服务端
 > `logs/agent-audit/<客户端>__<项目>.log` 记录一条 JSON（按 client+project 分文件，行内只记
@@ -66,10 +68,10 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 
 > 注：MCP 工具仅暴露上表参数（`write_memory` 无 `namespace`/`source`）；`namespace` 等更细参数仅 HTTP 端点支持（见第四节）。
 
-### 四、HTTP 兜底端点（MCP 不可用时用；v3 全共享，身份仅审计）
+### 四、HTTP 兜底端点（MCP 不可用时用；v2.1 项目分库）
 
-> 身份约定：`client`（默认 `HTTP`）与 `project`（可选）均**仅用于审计归类**——
-> 记忆与知识全共享，不传或不匹配完全不影响读写、检索。
+> 身份约定：`client`（默认 `HTTP`）仅用于审计归类；`project` 选择项目子库
+> （不传=全局库），检索时 = 该项目子库 + 全局库。
 
 - 健康检查：`GET /api/v1/healthz`
 
@@ -83,7 +85,7 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 
 - 列表：`GET /api/v1/memories?type=&tag=&q=&limit=`
 
-- 混合检索：`POST /api/v1/search`，`{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}`（mode: hybrid/vector/keyword；**记忆与知识全共享**，不按 client/project 过滤）
+- 混合检索：`POST /api/v1/search`，`{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}`（mode: hybrid/vector/keyword；传 project = 子库 + 全局库，不传只查全局）
 
 - 文档入库：`POST /api/v1/documents`（multipart `file` 或 JSON `{"path": "本地路径", "client": "TraeWork", "project": "kb"}`）
 
@@ -96,9 +98,9 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 curl 示例（Windows PowerShell）：
 
 ```powershell
-# 写入（client 默认 HTTP；project 可选=审计归类）
+# 写入（client 默认 HTTP；project 可选=项目子库，不传写全局）
 curl.exe -X POST http://127.0.0.1:8000/api/v1/memories -H "Content-Type: application/json" -d '{"content": "用户偏好深色主题", "tags": ["偏好"], "client": "TraeWork", "project": "kb"}'
-# 检索（v3：记忆与知识全共享，不分客户端/项目）
+# 检索（项目子库 + 全局库）
 curl.exe -X POST http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/json" -d '{"query": "用户界面偏好", "top_k": 5, "client": "TraeWork", "project": "kb"}'
 # 问答
 curl.exe -X POST http://127.0.0.1:8000/api/v1/ask -H "Content-Type: application/json" -d '{"question": "用户喜欢什么主题？", "client": "TraeWork", "project": "kb"}'
@@ -134,6 +136,14 @@ curl.exe -X GET "http://127.0.0.1:8000/api/v1/audit?client=TraeWork&project=kb&l
 3. **事实与约定**：关键路径、命令、依赖、环境细节、版本约束等可复用事实。
 4. **敏感约束**：不可做的红线（如"禁止改设计文档"）、安全/隐私要求。
 5. **当前任务进度**：复杂任务的关键进展、下一步，便于跨会话接力。
+
+**按项目归档**：在某个代码库/工作区内产生的记忆，写入时传稳定的 `project` 名
+（如 `rag-kb`）；用户偏好与跨项目事实不要传 project（写全局库，所有项目可读）。
+检索项目记忆时同样传 project，范围会自动包含全局库。
+
+**记忆语言**：按服务端 MCP instructions 指定的语言书写（默认跟随操作系统语言）；
+专有名词、命令、代码保持原样。若服务端注入了用户自定义记忆规则
+（`~/.kb/rules.md` / `<数据目录>/rules.md`），优先遵守。
 
 不写：纯寒暄、临时计算过程、可由代码/文档直接查到的实现细节（除非需跨会话记忆）。
 

@@ -36,30 +36,28 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
    - Clients with kb MCP mounted get the global conventions (when to write, dedupe, feedback format) injected
      automatically via server `instructions`; the rest of this guide mainly serves the HTTP fallback path.
 
-### 3. MCP tools (8, identity is audit-only — no agent_id)
+### 3. MCP tools (8, no agent_id)
 
-> **Identity contract (v3, 2026-08-31)**: **Memory and knowledge are fully shared; you do NOT
-> need to self-report identity** — `client` (source client) is auto-detected from the MCP clientInfo
-> handshake when passed (framework-level, cannot be spoofed); `project` (project/task) is **audit-only
-> metadata** and never isolates reads/writes. The record primary key is generated server-side.
-> You simply store and query memories — everything works without passing identity at all.
-> - `client`: usually omit it — auto-detected; if passed, must be a valid client name
+> **Identity contract (v2.1)**: **`client` is audit-only** — it is normally auto-detected from the
+> MCP clientInfo handshake (framework-level, cannot be spoofed); you do NOT need to self-report.
+> - `client`: usually omit it; if passed, must be a valid client name
 >   (letters/digits/CJK/underscore/hyphen/space/dot, ≤64 chars).
-> - `project` (optional): audit categorization only; omitting it changes nothing for reads/writes.
-> - **All memories and knowledge are fully shared (2026-08-31 v3)** — `search_memory` returns
->   every record regardless of client/project; reading/updating/deleting has no ownership check
->   (no `FORBIDDEN`).
+> - `project` (**not an audit field**): when passed, memories/documents go to that project's
+>   isolated sub-store `kb_data/projects/<project>/`; omit it to use the global store
+>   (visible to all projects). Inside a repository/workspace, pass a **stable project name**
+>   (e.g. `rag-kb`) instead of a new name per task. User preferences and cross-project facts
+>   should omit `project`. Names: letters/digits/CJK/underscore/hyphen, 1–64 chars.
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `write_memory` | `content: str`, `tags?: list[str]`, `project?: str`, `client?: str` | Write a short memory (client/project are audit-only); returns `{id}` |
-| `search_memory` | `query: str`, `top_k?: int=5`, `project?: str`, `client?: str` | Hybrid retrieval; memory and knowledge are fully shared — no client/project filtering; returns hits `{id, content, score, type, source}` |
-| `read_memory` | `record_id: str`, `project?: str`, `client?: str` | Read a single memory's full content by ID; no ownership restriction |
-| `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str` | Update memory content (auto re-embed); no ownership restriction |
-| `delete_memory` | `record_id: str`, `project?: str`, `client?: str` | Delete a single memory; no ownership restriction |
-| `add_document` | `path: str`, `project?: str`, `client?: str` | Import a local document (PDF/DOCX/MD/TXT/Office), chunked into the store |
-| `add_webpage` | `url: str`, `project?: str`, `client?: str` | Fetch a web page's body and chunk it into the store |
-| `ask_kb` | `question: str`, `project?: str`, `client?: str` | RAG Q&A; returns `{answer, sources}`; returns `LLM_DISABLED` when no LLM is configured |
+| `write_memory` | `content: str`, `tags?: list[str]`, `project?: str`, `client?: str` | Write a short memory (project selects the sub-store, empty = global; client audit-only); returns `{id}` |
+| `search_memory` | `query: str`, `top_k?: int=5`, `project?: str`, `client?: str` | Hybrid retrieval; with project = that sub-store + global (project hits boosted), without = global only; returns hits `{id, content, score, type, source}` |
+| `read_memory` | `record_id: str`, `project?: str`, `client?: str` | Read a memory by ID; with project, check that sub-store then global; without, global then each project store |
+| `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str` | Update memory content (auto re-embed); same lookup rule |
+| `delete_memory` | `record_id: str`, `project?: str`, `client?: str` | Delete a memory; same lookup rule |
+| `add_document` | `path: str`, `project?: str`, `client?: str` | Import a local document (PDF/DOCX/MD/TXT/Office); chunks go to the project sub-store (empty = global) |
+| `add_webpage` | `url: str`, `project?: str`, `client?: str` | Fetch and chunk a web page into the project sub-store (empty = global) |
+| `ask_kb` | `question: str`, `project?: str`, `client?: str` | RAG Q&A; returns `{answer, sources}`; scope same as `search_memory`; `LLM_DISABLED` without an LLM |
 
 > Access audit: every write/search/read/update/delete/ask/ingest writes a JSON line to
 > `logs/agent-audit/<client>__<project>.log` (one file per client+project; the line records the action
@@ -69,10 +67,10 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
 
 > Note: MCP tools only expose the parameters above; finer params like `namespace` are HTTP-only (see §4).
 
-### 4. HTTP fallback endpoints (when MCP is unavailable; v3 — fully shared, identity audit-only)
+### 4. HTTP fallback endpoints (when MCP is unavailable; v2.1 project sub-stores)
 
-> Identity contract: `client` (default `HTTP`) and optional `project` are **audit-only** —
-> memory and knowledge are fully shared; omitting/mismatching them never affects reads, writes or search.
+> Identity contract: `client` (default `HTTP`) is audit-only; `project` selects the project
+> sub-store (omit = global). Search with project = that sub-store + the global store.
 
 - Health check: `GET /api/v1/healthz`
 - Write memory: `POST /api/v1/memories`, JSON `{"content": "…", "tags": ["偏好"], "source": "…", "namespace": "…", "client": "TraeWork", "project": "kb"}`
@@ -80,7 +78,7 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
 - Update: `PATCH /api/v1/memories/{id}?project=kb`, `{"content": "…"}` (record missing → 404)
 - Delete: `DELETE /api/v1/memories/{id}?project=kb` (record missing → 404)
 - List: `GET /api/v1/memories?type=&tag=&q=&limit=`
-- Hybrid search: `POST /api/v1/search`, `{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}` (mode: hybrid/vector/keyword; memory and knowledge are fully shared — no client/project filtering)
+- Hybrid search: `POST /api/v1/search`, `{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}` (mode: hybrid/vector/keyword; with project = sub-store + global, without = global only)
 - Document ingestion: `POST /api/v1/documents` (multipart `file` or JSON `{"path": "本地路径", "client": "TraeWork", "project": "kb"}`)
 - Web ingestion: `POST /api/v1/ingest/web`, `{"url": "…"}`
 - RAG Q&A: `POST /api/v1/ask`, `{"question": "…", "client": "TraeWork", "project": "kb"}`
@@ -89,9 +87,9 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
 curl examples (PowerShell):
 
 ```powershell
-# write (client defaults to HTTP; project optional = project bucket, omitted default bucket)
+# write (client defaults to HTTP; project optional = project sub-store, omit for global)
 curl -X POST http://127.0.0.1:8000/api/v1/memories -H "Content-Type: application/json" -d '{"content": "用户偏好深色主题", "tags": ["偏好"], "client": "TraeWork", "project": "kb"}'
-# search (only your client+project memory + all shared knowledge)
+# search (project sub-store + global store)
 curl -X POST http://127.0.0.1:8000/api/v1/search -H "Content-Type: application/json" -d '{"query": "用户界面偏好", "top_k": 5, "client": "TraeWork", "project": "kb"}'
 # ask
 curl -X POST http://127.0.0.1:8000/api/v1/ask -H "Content-Type: application/json" -d '{"question": "用户喜欢什么主题？", "client": "TraeWork", "project": "kb"}'
@@ -114,6 +112,15 @@ Within the above, during the session proactively identify and write the followin
 3. **Facts & conventions**: reusable facts like key paths, commands, dependencies, environment details, version constraints.
 4. **Sensitive constraints**: red lines (e.g., "do not modify the design doc"), security/privacy requirements.
 5. **Current task progress**: key progress and next steps of complex tasks, for cross-session handoff.
+
+**Project scoping**: memories produced inside a repository/workspace should pass a stable
+`project` name (e.g. `rag-kb`); user preferences and cross-project facts should omit it
+(global store, readable by every project). Searches inside the project should pass the same
+project; the scope automatically includes the global store.
+
+**Memory language**: write in the language specified by the server's MCP instructions
+(by default the OS language); keep proper nouns, commands and code verbatim. If the server
+injects user-defined memory rules (`~/.kb/rules.md` / `<data dir>/rules.md`), follow them first.
 
 Do NOT write: small talk, temporary computation, or implementation details directly obtainable from code/docs (unless needed across sessions).
 

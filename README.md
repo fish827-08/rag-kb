@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.0.0 · 自动化回归全绿，待人工验收）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.1.0 · 自动化回归全绿，待人工验收）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -31,7 +31,12 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
   - 可选精排：`KB_RERANK_ENABLED=true` 启用 bge-reranker-v2-m3 交叉重排（默认关）
   - 可选三路：`KB_SPARSE_ENABLED=true` 启用 BGE-M3 稀疏向量第三路（默认关，失败自动降级双路；需 bge-m3）
 - **记忆管理**：写入 / 更新 / 删除 / 列表，支持 namespace、tags、type 过滤
-- **记忆全共享（v3）**：所有记忆/知识与任何客户端、任务、AI 全共享——本地单用户定位，跨 agent、跨任务读到同一份用户记忆；client/project 仅用于审计归类与元数据（不再隔离读写）；主键服务端生成
+- **记忆全共享**：所有记忆/知识与任何客户端、任务、AI 全共享——本地单用户定位，跨 agent、跨任务读到同一份用户记忆；client 仅用于审计归类与元数据；主键服务端生成
+- **全局 + 分项目记忆（v2.1）**：不传 `project` 写入全局库；传 `project` 写入独立子库 `kb_data/projects/<project>/`（物理隔离，删目录即删项目记忆）；带项目检索 = 项目子库 + 全局库加权合并（`KB_PROJECT_BOOST`）
+- **PyPI 安装与依赖瘦身（v2.1）**：`pip install "kb-memory[ingest]"`，摄取/LLM 拆为可选 extras；Linux 可先装 CPU 版 torch，总下载量显著下降
+- **Skill 自动安装与发现（v2.1）**：skill 内置 `bootstrap.py`，**询问用户同意后**才建独立环境安装；`kb where` 告诉你装在哪，`kb autostart enable` 开机自启
+- **空闲卸载（v2.1）**：`KB_IDLE_UNLOAD_SECONDS` 到期自动卸载嵌入模型并释放显存，后台占用趋零
+- **记忆语言与自定义规则（v2.1）**：`KB_MEMORY_LANG=auto` 跟随操作系统语言存储记忆；`~/.kb/rules.md` 自定义"什么时候该存记忆"
 - **存取审计**：每次写/读/改/删/检索/问答记 JSON 到 `logs/agent-audit/<客户端>__<项目>.log`（按 client+project 分文件）；用户可查：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 CLI `kb audit --client <客户端>`
 - **知识入库**：本地文档（txt/md/pdf/docx 等）上传或路径导入，网页正文抓取入库
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
@@ -41,49 +46,45 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 
 ## 快速开始（Windows / Linux / macOS）
 
-**Windows PowerShell：**
+**从 PyPI 安装（推荐）：**
 
-```powershell
-# 1. 创建并激活虚拟环境
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# 2. 安装依赖 + 安装 kb 命令
-pip install -r requirements.txt
-pip install -e .
-
-# 3. 启动服务（默认监听 http://127.0.0.1:8000）
+```bash
+pip install "kb-memory[ingest]"   # 核心 + 文档/网页摄取；[llm]=云端问答，[full]=全部
 python -m kb serve
 ```
 
-**Linux / macOS：**
+**Linux 无显卡机器先装 CPU 版 torch**（PyPI 默认拉 CUDA 轮子，体积大得多）：
 
 ```bash
-# 1. 创建并激活虚拟环境
-python3 -m venv venv
-source venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "kb-memory[ingest]"
+python -m kb serve
+```
 
-# 2. 安装依赖 + 安装 kb 命令
+**源码开发安装：**
+
+```powershell
+python -m venv venv
+.\venv\Scripts\Activate.ps1          # Linux/macOS: source venv/bin/activate
 pip install -r requirements.txt
-pip install -e .
-
-# 3. 启动服务
+pip install -e ".[full]"             # 开发/测试需要摄取、监听与 LLM 可选依赖
 python -m kb serve
 ```
 
 > **首次安装要下载什么、大概多久**（先看一眼，避免以为卡死了）：
-> - Python 依赖约 **600 MB**（最大单体是 `torch` 轮子 124 MB）；
+> - 核心 Python 依赖约 **400–600 MB**（Windows CPU 版 `torch` 约 124 MB 为最大单体；
+>   Linux 先装 CPU 轮子可避免默认 CUDA 轮子带来的数 GB 下载）；
+> - 可选 `[ingest]` 额外约几十 MB（PDF/DOCX/Office 解析、网页提取、目录监听）；
 > - **首次写入/检索时**才加载并下载嵌入模型（懒加载，启动本身很轻），**默认 `bge-small-zh-v1.5` 约 92 MB**（若显式配了 `KB_EMBED_MODEL=BAAI/bge-m3`，则约 2.2 GB）；
 > - 国内网络建议加 pip 镜像（实测阿里云可用、清华可能 403）：
->   `pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/`
+>   `pip install "kb-memory[ingest]" -i https://mirrors.aliyun.com/pypi/simple/`
 > - 模型下载走 HuggingFace 镜像：`$env:HF_ENDPOINT='https://hf-mirror.com'`（Windows）/ `export HF_ENDPOINT=https://hf-mirror.com`（Linux、macOS）。
 >
-> 重要：`kb` 命令只装在虚拟环境内。**每个新终端都要先激活虚拟环境**
+> 重要：用源码 venv 安装时 `kb` 命令只装在虚拟环境内。**每个新终端都要先激活虚拟环境**
 > （Windows `.\venv\Scripts\Activate.ps1`，Linux/macOS `source venv/bin/activate`），
 > 否则会提示 `kb：未找到命令`。改用 `python -m kb <子命令>` 可绕过激活。
->
-> 快速安装备选（免虚拟环境，Python 3.10+）：`pip install --user -r requirements.txt` 后
-> 用 `python -m kb serve` 运行，但建议优先使用 venv 隔离依赖。
+> 不知道自己的 kb 装在哪里、怎么启动：`kb where`，或运行 skill 包里的
+> `python bootstrap.py --status` / `--start-only`。
 
 启动后健康检查：
 
@@ -331,7 +332,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/memories \
 
 ```powershell
 python -m kb add "记忆内容" --tags 偏好 --client TraeWork                       # 写入（project 缺省自动取当前目录名）
-python -m kb search "查询词" --client TraeWork                                 # 混合检索（v3：全共享，不分客户端/项目）
+python -m kb search "查询词" --client TraeWork                                 # 混合检索（v2.1：不传 project 查全局；传 project 合并子库）
 python -m kb stats                            # 统计：类型分布 / 访问热度 / 陈旧分布
 python -m kb ask "问题" --client TraeWork      # 终端 RAG 问答（LLM 不可用时输出检索命中）
 python -m kb audit --client TraeWork --days 7   # 查某客户端/项目存过/读过什么
@@ -347,10 +348,10 @@ python -m kb dedup --threshold 0.92           # 语义去重
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（395 项，含 eval_zh_50.jsonl 检索评测数据集）
-docs/          设计文档、节点计划、用户使用手册
+tests/         kb 验收测试（417 项通过 / 1 跳过，含 eval_zh_50.jsonl 检索评测数据集）
+docs/          核心文档、当前设计（历史 spec/plan 已归档本地，不上传）
 kb_data/       kb 运行数据（gitignore）
-_archive/      旧学习项目归档（仅保留历史，禁止参考）
+_archive/      旧学习项目 + 历史 spec/plan 归档（仅本地保留，禁止参考）
 ```
 
 ## 更多文档
@@ -358,7 +359,7 @@ _archive/      旧学习项目归档（仅保留历史，禁止参考）
 - **用户使用手册（人类用户入口）**：[docs/USER_GUIDE.md](docs/USER_GUIDE.md)
 - **AI 接力文档（AI 助手入口）**：[PROJECT.md](PROJECT.md)（项目状态 / 进度看板 / 接手指南）
 - 设计文档（需求、架构、API、里程碑）：`docs/superpowers/specs/2026-08-23-kb-memory-service-design.md`
-- P2 日志设计：`docs/superpowers/specs/2026-08-24-logging-design.md`
-- P2 路线图：`docs/superpowers/plans/2026-08-24-p2-roadmap.md`
-- 节点开发计划：`docs/superpowers/plans/2026-08-23-kb-dev-nodes.md`
+- **v2.1 设计（当前）**：`docs/superpowers/specs/2026-10-20-kb-v2.1-design.md`
+- 开发者维护手册：`docs/DEV_HANDBOOK.md`
 - AI 协作规范：`AGENTS.md`
+- 历史 spec / 节点计划已归档到本地 `_archive/docs/`（不上传，不再作为开发依据）

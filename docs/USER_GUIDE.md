@@ -27,11 +27,37 @@
 
 ### 2.1 安装（一次性）
 
+**方式 A：从 PyPI 安装（推荐）**
+
+```powershell
+pip install "kb-memory[ingest]"   # 核心 + 文档/网页摄取；[llm]=云端问答，[full]=全部
+```
+
+Linux 无显卡机器建议先装 CPU 版 torch（避免默认 CUDA 轮子数 GB 下载）：
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "kb-memory[ingest]"
+```
+
+**方式 B：让 skill 引导安装（需用户确认）**
+
+skill 包内的 `bootstrap.py` 只依赖标准库，先展示计划、不会擅自安装：
+
+```bash
+python bootstrap.py --status   # 查看是否已安装、装在哪、是否在运行
+python bootstrap.py            # 只展示安装计划（不改动任何东西）
+python bootstrap.py --yes      # 用户确认后：建 ~/.kb/venv → PyPI 安装 → 启动
+```
+
+**方式 C：源码开发安装**
+
 ```powershell
 cd rag-kb
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+pip install -e ".[full]"
 ```
 
 ### 2.2 启动服务
@@ -45,10 +71,12 @@ python -m kb serve
   `{"status": "ok", "embedder": {"state": "unloaded|ok", ...}, ...}` 即正常；
   `embedder.state=error` 表示模型加载失败，写/查会返回 503 `EMBED_MODEL_UNAVAILABLE`
 - **保持这个终端窗口开着**（或让它跑在后台）；关掉窗口 = 服务停止
+- 不知道装在哪 / 怎么启动：`kb where`，或 `python bootstrap.py --status` / `--start-only`
 
 ### 2.3 停止与重启
 
 - 停止：服务终端 `Ctrl+C`
+- 登录自启：`kb autostart enable`（关闭：`kb autostart disable`；查看：`kb autostart status`）
 - 重启后注意：已挂载 MCP 的 AI 客户端可能显示断连，在客户端 MCP 面板点刷新/重连，或新开会话
 
 ## 3. kb 服务：日常使用
@@ -257,8 +285,10 @@ Invoke-RestMethod http://127.0.0.1:8000/api/v1/governance/config
 | 性能调优 | `KB_DEVICE=cuda/cpu`；`KB_CHUNK_SIZE/KB_CHUNK_OVERLAP` 切分参数 |
 | 局域网/多 Agent 访问鉴权 | `KB_API_KEY=<≥32随机字符>` 启用 Bearer/X-API-Key 鉴权（见 4.1） |
 | 记忆治理 | `KB_DEDUP_ENABLED`（去重）/ `KB_DECAY_ENABLED`（衰减）/ `KB_FRESHNESS_ENABLED`（新鲜度），均默认关（见 3.5） |
-| 记忆全共享 | v3（2026-08-31）：所有记忆/知识全共享、不按 (client, project) 隔离读写；client/project 仅审计归类（见 4.3） |
-| Agent 存取审计 | `KB_ACCESS_AUDIT_ENABLED`（默认开）：每次存取写 `logs/agent-audit/<客户端>__<项目>.log` JSON 行；查询：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 `kb audit --client <客户端>`（见 4.3） |
+| 项目记忆 | v2.1：传 `project` 写入 `kb_data/projects/<项目>/`，项目间物理隔离；不传写全局库（见 4.3） |
+| 记忆语言 / 自定义规则 | `KB_MEMORY_LANG=auto`（跟随系统）或 `zh/en/...`；`~/.kb/rules.md` + `<数据目录>/rules.md` 注入 MCP instructions（见 4.4） |
+| 后台占用 | `KB_IDLE_UNLOAD_SECONDS=600`：嵌入模型空闲 10 分钟自动卸载（0=关闭）；下次检索重新加载 |
+| Agent 存取审计 | `KB_ACCESS_AUDIT_ENABLED`（默认开）：每次存取写 `logs/agent-audit/<客户端>__<项目>.log` JSON 行；查询：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 `kb audit --client <客户端>`（见 4.5） |
 
 完整键名见 [`.env.example`](../.env.example)。
 
@@ -306,21 +336,41 @@ MCP 配置带 key 示例（本机自用，**勿提交入库**）：
 
 仓库内 `.mcp.json` 模板保持无 key（JSON 不支持注释，说明落本手册）；健康探针 `GET /api/v1/healthz` 永远无需 key。
 
-### 4.3 记忆全共享与存取审计（v3：client + project 仅审计归类，2026-08-31）
+### 4.3 项目记忆（v2.1：项目分库，2026-10-20）
 
-**记忆全共享**（本地单用户定位，跨 agent/任务共享同一份记忆）：
+**全局记忆 + 项目子库**（v2.1 起生效，取代 v3 的"全共享"）：
 
-- **所有记忆（memory）与知识（doc/web chunk）全共享**：任何客户端、任何任务、任何 AI 均可
-  检索 / 读取 / 更新 / 删除全部记录——不再按 (client, project) 隔离读写，跨 agent、跨任务
-  能读到同一份用户偏好与决策，不因来源不同而丢失记忆
-- **v2 隔离已取消**（2026-08-31）：实测 (client, project) 双键隔离在本地单用户场景不可行——
-  框架识别 client 再准，项目/任务归属仍靠连接/目录承载，读不到隔离键时记忆整体不可见；
-  鉴权边界仍由 `KB_API_KEY` 承担，未来如需多租户再引入正式租户模型
-- **client / project 仍可传**，仅用于**审计归类与元数据**（标注这条记录从哪个客户端/项目写入），
-  不影响任何读写可见性；格式校验保留（非法值 REST 422 / MCP `INVALID_ARGUMENT`）
-- 旧数据（v2 时期按项目隔离存储的记录）无需迁移，v3 起全部可检索
+- **不传 `project`**：写入全局库，所有客户端/任务可见——适合用户偏好、跨项目事实
+- **传 `project="X"`**：写入 `kb_data/projects/X/`，与其他项目**物理隔离**——适合代码库决策、
+  架构事实、任务进度、项目文档
+- **检索 `project=X`**：范围 = X 子库 + 全局库，X 命中默认加 `KB_PROJECT_BOOST=0.05` 分；
+  不传 project 只检索全局库
+- **按 ID 读取/更新/删除**：传 project 先查 X 再查全局；不传时先查全局再按目录顺序查各项目
+- 项目子库首次访问时懒打开，`KB_PROJECT_CACHE_SIZE`（默认 4）限制同时打开数量（LRU 淘汰）
+- 项目名允许字母/数字/中文/下划线/连字符，1~64 字符；Windows 保留名（CON/NUL/COM1…）拒绝
+- **client 仍只用于审计归类**（通常自动识别），不影响读写可见性
+- 旧数据（v3 全共享时期带 project 元数据的记录）继续留在全局库，无需迁移
 
-**存取审计**（谁在哪个客户端/项目下存了什么/读了什么）：
+CLI 示例：
+
+```powershell
+python -m kb add "项目使用 PostgreSQL 16" --project rag-kb
+python -m kb search "数据库选型" --project rag-kb
+python -m kb add "用户偏好中文回复"          # 不传 project → 全局
+```
+
+### 4.4 记忆语言与自定义规则（v2.1）
+
+- **记忆语言**：`KB_MEMORY_LANG=auto`（默认）跟随操作系统语言；也可显式设 `zh` / `en` / `ja` 等。
+  服务通过 MCP instructions 要求 agent 用该语言书写记忆，专有名词/代码保持原样。
+- **自定义规则**（告诉 agent 何时该记/不该记、记什么、隐私边界）：
+  1. `~/.kb/rules.md`：用户级，适用于所有项目
+  2. `<数据目录>/rules.md`：当前 kb 安装级
+  两个文件按顺序拼接，截断到 `KB_RULES_MAX_CHARS`（默认 4000），注入 MCP instructions。
+  示例："不要记住雇主的任何信息"、"数据库迁移决策必须记录"、"用中文回复但记忆用英文"。
+- **自定义记忆时机规则不影响服务端校验**：非法 project、空白内容、敏感信息红线仍然生效。
+
+### 4.5 存取审计
 
 - **按 (client, project) 分文件**：每次 write/search/read/update/delete/ask/ingest 记一条 JSON 到
   `logs/agent-audit/<客户端>__<项目>.log`（project 为空 → `<客户端>__default.log`，

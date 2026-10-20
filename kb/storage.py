@@ -110,6 +110,11 @@ class ChromaStore(VectorStore):
         English: Delete by an id list."""
         self._col.delete(ids=ids)
 
+    def count(self) -> int:
+        """记录总数（Chroma 原生计数，不加载文档）。
+        English: Total record count (native Chroma count, no documents loaded)."""
+        return self._col.count()
+
     def delete_by_source(self, source: str) -> int:
         """删除该 source 的全部记录，返回删除数量。
         English: Delete all records of this source, returning the count deleted."""

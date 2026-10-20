@@ -1,6 +1,6 @@
 """日志体系装配（N17）：setup_logging 一次调用配置 kb.* 日志树。
 
-设计文档 docs/superpowers/specs/2026-08-24-logging-design.md 第 6 节：
+设计依据（历史日志设计，已本地归档）第 6 节：
 - 控制台 handler：精简格式（asctime 只保留时分秒，省略日期部分）；
 - RotatingFileHandler：完整格式（含模块名），按 KB_LOG_MAX_BYTES 轮转，
   保留 KB_LOG_BACKUP_COUNT 个备份；

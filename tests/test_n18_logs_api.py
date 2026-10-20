@@ -1,6 +1,6 @@
 """N18 验收：日志查看端点（GET /api/v1/logs 与 /api/v1/logs/events）。
 
-对应设计书 docs/superpowers/specs/2026-08-24-logging-design.md：
+对应日志设计（历史 spec，已本地归档）：
 - 第 1 节端点契约（limit/level/event 参数、响应 schema、错误码）
 - 第 2 节 _parse_log_line 纯函数与读尾部语义（SCAN_MAX=20000）
 - 第 3 节测试清单

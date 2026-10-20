@@ -37,14 +37,18 @@ def test_skill_front_matter标准且可解析():
 def test_skill自包含安装启动配置验证排障():
     text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
     for marker in (
-        "git clone https://github.com/fish827-08/rag-kb.git",
-        "pip install -r requirements.txt",
-        "pip install -e .",
+        "bootstrap.py --status",
+        "bootstrap.py --yes",
+        'pip install "kb-memory[ingest]"',
         "python -m kb serve",
+        "kb where",
+        "kb autostart",
         "127.0.0.1:8000/mcp/",
         "/api/v1/healthz",
         "HF_ENDPOINT",
         "KB_API_PORT",
+        "KB_MEMORY_LANG",
+        "rules.md",
     ):
         assert marker in text, f"SKILL.md 缺少 {marker!r}"
 
@@ -86,7 +90,7 @@ def test_build_script产物结构正确(tmp_path):
     with zipfile.ZipFile(target) as zf:
         names = set(zf.namelist())
         assert "SKILL.md" in names, "SKILL.md 必须位于 zip 根目录"
-        assert {"README.md", "mcp.json", "env.example", "LICENSE"} <= names
+        assert {"README.md", "bootstrap.py", "mcp.json", "env.example", "LICENSE"} <= names
         assert all("/" not in n for n in names), "交付包应平铺在 zip 根目录"
         skill = zf.read("SKILL.md").decode("utf-8")
         assert skill.startswith("---\n")
