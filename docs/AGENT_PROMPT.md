@@ -56,11 +56,14 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 | `read_memory`   | `record_id: str`, `project?: str`, `client?: str`                   | 按 ID 读单条记忆；传 project 先查该项目子库再查全局，不传先查全局再查各项目                                                        |
 | `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str`   | 按 ID 更新记忆（自动重新嵌入）；定位规则同上                                                                        |
 | `delete_memory` | `record_id: str`, `project?: str`, `client?: str`                   | 按 ID 删除单条记忆；定位规则同上                                                                             |
+| `link_memory`   | `from_id: str`, `to_id: str`, `relation?: str="related"`, `project?: str`, `client?: str` | 建立两条记忆的关联（同作用域、仅 memory）；relation: related/supersedes/depends_on/part_of/contradicts；重复建边幂等 |
+| `unlink_memory` | `from_id: str`, `to_id: str`, `relation?: str`, `project?: str`, `client?: str` | 取消关联（任一方向）；relation 省略时删除该对全部关系                                                        |
+| `list_links`    | `record_id: str`, `relation?: str`, `project?: str`, `client?: str` | 列一跳关联邻居，含 `content/type/tags/direction(out/in/both)`                                               |
 | `add_document`  | `path: str`, `project?: str`, `client?: str`                        | 导入本地文档（PDF/DOCX/MD/TXT/Office），chunk 落入 project 子库（空=全局）                                                          |
 | `add_webpage`   | `url: str`, `project?: str`, `client?: str`                         | 抓取网页正文，chunk 落入 project 子库（空=全局）                                                                                   |
 | `ask_kb`        | `question: str`, `project?: str`, `client?: str`                    | 基于知识库的 RAG 问答，返回 `{answer, sources}`；检索范围同 `search_memory`；未配 LLM 时返回 `LLM_DISABLED`                               |
 
-> 存取审计：每次 write/search/read/update/delete/ask/ingest 都会在服务端
+> 存取审计：每次 write/search/read/update/delete/link/unlink/ask/ingest 都会在服务端
 > `logs/agent-audit/<客户端>__<项目>.log` 记录一条 JSON（按 client+project 分文件，行内只记
 > 操作与内容摘要，身份由文件名承载）。用户可用
 > `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 CLI `kb audit --client <客户端>`
@@ -85,7 +88,13 @@ kb 是常驻在你本机的记忆服务（默认地址 `http://127.0.0.1:8000`�
 
 - 列表：`GET /api/v1/memories?type=&tag=&q=&limit=`
 
-- 混合检索：`POST /api/v1/search`，`{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}`（mode: hybrid/vector/keyword；传 project = 子库 + 全局库，不传只查全局）
+- 建立关联：`POST /api/v1/memories/{id}/links`，`{"to_id": "…", "relation": "related"}`
+
+- 列关联：`GET /api/v1/memories/{id}/links?project=kb&relation=related`
+
+- 取消关联：`DELETE /api/v1/memories/{id}/links/{to_id}?project=kb`
+
+- 混合检索：`POST /api/v1/search`，`{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}`（mode: hybrid/vector/keyword；传 project = 子库 + 全局库，不传只查全局；一跳关联扩展项带 `via: {id, relation}`）
 
 - 文档入库：`POST /api/v1/documents`（multipart `file` 或 JSON `{"path": "本地路径", "client": "TraeWork", "project": "kb"}`）
 

@@ -35,6 +35,20 @@ sudo ./uninstall_kb_service.sh
 sudo ./uninstall_kb_service.sh --delete-data
 ```
 
+## 低配服务器（2 核 2G）(Low-memory servers)
+
+unit 默认 `KB_DEVICE=cpu`、`KB_LLM_MODE=off`，不会加载 torch 探测显卡，也不会调用 LLM。
+可再按需打开 `kb.service` 里的两项注释（或写入 `.env`）：
+
+```ini
+KB_TORCH_THREADS=2          # 0=自动（按 cgroup/affinity 配额，最多 4）
+KB_EMBED_BATCH_SIZE=16      # 默认 32；内存紧张降到 8–16
+```
+
+嵌入模型默认 `bge-small`（约 92 MB），首次检索才加载；空闲卸载由
+`KB_IDLE_UNLOAD_SECONDS`（默认 600 秒）控制。2 核 2G 机器使用默认配置即可，
+`/ask` 建议保持关闭或配置云端 LLM。
+
 ## 权限说明（Privileges）
 
 - **禁止以 root 常驻**：unit 固定 `User=<调用者>`（`--user` 模式天然是当前用户）；root 直跑 install 会被拦截并提示改用 sudo/普通用户。Never run the service as root.

@@ -1,7 +1,7 @@
 # kb 开发者维护手册
 
 > 面向项目维护者（人类）的架构与函数级手册。由代码 AST 全量扫描生成（2026-09-05，对应 v2.0.0；
-> 2026-10-19 按交付加固后的代码校订；2026-10-20 按 v2.1.0 项目分库/空闲卸载校订，同日晚按 v2.1.1 体验修复、v2.1.2 watcher 自我入库保护校订）。
+> 2026-10-19 按交付加固后的代码校订；2026-10-20 按 v2.1.0 项目分库/空闲卸载校订，同日晚按 v2.1.1 体验修复、v2.1.2 watcher 自我入库保护校订；2026-10-22 按 v2.2.0 记忆关联/遗忘升级与低配调优校订）。
 > 行号锚点格式 `kb/xxx.py:Lnn` 是生成时快照，代码演进后可能漂移；**以函数/类名在 IDE 搜索为准**，
 > 代码改动后本手册以代码为准。
 >
@@ -21,7 +21,7 @@ REST / MCP / CLI 三个接入壳 → 全部委托给唯一的业务中枢 `KBSer
 
 ```
 ┌─ 接入层 ─────────────────────────────────────────────┐
-│  api.py (REST, 915行)   mcp.py (MCP 8工具, 299行)   │
+│  api.py (REST, 约1000行) mcp.py (MCP 11工具, 约430行) │
 │  cli.py (命令行, 682行)                              │
 └──────────────────────┬───────────────────────────────┘
                        ▼  全部委托（薄壳，无业务逻辑）
@@ -148,6 +148,8 @@ KBService.ask               service.py:L601
 POST   /api/v1/memories            写记忆          GET  /api/v1/memories           列表
 GET    /api/v1/memories/{id}       读单条          PATCH /api/v1/memories/{id}    更新
 DELETE /api/v1/memories/{id}       删除            POST /api/v1/search           混合检索
+POST   /api/v1/memories/{id}/links 建关联          GET  /api/v1/memories/{id}/links 列关联
+DELETE /api/v1/memories/{id}/links/{to_id}         取消关联
 POST   /api/v1/documents           文档入库        GET  /api/v1/documents         文档列表
 DELETE /api/v1/documents/{source}  按源删除        POST /api/v1/ingest/web       网页入库
 POST   /api/v1/ask                 RAG 问答        GET  /api/v1/audit             存取审计查询
@@ -164,10 +166,12 @@ GET    /                           服务导航页（API 状态/文档链接）
 | `class KBService` | L125 | 核心类；`__init__` 组装全局 scope + ScopeManager + embedder + llm，BM25 启动优先加载持久化语料 |
 | `.add_memory` | L253 | 写记忆（校验→路由 scope→去重→嵌入→入库→建索引→审计） |
 | `.get_memory / .update_memory / .delete_memory` | L299/L326/L360 | 单条读/改（变更重新嵌入）/删；经 `scopes.locate` 定位子库 |
+| `.batch_delete_records` | L486 | 批量删除（全作用域遗忘）：Chroma/BM25/稀疏/关联边/计数级联清理 + forget 审计 |
 | `.list_memories / .list_records` | L316/L321 | 过滤分页列表（支持 project） |
 | `.add_document / .add_webpage` | L382/L422 | 解析→切分→逐 chunk 写入 project 子库 |
 | `.list_documents / .delete_document` | L456/L473 | 按 source 聚合/级联删除 |
-| `.search` | L577 | 检索入口：项目子库 + 全局库合并（+boost）+ 审计 |
+| `.search` | L577 | 检索入口：项目子库 + 全局库合并（+boost）+ 一跳关联扩展 + 审计 |
+| `.link_memories / .unlink_memories / .list_links` | 关联节 | 记忆显式关联：同作用域 + memory-only + 关系白名单 + 上限；`_expand_links` 做检索扩展 |
 | `.ask` | L601 | RAG 问答编排（见 2.3） |
 | `.stats` | L593 | 运行统计（记录数走 count.txt 缓存，不加载全部子库） |
 | `._ask_auto / ._classify / ._is_sensitive / ._answer_complex_cloud` | L639-717 | auto 智能路由四件套 |
@@ -184,7 +188,7 @@ GET    /                           服务导航页（API 状态/文档链接）
 |---|---|---|
 | `serve / mcp_stdio` | L378/L410 | 启动 REST 常驻服务 / stdio 模式 MCP |
 | `add / search / ask / info / stats` | L225-378 | 终端直写、检索、问答、信息、统计 |
-| `forget / dedup` | L424/L472 | 治理维护：陈旧记忆清理、重复对扫描（dry-run 先行） |
+| `forget / dedup` | L424/L472 | 治理维护：全作用域陈旧记忆级联清理（备份 + dry-run 先行）、重复对扫描 |
 | `audit` | L519 | 存取审计查询 |
 | `eval_cmd` | L576 | 检索质量评测（独立临时库，不碰生产数据） |
 | `resolve_device` | L139 | GPU 选择交互（显式配置 > runtime.json > 交互询问） |
@@ -203,13 +207,20 @@ GET    /                           服务导航页（API 状态/文档链接）
 | `weighted_fuse` | L48 | min-max 归一加权融合（N32 修复件，保留分数区分度） |
 | `_minmax_norm` | L31 | 单路分数归一化到 [0,1] |
 
-### 3.6 mcp.py（274 行） — MCP 8 工具薄封装
+### 3.6 mcp.py（约 430 行） — MCP 11 工具薄封装
 
-8 个工具函数 `write_memory / search_memory / read_memory / update_memory / delete_memory / add_document / add_webpage / ask_kb`（L73-235），全部委托 KBService。`create_mcp_server`（L258）注册工具；`_client_from_ctx / _resolve_client_ctx`（L34/L67）从 MCP 握手自动识别客户端；`_check_identity`（L50）身份校验。**改工具签名=改三处：mcp.py + 设计文档 + 客户端规约。**
+11 个工具函数 `write_memory / search_memory / read_memory / update_memory / delete_memory / link_memory / unlink_memory / list_links / add_document / add_webpage / ask_kb`，全部委托 KBService。`create_mcp_server` 注册工具；`_client_from_ctx / _resolve_client_ctx` 从 MCP 握手自动识别客户端；`_check_identity` 身份校验。**改工具签名=改三处：mcp.py + 设计文档 + 客户端规约。**
 
 ### 3.7 audit.py（263 行） — 审计日志
 
 `log_access_event`（L223）存取审计 JSON 行（按 client__project 分文件，按天轮转）；`log_governance_event`（L75）治理操作审计；`_snippet`（L216）内容截断前 50 字符（**敏感红线：不落全文**）；`parse_agent_file_name`（L150）文件名解析。两个 `reset_*` 是测试专用。
+
+### 3.7b links.py — 轻量记忆关联（SQLite 边库）
+
+`LinkStore`：每个作用域一个 `links.db`，表 `links(from_id, to_id, relation, created_at)`；
+`add` 幂等、`remove*` 双向清理、`neighbors` 双向遍历。`LinkError(code)` 携带
+`NOT_FOUND / SELF_LINK / INVALID_RELATION / MEMORY_ONLY / CROSS_SCOPE / LIMIT_REACHED`，
+由 API/MCP 映射为统一错误 JSON。关联仅限同作用域 memory；删除记录/文档时级联清理。
 
 ### 3.8 sparse.py（238 行） — 稀疏第三路（可选，默认关）
 
@@ -264,7 +275,7 @@ GET    /                           服务导航页（API 状态/文档链接）
 | models.py | 101 | `Record` 统一模型 ↔ Chroma metadata 互转；`RecordType` 类型枚举 |
 | logging_setup.py | 74 | `setup_logging` 控制台+轮转文件双 handler |
 | reranker.py | 61 | `Reranker.rerank` 交叉编码精排（懒加载） |
-| embedder.py | 150 | `Embedder.embed_texts/embed_query` 向量编码（默认 bge-small-zh-v1.5，可选 BGE-M3；懒加载、离线优先、cuda fp16、失败状态/503）；`unload/unload_if_idle` 空闲释放 |
+| embedder.py | 215 | `Embedder.embed_texts/embed_query` 向量编码（默认 bge-small-zh-v1.5，可选 BGE-M3；懒加载、离线优先、cuda fp16、失败状态/503）；CPU 线程数/批大小调优；`unload/unload_if_idle` 空闲释放（Linux malloc_trim） |
 | skills/kb-memory/bootstrap.py | 280 | skill 引导安装（仅标准库）：`build_plan` 纯计划 → 用户 `--yes` → venv/PyPI/CPU torch → 写 manifest → 分离启动；`--status` / `--start-only` |
 
 ---
@@ -301,7 +312,7 @@ GET    /                           服务导航页（API 状态/文档链接）
 | 键 | 默认 | 说明 |
 |---|---|---|
 | KB_DATA_DIR | kb_data | 数据根目录（Chroma/语料/稀疏索引都落这） |
-| KB_DEVICE | 空=自动 | cpu / cuda 显式覆盖（OOM 时切 cpu） |
+| KB_DEVICE | 空/auto=自动 | 非交互启动 auto 回退 cpu；cpu / cuda 显式覆盖（OOM 时切 cpu） |
 | KB_LLM_MODE | **off** | off=纯本地零成本 / local / auto / cloud |
 | KB_LLM_MODEL | 空 | 本地 Ollama 模型名（以 `ollama list` 为准） |
 | KB_LLM_API_KEY / KB_LLM_BASE_URL / KB_LLM_CLOUD_MODEL | 空/deepseek | 通用云端三键（任意 OpenAI 兼容商） |
@@ -309,6 +320,9 @@ GET    /                           服务导航页（API 状态/文档链接）
 | KB_API_HOST / KB_API_PORT | 127.0.0.1:8000 | 监听地址 |
 | KB_WATCH_DIR | data | 目录监听（空/"."=不启动） |
 | KB_RERANK_ENABLED / KB_SPARSE_ENABLED | false/false | 重排 / 稀疏第三路开关 |
+| KB_LINK_EXPAND_ENABLED | true | 记忆关联的一跳检索扩展开关（无关联数据时零变化） |
+| KB_LINK_EXPAND_LIMIT / KB_LINK_EXPAND_SCORE_RATIO | 3 / 0.5 | 每次检索最多追加的邻居数 / 邻居分数相对种子的比例 |
+| KB_LINK_MAX_PER_RECORD | 50 | 单条记忆的关联边上限 |
 | KB_DECAY/FRESHNESS/DEDUP/CONSOLIDATION_ENABLED | 全 false | 治理开关，默认零行为变化 |
 | KB_ACCESS_AUDIT_ENABLED | true | 存取审计开关 |
 | KB_MONITOR_ENABLED | false | 监控常驻线程（默认按需触发） |
@@ -317,6 +331,8 @@ GET    /                           服务导航页（API 状态/文档链接）
 | KB_PROJECT_CACHE_SIZE | 4 | 同时打开的项目子库上限（LRU；全局库永不淘汰） |
 | KB_PROJECT_BOOST | 0.05 | 项目子库命中在合并排序时的加分 |
 | KB_IDLE_UNLOAD_SECONDS | 600 | 嵌入模型空闲卸载阈值（0=关闭）；serve 启动 watchdog 线程 |
+| KB_TORCH_THREADS | 0 | CPU 线程数：0=自动（affinity/cgroup 取小，最多 4）；2 核机器自动 2 |
+| KB_EMBED_BATCH_SIZE | 32 | 嵌入批大小；2GB 内存可降到 8–16 |
 | KB_MEMORY_LANG | auto | 记忆书写语言：auto=系统语言，或 zh/en/ja/... |
 | KB_RULES_MAX_CHARS | 4000 | `~/.kb/rules.md` + `<data_dir>/rules.md` 注入 MCP 的最大字符数 |
 

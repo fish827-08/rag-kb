@@ -45,5 +45,7 @@ build/
 *.pid
 # Qoder 本地工具产物（credits 报告等，仅本机使用）
 .qoder-credits/
+# 本地生成的图片素材（Agensi 等平台用，不入库）
+vibe_images/
 # 旧看板分享包（构建产物，不再入库）
 .trae-html-share-packages/

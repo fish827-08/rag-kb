@@ -1,10 +1,10 @@
-"""MCP 服务：8 个工具的薄封装，全部委托 KBService；由 api.py 挂载进同一 ASGI 应用。
+"""MCP 服务：11 个工具的薄封装，全部委托 KBService；由 api.py 挂载进同一 ASGI 应用。
 
 工具函数为模块级定义，可直接导入调用（测试与内部复用）；
 服务实例通过模块级单例 _service 提供：create_mcp_server 注入时覆盖，
 未注入时惰性自建 KBService()（指向当前配置环境，测试顺序无关）。
 
-English: MCP service: a thin wrapper over 8 tools, all delegating to KBService; it is mounted
+English: MCP service: a thin wrapper over 11 tools, all delegating to KBService; it is mounted
 into the same ASGI app by api.py. Tool functions are module-level and importable directly.
 The service instance is provided through the module-level singleton _service:
 create_mcp_server overrides it when injected; otherwise a KBService() is lazily created.
@@ -13,6 +13,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
 
 from kb import __version__
+from kb.links import LinkError
 from kb.service import (EmbeddingUnavailableError, KBService, LLMDisabledError,
                         UnsupportedFormatError, WebFetchError, validate_agent_id,
                         validate_client, validate_project)
@@ -206,6 +207,69 @@ def delete_memory(record_id: str,
     return {"ok": True}
 
 
+def link_memory(from_id: str, to_id: str, relation: str = "related",
+                project: str | None = None,
+                client: str | None = None,
+                ctx: Context | None = None) -> dict:
+    """建立两条记忆的关联（related/supersedes/depends_on/part_of/contradicts）；
+    重复建边幂等（created=false）。仅同作用域的 memory 记录可关联，禁止自关联；
+    失败返回 {"error": <CODE>, "message": 原因}（NOT_FOUND/SELF_LINK/...）。
+    project：项目子库（空=全局库）；client：仅审计。
+    English: Link two memories (related/supersedes/depends_on/part_of/contradicts);
+    duplicate edges are idempotent (created=false). Only memory records in the same
+    scope can be linked, and self-links are rejected; failures return
+    {"error": <CODE>, "message": reason}."""
+    err = _check_identity(ctx, client, project)
+    if err:
+        return {"error": "INVALID_ARGUMENT", "message": err}
+    c = _resolve_client_ctx(ctx, client)
+    try:
+        return _svc().link_memories(from_id, to_id, relation=relation,
+                                    agent_id=project or "default",
+                                    client=c, project=project)
+    except LinkError as exc:
+        return {"error": exc.code, "message": exc.message}
+
+
+def unlink_memory(from_id: str, to_id: str, relation: str | None = None,
+                  project: str | None = None,
+                  client: str | None = None,
+                  ctx: Context | None = None) -> dict:
+    """取消两条记忆的关联（任一方向）；relation 为空时删除该对全部关系。
+    返回 {"ok": true, "removed": 删除数}；记录不存在返回 {"error": "NOT_FOUND"}。
+    English: Remove links between two memories in either direction; when relation is
+    empty all relations of the pair are removed. Returns {"ok": true, "removed": n}."""
+    err = _check_identity(ctx, client, project)
+    if err:
+        return {"error": "INVALID_ARGUMENT", "message": err}
+    c = _resolve_client_ctx(ctx, client)
+    try:
+        removed = _svc().unlink_memories(from_id, to_id, relation=relation,
+                                         agent_id=project or "default",
+                                         client=c, project=project)
+    except LinkError as exc:
+        return {"error": exc.code, "message": exc.message}
+    return {"ok": True, "removed": removed}
+
+
+def list_links(record_id: str, relation: str | None = None,
+               project: str | None = None,
+               client: str | None = None,
+               ctx: Context | None = None) -> dict:
+    """列某条记忆的一跳邻居，返回 {"record_id", "links"}；每项含
+    id/content/type/tags/relation/direction（out/in/both）。
+    记录不存在返回 {"error": "NOT_FOUND"}。
+    English: List one-hop neighbors of a memory as {"record_id", "links"}; each item
+    has id/content/type/tags/relation/direction (out/in/both)."""
+    err = _check_identity(ctx, client, project)
+    if err:
+        return {"error": "INVALID_ARGUMENT", "message": err}
+    try:
+        return _svc().list_links(record_id, relation=relation, project=project)
+    except LinkError as exc:
+        return {"error": exc.code, "message": exc.message}
+
+
 def add_document(path: str,
                  project: str | None = None,
                  client: str | None = None,
@@ -282,10 +346,10 @@ def ask_kb(question: str,
 
 
 def create_mcp_server(service: KBService) -> MCPServer:
-    """创建 MCP 服务器并注册全部 8 个工具（工具名即函数名）。
+    """创建 MCP 服务器并注册全部 11 个工具（工具名即函数名）。
 
     注入 service 同时覆盖模块级单例，保证 MCP 工具直连调用与 REST 共享同一 KBService。
-    English: Create the MCP server and register all 8 tools (tool names are the function names).
+    English: Create the MCP server and register all 11 tools (tool names are the function names).
     Injecting the service also overrides the module-level singleton, so MCP tools and REST share the same KBService."""
     global _service
     _service = service
@@ -295,6 +359,7 @@ def create_mcp_server(service: KBService) -> MCPServer:
     mcp = MCPServer(name="kb", version=__version__,
                     instructions=mcp_instructions())
     for fn in (write_memory, search_memory, read_memory, update_memory,
-               delete_memory, add_document, add_webpage, ask_kb):
+               delete_memory, link_memory, unlink_memory, list_links,
+               add_document, add_webpage, ask_kb):
         mcp.tool()(fn)
     return mcp

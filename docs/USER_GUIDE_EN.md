@@ -108,15 +108,22 @@ MCP endpoint: `http://127.0.0.1:8000/mcp/`
 }
 ```
 
-Once mounted, AI gets 8 tools: `write_memory` (write memory), `search_memory` (hybrid search),
-`read_memory` / `update_memory` / `delete_memory`, `add_document` (file ingestion),
-`add_webpage` (web ingestion), `ask_kb` (RAG Q&A).
+Once mounted, AI gets 11 tools: `write_memory` (write memory), `search_memory` (hybrid search),
+`read_memory` / `update_memory` / `delete_memory`, `link_memory` / `unlink_memory` /
+`list_links` (memory links), `add_document` (file ingestion), `add_webpage` (web ingestion),
+`ask_kb` (RAG Q&A).
+
+Memory links form a lightweight knowledge graph: when two memories have a clear
+relationship (supersession, dependency, part-of, contradiction), let the AI create an
+edge with `link_memory`. Searches automatically bring in one-hop neighbors, with a
+`via` field marking the seed memory; with no links, results are unchanged.
 
 **Usage examples** (just tell the AI):
 
 ```
 Remember "the user prefers dark themes, primary language Python" in the memory bank
 Search for project decisions I stored before
+Link these two memories: the project migrated from Flask to FastAPI
 Ingest D:\docs\design-spec.pdf into the knowledge base
 Ask the KB: what is this project's retrieval approach?
 ```
@@ -408,22 +415,45 @@ Repo `.mcp.json` stays keyless (JSON has no comments; doc lives here); health pr
 
 ## 5. Maintenance commands (forget / dedup)
 
-N23a adds two maintenance CLIs (`python -m kb forget` / `dedup`), default **dry-run safe-first** (only lists candidates, never mutates), touching the storage layer directly (not via REST/service).
+Both maintenance CLIs (`python -m kb forget` / `dedup`) default to **dry-run safe-first**
+(list candidates only, never mutate). `forget` now goes through the service layer for
+cascade cleanup (Chroma / BM25 / sparse index / link edges / counts / audit); `dedup`
+remains a read-only scan.
 
-### 5.1 forget — scan stale memory
+### 5.1 forget — scan and clean stale memory
 
 ```bash
-# preview records not accessed in >90 days (dry-run default, no delete)
+# preview: global + all project sub-stores by default (dry-run default, no delete)
 python -m kb forget --stale --days 90 --dry-run
 
-# confirmed delete (requires typing yes)
+# limit to one project sub-store / global only
+python -m kb forget --stale --days 90 --project kb --dry-run
+python -m kb forget --stale --days 90 --global-only --dry-run
+
+# protect pinned-tagged and linked memories, include document chunks
+python -m kb forget --stale --days 180 --keep-tag pinned --include-documents --dry-run
+
+# confirmed delete (requires typing yes; writes a backup first by default)
 python -m kb forget --stale --days 90 --no-dry-run
 ```
 
 - `--stale`: stale-not-touched mode (currently the only mode, required)
-- `--days N`: not-touched day threshold, default 90
-- `--dry-run/--no-dry-run`: default dry-run (candidate table: id/content-summary/last-accessed/days); `--no-dry-run` requires typing `yes` to confirm before deleting
+- `--days N`: not-touched day threshold, default 90, minimum 1
+- `--project NAME` / `--global-only`: restrict to one project sub-store or the global
+  store; default is all scopes, and the two flags are mutually exclusive
+- memory-only by default; `--include-documents` also covers `doc_chunk` / `web_chunk`
+- `--keep-tag TAG`: protect records carrying the tag; repeatable (e.g. `pinned`)
+- linked memories are protected by default (knowledge-graph nodes are not deleted
+  casually); `--include-linked` disables that protection
+- `--backup/--no-backup`: write full candidate content to
+  `<data_dir>/forget-backups/forget-*.jsonl` before deleting (default on); a failed
+  backup aborts the deletion
+- `--dry-run/--no-dry-run`: dry-run is the default (candidate table shows scope / id /
+  summary / last accessed / days); `--no-dry-run` requires typing `yes`, then deletes
+  and reports counts by scope
 - Day calc: empty `last_accessed` falls back to `created_at` (never touched = creation time)
+- Cascade cleanup: Chroma records, BM25, sparse index, link edges, `count.txt`, plus a
+  `forget` audit event
 
 ### 5.2 dedup — scan duplicate pairs
 

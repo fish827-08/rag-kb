@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     project_cache_size: int = 4                 # 同时打开的项目子库上限（LRU）；全局库不计入
     project_boost: float = 0.05                 # 项目子库命中加分（检索合并时优先项目记忆）
     idle_unload_seconds: int = 600              # 嵌入模型空闲卸载秒数；0=不卸载
+    torch_threads: int = 0                      # CPU 线程数：0=自动（按 affinity/cgroup，最多 4）；2 核机器自动为 2
+    embed_batch_size: int = 32                  # 嵌入批大小：默认 32；2GB 内存可降到 8–16
     memory_lang: str = "auto"                   # 记忆书写语言：auto=系统 locale，或 zh/en
     rules_max_chars: int = 4000                 # 自定义规则注入上限，防止提示词膨胀
     embed_model: str = "BAAI/bge-small-zh-v1.5"   # 轻量优先（设计文档 §3.1，2026-10-19）：~92MB/512维；可显式换 BAAI/bge-m3
@@ -83,6 +85,11 @@ class Settings(BaseSettings):
     rerank_top_n: int = 20                        # KB_RERANK_TOP_N：参与精排的融合候选数上限
     # ---- A3.5 检索质量（N25 稀疏向量，2026-08-28 spec）----
     sparse_enabled: bool = False                  # KB_SPARSE_ENABLED：稀疏第三路开关，默认关（零行为变化）
+    # ---- 轻量记忆关联（2026-10-22 memory-links spec）----
+    link_expand_enabled: bool = True                 # KB_LINK_EXPAND_ENABLED：检索一跳扩展开关（无关联数据时零行为变化）
+    link_expand_limit: int = 3                       # KB_LINK_EXPAND_LIMIT：每次检索最多追加的邻居数
+    link_expand_score_ratio: float = 0.5             # KB_LINK_EXPAND_SCORE_RATIO：邻居分数 = 种子分数 × 比例
+    link_max_per_record: int = 50                    # KB_LINK_MAX_PER_RECORD：单条记录的关联边上限
 
     @property
     def chroma_dir(self) -> Path:

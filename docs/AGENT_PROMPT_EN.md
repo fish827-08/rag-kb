@@ -55,11 +55,14 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
 | `read_memory` | `record_id: str`, `project?: str`, `client?: str` | Read a memory by ID; with project, check that sub-store then global; without, global then each project store |
 | `update_memory` | `record_id: str`, `content: str`, `project?: str`, `client?: str` | Update memory content (auto re-embed); same lookup rule |
 | `delete_memory` | `record_id: str`, `project?: str`, `client?: str` | Delete a memory; same lookup rule |
+| `link_memory` | `from_id: str`, `to_id: str`, `relation?: str="related"`, `project?: str`, `client?: str` | Link two memories in the same scope (memory only); relation: related/supersedes/depends_on/part_of/contradicts; idempotent |
+| `unlink_memory` | `from_id: str`, `to_id: str`, `relation?: str`, `project?: str`, `client?: str` | Remove links in either direction; omit relation to remove all relations of the pair |
+| `list_links` | `record_id: str`, `relation?: str`, `project?: str`, `client?: str` | List one-hop neighbors with `content/type/tags/direction(out/in/both)` |
 | `add_document` | `path: str`, `project?: str`, `client?: str` | Import a local document (PDF/DOCX/MD/TXT/Office); chunks go to the project sub-store (empty = global) |
 | `add_webpage` | `url: str`, `project?: str`, `client?: str` | Fetch and chunk a web page into the project sub-store (empty = global) |
 | `ask_kb` | `question: str`, `project?: str`, `client?: str` | RAG Q&A; returns `{answer, sources}`; scope same as `search_memory`; `LLM_DISABLED` without an LLM |
 
-> Access audit: every write/search/read/update/delete/ask/ingest writes a JSON line to
+> Access audit: every write/search/read/update/delete/link/unlink/ask/ingest writes a JSON line to
 > `logs/agent-audit/<client>__<project>.log` (one file per client+project; the line records the action
 > and content snippet only — identity lives in the file name).
 > A human can query what a client/project stored/read via `GET /api/v1/audit?client=<name>[&project=<name>]`
@@ -78,7 +81,10 @@ It is fully local, free, and works offline; writing and retrieval need no LLM �
 - Update: `PATCH /api/v1/memories/{id}?project=kb`, `{"content": "…"}` (record missing → 404)
 - Delete: `DELETE /api/v1/memories/{id}?project=kb` (record missing → 404)
 - List: `GET /api/v1/memories?type=&tag=&q=&limit=`
-- Hybrid search: `POST /api/v1/search`, `{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}` (mode: hybrid/vector/keyword; with project = sub-store + global, without = global only)
+- Link: `POST /api/v1/memories/{id}/links`, `{"to_id": "…", "relation": "related"}`
+- List links: `GET /api/v1/memories/{id}/links?project=kb&relation=related`
+- Unlink: `DELETE /api/v1/memories/{id}/links/{to_id}?project=kb`
+- Hybrid search: `POST /api/v1/search`, `{"query": "…", "top_k": 5, "mode": "hybrid", "client": "TraeWork", "project": "kb"}` (mode: hybrid/vector/keyword; with project = sub-store + global, without = global only; one-hop expansion items carry `via: {id, relation}`)
 - Document ingestion: `POST /api/v1/documents` (multipart `file` or JSON `{"path": "本地路径", "client": "TraeWork", "project": "kb"}`)
 - Web ingestion: `POST /api/v1/ingest/web`, `{"url": "…"}`
 - RAG Q&A: `POST /api/v1/ask`, `{"question": "…", "client": "TraeWork", "project": "kb"}`

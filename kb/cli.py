@@ -5,6 +5,7 @@ CLI entry: add / search / info / serve / mcp / forget / dedup / stats / ask / ev
 import json
 import os
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from rich.table import Table
 from kb.config import Settings, get_settings
 from kb.governance import days_since
 from kb.idle import start_idle_watchdog  # 兼容既有导入：kb.cli.start_idle_watchdog
+from kb.models import RecordType
 from kb.service import KBService
 
 app = typer.Typer()
@@ -82,23 +84,155 @@ def _force_utf8_stdio() -> None:
 
 # ---- N23a 维护 CLI 候选筛选纯函数（可单测，不依赖 CLI/服务）----
 
-def find_stale_records(records, days: int, now: datetime | None = None):
+def find_stale_records(records, days: int, now: datetime | None = None, *,
+                       types=None, keep_tags=(), keep_ids=()):
     """筛选超 N 天未命中的记录（N23a forget --stale）。
 
     Find records not touched for more than N days (N23a forget --stale).
 
     last_accessed 为空时用 created_at 替代（governance.days_since 语义）。
-    返回 [(record, days_float), ...]，按天数降序。
+    types/keep_tags/keep_ids 为可选保护过滤。返回 [(record, days_float), ...]，按天数降序。
     """
     if now is None:
         now = datetime.now()
+    type_set = None
+    if types is not None:
+        type_set = {t.value if hasattr(t, "value") else str(t) for t in types}
+    tag_set = {str(t).strip() for t in keep_tags if str(t).strip()}
+    id_set = set(keep_ids or ())
     stale = []
     for r in records:
+        if type_set is not None:
+            rtype = getattr(r, "type", None)
+            rtype = rtype.value if hasattr(rtype, "value") else rtype
+            if rtype not in type_set:
+                continue
+        if id_set and r.id in id_set:
+            continue
+        if tag_set and tag_set.intersection(getattr(r, "tags", []) or []):
+            continue
         d = days_since(r.last_accessed, r.created_at, now=now)
         if d > days:
             stale.append((r, d))
     stale.sort(key=lambda x: x[1], reverse=True)
     return stale
+
+
+@dataclass
+class ForgetCandidate:
+    """一条待遗忘候选：所在作用域 + 记录 + 未命中天数。"""
+
+    scope: str
+    record: object
+    days: float
+
+
+def _record_type_value(record) -> str | None:
+    rtype = getattr(record, "type", None)
+    return rtype.value if hasattr(rtype, "value") else rtype
+
+
+def collect_forget_candidates(svc, days: int, *, project: str | None = None,
+                              global_only: bool = False,
+                              include_documents: bool = False,
+                              keep_tags=(), keep_linked: bool = True,
+                              now: datetime | None = None):
+    """跨作用域收集陈旧记忆候选，返回 (candidates, stats)。
+
+    - 默认扫描全局库 + 磁盘上全部项目子库；project/global_only 可限定范围；
+    - 默认只保留 memory；include_documents 时纳入文档/网页 chunk；
+    - keep_tags 命中的记录受保护；keep_linked 时跳过仍有关联边的记录。
+    English: Collect stale memory candidates across scopes and return
+    (candidates, stats). Defaults: global + all project sub-stores, memory-only,
+    with tag and link-edge protection enabled.
+    """
+    if days < 1:
+        raise ValueError("--days 必须 >= 1")
+    if project and global_only:
+        raise ValueError("project 与 global_only 不能同时使用")
+    if project:
+        if not svc.scopes.has_project(project):
+            raise ValueError(f"项目子库不存在或名称非法：{project}")
+        names = [project]
+    elif global_only:
+        names = [""]
+    else:
+        names = [""] + svc.scopes.project_names()
+    tag_set = {str(t).strip() for t in keep_tags if str(t).strip()}
+    stats = {"scopes": len(names), "scanned": 0, "stale_total": 0,
+             "documents_skipped": 0, "tagged_skipped": 0,
+             "linked_skipped": 0, "candidates": 0}
+    candidates: list[ForgetCandidate] = []
+    for name in names:
+        scope = svc.scopes.get(name)
+        records = list(scope.store.iter_all())
+        stats["scanned"] += len(records)
+        stale = find_stale_records(records, days, now=now)
+        stats["stale_total"] += len(stale)
+        if not include_documents:
+            kept = []
+            for r, d in stale:
+                if _record_type_value(r) == RecordType.MEMORY.value:
+                    kept.append((r, d))
+                else:
+                    stats["documents_skipped"] += 1
+            stale = kept
+        if tag_set:
+            kept = []
+            for r, d in stale:
+                if tag_set.intersection(getattr(r, "tags", []) or []):
+                    stats["tagged_skipped"] += 1
+                else:
+                    kept.append((r, d))
+            stale = kept
+        if keep_linked and scope.links is not None:
+            linked = scope.links.linked_ids()
+            kept = []
+            for r, d in stale:
+                if r.id in linked:
+                    stats["linked_skipped"] += 1
+                else:
+                    kept.append((r, d))
+            stale = kept
+        candidates.extend(ForgetCandidate(name, r, d) for r, d in stale)
+    candidates.sort(key=lambda c: c.days, reverse=True)
+    stats["candidates"] = len(candidates)
+    return candidates, stats
+
+
+def write_forget_backup(candidates, data_dir) -> Path:
+    """删除前把候选完整内容写成 JSONL 备份，返回备份路径。
+
+    English: Write candidates to a JSONL backup before deletion and return its path.
+    """
+    backup_dir = Path(data_dir) / "forget-backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = backup_dir / f"forget-{stamp}.jsonl"
+    n = 1
+    while path.exists():
+        path = backup_dir / f"forget-{stamp}-{n}.jsonl"
+        n += 1
+    with path.open("w", encoding="utf-8") as fh:
+        for c in candidates:
+            r = c.record
+            fh.write(json.dumps({
+                "id": r.id,
+                "scope": c.scope,
+                "days": round(c.days, 2),
+                "type": _record_type_value(r),
+                "content": r.content,
+                "tags": list(r.tags),
+                "source": r.source,
+                "namespace": r.namespace,
+                "project": r.project,
+                "importance": r.importance,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+                "last_accessed": r.last_accessed,
+                "access_count": r.access_count,
+            }, ensure_ascii=False) + "\n")
+    return path
 
 
 def find_duplicate_pairs(records_with_embeddings, threshold: float = 0.85):
@@ -166,22 +300,29 @@ def compute_hot_records(records, top: int = 5) -> list[tuple]:
 
 
 def resolve_device(settings: Settings, interactive: bool, input_fn=input) -> str:
-    """优先级：settings.device 显式非空值 > runtime.json 已存选择 > 交互询问（cuda 可用时）
-    > 默认 cpu。interactive=False 时不询问直接 cpu。
+    """优先级：settings.device 显式值 > runtime.json 已存选择 > 交互询问
+    （cuda 可用时）> 默认 cpu。KB_DEVICE=auto 等同自动检测：非交互时直接
+    回退 cpu（不导入 torch，保持启动轻量）；interactive=False 时不询问。
 
     交互询问额外要求 stdin 是终端：pythonw/后台脚本/CI 的 stdin 不可读，
     若仍调用 input() 会 EOFError 导致服务直接退出（Windows 一键脚本首跑阻断）。
     此时静默回退 cpu，用户之后可在 .env 显式设 KB_DEVICE=cuda。
     English: Device priority: explicit settings.device > persisted runtime.json choice >
-    interactive prompt (when CUDA is available) > cpu. interactive=False skips the prompt.
+    interactive prompt (when CUDA is available) > cpu. KB_DEVICE=auto means automatic
+    detection and falls back to cpu without importing torch in non-interactive mode.
+    interactive=False skips the prompt.
     The prompt also requires stdin to be a TTY: pythonw/background scripts/CI have no
     readable stdin, and input() would raise EOFError and kill the service (Windows
     one-click first-run blocker). In that case fall back to cpu silently; users can
     set KB_DEVICE=cuda explicitly later.
     """
-    # 1. 显式配置最高优先，直接返回（不写文件）
-    if settings.device:
-        return settings.device
+    # 1. 显式配置最高优先，直接返回（不写文件）；auto=自动检测，继续往下走
+    #    （torch 不接受 device="auto"，必须在这里归一化，否则 systemd 启动后
+    #     首次加载模型直接报 "Expected one of cpu, cuda ..."）
+    explicit = (settings.device or "").strip()
+    auto = explicit.lower() == "auto"
+    if explicit and not auto:
+        return explicit
     # 2. runtime.json 已有持久化选择
     if settings.runtime_file.exists():
         try:
@@ -198,7 +339,7 @@ def resolve_device(settings: Settings, interactive: bool, input_fn=input) -> str
             stdin_tty = bool(sys.stdin and sys.stdin.isatty())
         except (AttributeError, OSError, ValueError):
             stdin_tty = False
-    if interactive and stdin_tty:
+    if interactive and not auto and stdin_tty:
         try:
             import torch
             cuda_ok = torch.cuda.is_available()
@@ -532,49 +673,97 @@ def mcp_stdio():
 @app.command()
 def forget(
     stale: bool = typer.Option(False, "--stale", help="扫描超 N 天未命中的陈旧记忆"),
-    days: int = typer.Option(90, "--days", help="未命中天数阈值（默认90）"),
+    days: int = typer.Option(90, "--days", min=1,
+                             help="未命中天数阈值（默认90，最小1）"),
+    project: str | None = typer.Option(
+        None, "--project", help="只扫描指定项目子库"),
+    global_only: bool = typer.Option(
+        False, "--global-only", help="只扫描全局库"),
+    include_documents: bool = typer.Option(
+        False, "--include-documents",
+        help="同时纳入文档/网页 chunk（默认只清理 memory）"),
+    keep_tag: list[str] = typer.Option(
+        [], "--keep-tag", help="保护带该标签的记忆（可重复）"),
+    include_linked: bool = typer.Option(
+        False, "--include-linked", help="连有关联边的记忆一并清理（默认保护）"),
+    backup: bool = typer.Option(
+        True, "--backup/--no-backup", help="删除前写 JSONL 备份（默认开启）"),
     dry_run: bool = typer.Option(True, "--dry-run/--no-dry-run",
                                   help="仅输出候选不删除（默认开启，安全优先）"),
 ):
-    """维护：扫描超 N 天未命中的记忆，dry-run 输出候选，非 dry-run 可删除。
+    """维护：跨全局库与项目子库扫描超 N 天未命中的记忆。
+
+    dry-run 默认只输出候选；删除走服务层级联清理，并先写本地备份。
 
     用法：
-      kb forget --stale --days 90 --dry-run        # 预览超90天未命中的记录
-      kb forget --stale --days 90 --no-dry-run     # 确认后删除
+      kb forget --stale --days 90 --dry-run            # 预览全部作用域
+      kb forget --stale --days 90 --project kb         # 只看 kb 项目子库
+      kb forget --stale --days 90 --no-dry-run         # 确认后备份并删除
     """
     if not stale:
         console.print("[yellow]请指定 --stale（当前仅支持陈旧未命中模式）[/yellow]")
         raise typer.Exit(code=1)
+    if project and global_only:
+        console.print("[red]--project 与 --global-only 不能同时使用[/red]")
+        raise typer.Exit(code=1)
     svc = _service()
-    records = list(svc.store.iter_all())
-    candidates = find_stale_records(records, days)
+    try:
+        candidates, stats = collect_forget_candidates(
+            svc, days, project=project, global_only=global_only,
+            include_documents=include_documents, keep_tags=keep_tag,
+            keep_linked=not include_linked)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
+    console.print(
+        f"[blue]扫描 {stats['scanned']} 条记录；超 {days} 天未命中 "
+        f"{stats['stale_total']} 条；跳过：文档 {stats['documents_skipped']}、"
+        f"标签保护 {stats['tagged_skipped']}、关联保护 {stats['linked_skipped']}；"
+        f"候选 {len(candidates)} 条[/blue]")
     if not candidates:
-        console.print(f"[green]无超 {days} 天未命中的记录[/green]")
+        console.print(f"[green]无超 {days} 天未命中的可清理记忆[/green]")
         return
     # 输出候选表
-    table = Table(title=f"超 {days} 天未命中的记忆（{len(candidates)} 条）")
+    table = Table(title=f"超 {days} 天未命中的记录（{len(candidates)} 条）")
+    table.add_column("作用域", style="magenta", no_wrap=True)
     table.add_column("记录ID", style="cyan", no_wrap=True)
     table.add_column("内容摘要", style="white")
     table.add_column("最后命中", style="yellow")
     table.add_column("天数", justify="right", style="red")
-    for r, d in candidates:
-        table.add_row(r.id, _truncate(r.content),
+    for c in candidates:
+        r = c.record
+        table.add_row(c.scope or "全局", r.id, _truncate(r.content),
                       r.last_accessed or f"(创建:{r.created_at[:10]})",
-                      f"{d:.1f}")
+                      f"{c.days:.1f}")
     console.print(table)
     if dry_run:
         console.print(f"[blue][dry-run] 共 {len(candidates)} 条候选，未删除。"
                       f"加 --no-dry-run 执行删除[/blue]")
         return
-    # 非 dry-run：确认后删除
-    confirm = typer.prompt(f"确认删除以上 {len(candidates)} 条记录？输入 yes 继续",
-                            default="no")
+    # 非 dry-run：确认 → 备份 → 级联删除
+    confirm = typer.prompt(
+        f"确认永久删除以上 {len(candidates)} 条记录？输入 yes 继续",
+        default="no")
     if confirm.strip().lower() != "yes":
         console.print("[yellow]已取消，未删除[/yellow]")
         return
-    ids = [r.id for r, _ in candidates]
-    svc.store.delete(ids)
-    console.print(f"[green]已删除 {len(ids)} 条记录[/green]")
+    if backup:
+        try:
+            backup_path = write_forget_backup(candidates, svc.settings.data_dir)
+        except OSError as e:
+            console.print(f"[red]备份失败，已中止删除：{e}[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"[blue]已备份候选内容：{backup_path}[/blue]")
+    groups: dict[str, list[str]] = {}
+    for c in candidates:
+        groups.setdefault(c.scope, []).append(c.record.id)
+    total = 0
+    for name, ids in groups.items():
+        deleted = svc.batch_delete_records(
+            ids, project=name or None, agent_id="cli", client="cli")
+        total += deleted
+        console.print(f"  {name or '全局'}：已删除 {deleted} 条")
+    console.print(f"[green]共删除 {total} 条记录[/green]")
 
 
 @app.command()

@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from kb import __version__
 from kb.config import Settings, get_settings
 from kb.idle import start_idle_watchdog
+from kb.links import LinkError
 from kb.logging_setup import setup_logging
 from kb.monitor import MonitorAgent, run_once_summary
 from kb.mcp import create_mcp_server
@@ -201,6 +202,23 @@ class MemoryUpdate(BaseModel):
     English: Update-memory request; at least one field must be non-empty."""
     content: str | None = None
     tags: list[str] | None = None
+
+
+class LinkCreate(BaseModel):
+    """建立记忆关联请求；record_id 为起点，to_id 为目标，relation 默认 related。
+    English: Create-link request; record_id is the source, to_id the target, and
+    relation defaults to related."""
+    to_id: str
+    relation: str = "related"
+
+
+def _link_http_error(exc: LinkError) -> HTTPException:
+    """把 LinkError 映射为统一错误 JSON：NOT_FOUND→404，其余约束错误→422。
+    English: Map LinkError to the unified error JSON: NOT_FOUND→404, other
+    constraint violations→422."""
+    status = 404 if exc.code == "NOT_FOUND" else 422
+    return HTTPException(status_code=status,
+                         detail={"error": exc.code, "message": exc.message})
 
 
 class SearchRequest(BaseModel):
@@ -683,6 +701,59 @@ def create_app(settings: Settings | None = None,
             raise HTTPException(status_code=404,
                                 detail={"error": "NOT_FOUND", "message": "记录不存在"})
         return {"ok": True}
+
+    @app.post("/api/v1/memories/{record_id}/links")
+    def create_memory_link(record_id: str, body: LinkCreate,
+                           agent_id: str = "default",
+                           client: str = "HTTP",
+                           project: str | None = None) -> dict:
+        """建立两条记忆的关联；重复建边幂等（created=false）。
+        English: Link two memories; duplicate edges are idempotent (created=false)."""
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
+        try:
+            return kb.link_memories(record_id, body.to_id, relation=body.relation,
+                                    agent_id=agent_id, client=client,
+                                    project=project)
+        except LinkError as exc:
+            raise _link_http_error(exc)
+
+    @app.get("/api/v1/memories/{record_id}/links")
+    def list_memory_links(record_id: str,
+                          relation: str | None = None,
+                          project: str | None = None) -> dict:
+        """列记忆的一跳邻居（含内容/类型/标签/方向）。
+        English: List one-hop neighbors of a memory (content/type/tags/direction)."""
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
+        try:
+            return kb.list_links(record_id, relation=relation, project=project)
+        except LinkError as exc:
+            raise _link_http_error(exc)
+
+    @app.delete("/api/v1/memories/{record_id}/links/{to_id}")
+    def delete_memory_link(record_id: str, to_id: str,
+                           relation: str | None = None,
+                           agent_id: str = "default",
+                           client: str = "HTTP",
+                           project: str | None = None) -> dict:
+        """取消两条记忆的关联（任一方向），返回 {"ok": true, "removed": n}。
+        English: Remove links between two memories in either direction."""
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
+        try:
+            removed = kb.unlink_memories(record_id, to_id, relation=relation,
+                                         agent_id=agent_id, client=client,
+                                         project=project)
+        except LinkError as exc:
+            raise _link_http_error(exc)
+        return {"ok": True, "removed": removed}
 
     @app.post("/api/v1/search")
     def search(body: SearchRequest) -> dict:

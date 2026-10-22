@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.1.2).
+service (v2.2.0).
 
 ## Why kb
 
@@ -63,21 +63,41 @@ service (v2.1.2).
 - **Lightweight default model** — `BAAI/bge-small-zh-v1.5` (~92 MB, 512-dim),
   with `BAAI/bge-m3` (~2.2 GB, 1024-dim) as an opt-in upgrade.
 
-## Quick Start (Windows / Linux / macOS)
+## Quick Start (Linux / Windows / macOS)
 
-**Install from PyPI (recommended):**
+**Linux (recommended, including a 2 vCPU / 2 GB server): install the CPU torch
+wheel first, then kb.**
 
 ```bash
-pip install "kb-memory[ingest]"   # core + document/web ingestion; [llm] for Q&A, [full] for both
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU wheel ~196 MB
+pip install "kb-memory[ingest]"
 python -m kb serve
 ```
 
-**CPU-only Linux machines: install the CPU torch wheel first**
-(the default PyPI torch wheel bundles CUDA and is far larger):
+> Without the CPU wheel, pip pulls the default CUDA build (torch + cudnn + nccl,
+> **2–3 GB+** in total) — the biggest download trap for Linux users. Memory and
+> retrieval do not need a GPU.
+
+**Recommended settings for a 2 vCPU / 2 GB server** (put them in `.env` or the
+environment):
+
+```ini
+KB_DEVICE=cpu
+KB_LLM_MODE=off
+KB_TORCH_THREADS=2          # 0 = auto (cgroup/affinity quota, capped at 4)
+KB_EMBED_BATCH_SIZE=16      # default 32; use 8-16 on 2 GB
+KB_IDLE_UNLOAD_SECONDS=300  # unload the model after 5 idle minutes
+```
+
+Startup does not load the embedding model (hundreds of MB); the first write/search
+loads the default `bge-small` (~92 MB). Resident memory after loading is typically
+under 1 GB, retrieval is millisecond-level, and a 2 vCPU / 2 GB box can run it.
+Keep `/ask` off on 2 GB, or use a cloud LLM.
+
+**Windows / macOS:**
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install "kb-memory[ingest]"
+pip install "kb-memory[ingest]"   # core + document/web ingestion; [llm] for Q&A, [full] for both
 python -m kb serve
 ```
 
@@ -92,17 +112,20 @@ python -m kb serve
 ```
 
 > **What the first install downloads** (so it doesn't look stuck):
-> - Core Python dependencies: about **400–600 MB** (largest single wheel on
->   Windows: `torch` CPU, ~124 MB). On Linux install the CPU torch wheel first to
->   avoid the multi-GB default CUDA wheel.
+> - On Linux, after the CPU torch wheel (~**196 MB**), core dependencies total
+>   about **0.5–0.7 GB**. Windows / macOS: about **400–600 MB** (largest single
+>   wheel on Windows: `torch` CPU, ~124 MB).
 > - Optional `[ingest]` adds a few tens of MB (PDF/DOCX/Office parsing, web
 >   extraction, directory watching).
 > - The embedding model is loaded **on the first write/search** (lazy), not at
 >   startup: default `bge-small-zh-v1.5`, about **92 MB** (or ~2.2 GB if you set
 >   `KB_EMBED_MODEL=BAAI/bge-m3`).
 > - China / slow networks: use a pip mirror such as
->   `pip install "kb-memory[ingest]" -i https://mirrors.aliyun.com/pypi/simple/`
->   (Aliyun tested; Tsinghua may return 403), and set
+>   `pip install "kb-memory[ingest]" -i https://mirrors.aliyun.com/pypi/simple/ --extra-index-url https://pypi.org/simple/`
+>   (Aliyun tested; Tsinghua may return 403). Mirrors can lag on new releases
+>   (Aliyun returned 404 for `kb-memory`); keep the official index as fallback.
+>   If it still says `No matching distribution`, install with
+>   `-i https://pypi.org/simple/`, and set
 >   `HF_ENDPOINT=https://hf-mirror.com` for model downloads.
 >
 > Important: with a source venv the `kb` command is installed inside the virtual
@@ -125,9 +148,9 @@ curl.exe http://127.0.0.1:8000/api/v1/healthz
 > loaded, write/search return **503 `EMBED_MODEL_UNAVAILABLE`** with the model name
 > and a fix hint (never a bare 500).
 >
-> **CPU is enough — no GPU required.** A fresh install gets the CPU build of torch
-> (`device=cpu`). To use a GPU, install a CUDA build of torch and set
-> Install a CUDA build of torch and set `KB_DEVICE=cuda` to enable GPU acceleration.
+> **CPU is enough — no GPU required.** Windows / macOS installs default to the CPU
+> build of torch; on Linux install the CPU wheel as shown above. To use a GPU,
+> install a CUDA build of torch and set `KB_DEVICE=cuda`.
 >
 > **LLM is OFF by default (`KB_LLM_MODE=off`)**: the service never probes, loads,
 > or calls any LLM — zero VRAM, zero cost, fully offline. Memory storage and
@@ -256,8 +279,9 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 }
 ```
 
-Available MCP tools: `write_memory` / `search_memory` / `read_memory` /
-`update_memory` / `delete_memory` / `add_document` / `add_webpage` / `ask_kb`.
+Available MCP tools (11): `write_memory` / `search_memory` / `read_memory` /
+`update_memory` / `delete_memory` / `link_memory` / `unlink_memory` / `list_links` /
+`add_document` / `add_webpage` / `ask_kb`.
 
 > With `KB_API_KEY` auth enabled, clients must send `Authorization: Bearer <key>`
 > or `X-API-Key` headers — see [USER_GUIDE §5.2](docs/USER_GUIDE.md) (Chinese).
@@ -276,6 +300,9 @@ with the global store. Record IDs are generated server-side.
 | GET | `/api/v1/memories/{id}` | Read one memory |
 | PATCH | `/api/v1/memories/{id}` | Update content or tags |
 | DELETE | `/api/v1/memories/{id}` | Delete one memory |
+| POST | `/api/v1/memories/{id}/links` | Link memories `{to_id, relation?}`; relation: `related/supersedes/depends_on/part_of/contradicts` |
+| GET | `/api/v1/memories/{id}/links` | List one-hop links (content/direction; `?project=&relation=`) |
+| DELETE | `/api/v1/memories/{id}/links/{to_id}` | Remove links in either direction |
 | POST | `/api/v1/search` | Hybrid search `{query, top_k?, mode?, type?, tag?}` — mode: `hybrid/vector/keyword`; blank query → 422 |
 | POST | `/api/v1/documents` | Ingest a document: multipart `file` or JSON `{"path": "..."}`; re-ingesting the same source replaces old chunks |
 | GET | `/api/v1/documents` | List ingested documents (grouped by source) |
@@ -285,6 +312,11 @@ with the global store. Record IDs are generated server-side.
 | POST | `/api/v1/ask` | RAG answering `{question}`; 503 if no LLM configured |
 | GET | `/api/v1/audit` | Access audit `?client=<client>&project?&days?&limit?` |
 | GET | `/api/v1/healthz` | Health check & service stats (includes `embedder.state`) |
+
+Memory links enable one-hop retrieval expansion by default: a memory hit brings in its
+directly linked neighbors (tagged `via: {id, relation}`); with no links, results are
+identical to base search. Tune with `KB_LINK_EXPAND_ENABLED` / `KB_LINK_EXPAND_LIMIT`;
+see the [memory-links spec](docs/superpowers/specs/2026-10-22-kb-memory-links-design.md).
 
 Error responses use `{"error": "<CODE>", "message": "..."}`. Notable codes:
 `DUPLICATE` (semantic dedup enabled), `EMBED_MODEL_UNAVAILABLE`,
@@ -319,15 +351,19 @@ gitignored — real keys never enter version control).
 | Key | Default | Description |
 |---|---|---|
 | `KB_LLM_MODE` | `off` | `off` / `local` / `auto` / `cloud` |
-| `KB_DEVICE` | empty | Embedding device: empty = auto-detect; `cpu` / `cuda` to override |
+| `KB_DEVICE` | empty | Embedding device: empty or `auto` = auto-detect (falls back to `cpu` when non-interactive); `cpu` / `cuda` to override |
 | `KB_WATCH_DIR` | `data` | Directory watched in serve mode; empty or `.` = disabled |
 | `KB_DATA_DIR` | `kb_data` | Data root (ChromaDB, runtime state) |
 | `KB_API_HOST` / `KB_API_PORT` | `127.0.0.1` / `8000` | REST & MCP listen address |
 | `KB_EMBED_MODEL` | `BAAI/bge-small-zh-v1.5` | Embedding model (lightweight default; `BAAI/bge-m3` optional) |
+| `KB_TORCH_THREADS` / `KB_EMBED_BATCH_SIZE` | `0` / `32` | Low-memory CPU tuning: `0` = auto threads (cgroup/affinity, capped at 4); use batch 8–16 on 2 GB |
+| `KB_IDLE_UNLOAD_SECONDS` | `600` | Unload the embedding model after N idle seconds; `0` = disabled |
 | `KB_LLM_MODEL` | empty | Local Ollama model name (exact name per `ollama list`) |
 | `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` | empty | Any OpenAI-compatible cloud provider |
 | `KB_API_KEY` | empty | Empty = no auth (loopback); non-empty = Bearer / X-API-Key |
 | `KB_SENSITIVE_NAMESPACES` | empty | Comma-separated namespaces forced to answer locally |
+| `KB_LINK_EXPAND_ENABLED` / `KB_LINK_EXPAND_LIMIT` / `KB_LINK_EXPAND_SCORE_RATIO` | `true` / `3` / `0.5` | Memory-link one-hop expansion: max neighbors appended and their score ratio to the seed |
+| `KB_LINK_MAX_PER_RECORD` | `50` | Per-record link cap |
 
 ## CLI
 
@@ -338,7 +374,7 @@ python -m kb stats
 python -m kb ask "question" --client ClaudeCode
 python -m kb audit --client ClaudeCode --days 7
 python -m kb eval --file tests/eval_zh_50.jsonl
-python -m kb forget --stale --days 90
+python -m kb forget --stale --days 90 --dry-run  # all scopes, dry-run default with backup
 python -m kb dedup --threshold 0.92
 ```
 
@@ -351,7 +387,7 @@ python -m kb dedup --threshold 0.92
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (425 passed / 1 skipped, incl. eval_zh_50.jsonl)
+tests/         kb acceptance & regression tests (462 passed / 1 skipped, incl. eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
 docs/          design specs, developer handbook, user guides
