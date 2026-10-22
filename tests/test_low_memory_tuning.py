@@ -89,6 +89,54 @@ def test_设备auto遵循已存runtime选择(tmp_path, env_isolated):
     assert resolve_device(s, interactive=False) == "cuda"
 
 
+def test_torch后端可用时预检通过():
+    from kb.embedder import torch_backend_issue
+    assert torch_backend_issue() == ""
+
+
+def test_torch版本过旧时直说版本不兼容(monkeypatch):
+    """transformers 静默禁用 PyTorch 后底层只报 NameError，预检必须点出根因。"""
+    from kb import embedder
+    monkeypatch.setattr("transformers.utils.is_torch_available", lambda: False)
+    monkeypatch.setattr(
+        embedder, "_installed_version",
+        lambda name: {"torch": "2.5.1", "transformers": "5.20.2"}[name])
+    issue = embedder.torch_backend_issue()
+    assert "torch 版本不满足 transformers 要求" in issue
+    assert "2.5.1" in issue and "5.20.2" in issue
+    assert "升级 torch" in issue
+
+
+def test_torch未安装时提示安装(monkeypatch):
+    from kb import embedder
+    monkeypatch.setattr("transformers.utils.is_torch_available", lambda: False)
+    monkeypatch.setattr(embedder, "_installed_version", lambda _name: "未安装")
+    issue = embedder.torch_backend_issue()
+    assert "torch 未安装" in issue
+    assert "版本不满足" not in issue
+
+
+def test_预检无法判定时不阻断加载(monkeypatch):
+    """老版本 transformers 取不到判定函数时，退回原有报错路径。"""
+    from kb import embedder
+    monkeypatch.setattr(embedder, "_is_torch_backend_disabled", lambda: None)
+    assert embedder.torch_backend_issue() == ""
+
+
+def test_加载模型前先做torch后端预检(monkeypatch):
+    from kb import embedder
+    from kb.embedder import Embedder, EmbeddingUnavailableError
+    monkeypatch.setattr(
+        embedder, "torch_backend_issue",
+        lambda: "torch 版本不满足 transformers 要求：torch 2.5.1 + transformers 5.20.2")
+    e = Embedder("fake-model")
+    with pytest.raises(EmbeddingUnavailableError) as excinfo:
+        e.embed_texts(["你好"])
+    assert "torch 版本不满足 transformers 要求" in str(excinfo.value)
+    assert "torch 版本不满足 transformers 要求" in e.status()["error"]
+    assert e._model is None
+
+
 def test_容器默认预缓存轻量模型():
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent

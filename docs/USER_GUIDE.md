@@ -447,6 +447,12 @@ python -m kb dedup --threshold 0.90 --dry-run
 服务没起来。检查：终端是否还开着、端口是否被占（`netstat -ano | findstr 8000`）、
 换端口 `KB_API_PORT=8001 python -m kb serve`。
 
+**Q：写入/检索报「嵌入模型不可用」，内容提到 torch？**
+transformers 检测到 torch 版本过旧会静默禁用 PyTorch 后端，底层只抛
+`NameError: name 'nn' is not defined`，看起来像模型坏了。kb 在加载模型前预检这条依赖链，
+错误信息里直接给出 torch 与 transformers 两个版本号——按提示升级 torch（`pip install -U torch`）
+即可，不用再去猜是下载、网络还是显存问题。
+
 **Q：AI 说连不上 MCP / 工具列表为空？**
 ① 确认 kb serve 在跑；② 客户端 MCP 面板点刷新/重连（服务重启后旧连接会失效）；
 ③ TraeWork 必须桌面版 + 本地运行环境；④ 确认在智能体（Agent）模式对话。

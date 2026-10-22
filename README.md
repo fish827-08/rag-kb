@@ -194,6 +194,9 @@ KB_LLM_CLOUD_MODEL=deepseek-v4-flash       # 云端模型名
   模型会自动从镜像下载并缓存到 `~/.cache/huggingface/hub/`，之后断网也能离线加载。
 - **模型已在本机缓存，但无外网**：`kb` 采用离线优先（先命中本地缓存，失败才联网），
   只要缓存目录完整即可完全离线运行。
+- **报错里出现「torch 版本不满足 transformers 要求」**：transformers 检测到 torch 过旧会
+  静默禁用 PyTorch 后端，底层只抛 `NameError: name 'nn' is not defined`。`kb` 在加载模型前
+  预检这条依赖链，并直接给出两个版本号——按提示升级 torch（`pip install -U torch`）即可。
 
 ## 让 Agent 接入 kb（客户端无关）
 

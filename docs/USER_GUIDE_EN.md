@@ -474,6 +474,9 @@ python -m kb dedup --threshold 0.90 --dry-run
 **Q: healthz unreachable?**
 Service isn't up. Check: is the terminal still open, is the port occupied (`netstat -ano | findstr 8000`), or use another port `KB_API_PORT=8001 python -m kb serve`.
 
+**Q: Writing/searching returns "嵌入模型不可用" (embedding model unavailable) mentioning torch?**
+transformers silently disables its PyTorch backend when torch is below its version floor, so the underlying failure is only `NameError: name 'nn' is not defined` — it looks like a broken model. kb pre-checks that dependency chain before loading and prints both version numbers; upgrade torch (`pip install -U torch`) as the message says instead of guessing between download, network and VRAM.
+
 **Q: AI says MCP unreachable / empty tool list?**
 ① confirm kb serve is running; ② refresh/reconnect in the client MCP panel (old connection dies after service restart); ③ TraeWork must be desktop + local runtime env; ④ make sure you're in Agent mode.
 

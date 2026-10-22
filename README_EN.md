@@ -222,6 +222,10 @@ when not enabled.
   `~/.cache/huggingface/hub/`, after which it loads fully offline.
 - **Model already cached but no internet:** kb is offline-first (local cache first,
   network only as a fallback) — a complete cache runs fully offline.
+- **Error says "torch 版本不满足 transformers 要求" (torch too old for transformers):**
+  transformers silently disables its PyTorch backend when torch is below its floor, and
+  the underlying failure is only `NameError: name 'nn' is not defined`. kb pre-checks
+  that dependency chain and names both versions — upgrade torch (`pip install -U torch`).
 
 ## Onboarding Agents to kb (client-agnostic)
 

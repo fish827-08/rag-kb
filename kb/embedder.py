@@ -64,6 +64,48 @@ def resolve_torch_threads(configured: int = 0,
     return max(1, min(n, 4))
 
 
+def _installed_version(package: str) -> str:
+    """读取已安装分发包的版本号；读不到（含未安装）返回「未安装」。"""
+    try:
+        from importlib.metadata import version
+        return version(package) or "未安装"
+    except Exception:  # noqa: BLE001 - 版本读不出来不能反过来影响判定
+        return "未安装"
+
+
+def _is_torch_backend_disabled() -> bool | None:
+    """transformers 是否禁用了 PyTorch 后端：True=已禁用，False=可用，None=无法判定。
+
+    不同 transformers 版本暴露的判定函数位置不同，取不到时返回 None，
+    让调用方退回原有报错路径，不引入新的误报。
+    """
+    try:
+        from transformers.utils import is_torch_available
+        return not bool(is_torch_available())
+    except Exception:  # noqa: BLE001 - 判定失败不阻断加载
+        return None
+
+
+def torch_backend_issue() -> str:
+    """加载模型前判定 torch 后端是否被 transformers 禁用；有问题返回可读根因，否则空串。
+
+    transformers 检测到 torch 版本不满足自身要求时会静默禁用 PyTorch 后端，
+    sentence-transformers 随后在裸 torch 符号上抛 NameError: name 'nn' is not
+    defined，把真正的根因（版本不兼容）盖在「嵌入模型不可用」下面。
+    """
+    if not _is_torch_backend_disabled():
+        return ""
+    torch_version = _installed_version("torch")
+    transformers_version = _installed_version("transformers")
+    if torch_version == "未安装":
+        return (f"torch 未安装：嵌入模型需要 PyTorch 后端（transformers "
+                f"{transformers_version}）；先 pip install torch（CPU 版即可）再重试")
+    return (f"torch 版本不满足 transformers 要求：torch {torch_version} + "
+            f"transformers {transformers_version} → transformers 已自动禁用 "
+            "PyTorch 后端（底层表现常为 NameError: name 'nn' is not defined）；"
+            "升级 torch 或换用与当前 torch 匹配的 transformers 版本后重试")
+
+
 class EmbeddingUnavailableError(RuntimeError):
     """嵌入模型不可用（下载/加载/推理失败）；API 层据此返回 503 结构化错误。
     English: Embedding model unavailable (download/load/encode failure); the API layer
@@ -115,13 +157,14 @@ class Embedder:
         return EmbeddingUnavailableError(self.model_name, self._error)
 
     def _ensure_loaded(self):
-        """首次使用时加载模型；优先离线（缓存命中，不联网），失败再在线下载；cuda 下 fp16。
+        """首次使用时加载模型；先做 torch 后端预检，再优先离线（缓存命中，不联网），失败才在线下载；cuda 下 fp16。
 
         加载失败时状态置 error，并抛 EmbeddingUnavailableError（不把底层
         OSError/HTTPError 裸抛给调用方）。
-        English: Load the model on first use — offline first (cache hit, no network),
-        then online download; fp16 under cuda. On failure the state becomes error and
-        EmbeddingUnavailableError is raised instead of leaking OSError/HTTPError.
+        English: Load the model on first use — pre-flight the torch backend, then try
+        offline (cache hit, no network) before an online download; fp16 under cuda. On
+        failure the state becomes error and EmbeddingUnavailableError is raised instead
+        of leaking OSError/HTTPError.
         """
         with self._lock:
             if self._model is not None:
@@ -129,6 +172,9 @@ class Embedder:
                 return
             self._state = "loading"
             try:
+                issue = torch_backend_issue()
+                if issue:
+                    raise RuntimeError(issue)
                 from sentence_transformers import SentenceTransformer
                 if self.device == "cpu":
                     self._configure_cpu_threads()
