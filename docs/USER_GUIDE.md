@@ -103,15 +103,21 @@ MCP 端点：`http://127.0.0.1:8000/mcp/`
 }
 ```
 
-挂载成功后 AI 获得 8 个工具：`write_memory`（写记忆）、`search_memory`（混合检索）、
-`read_memory` / `update_memory` / `delete_memory`、`add_document`（文档入库）、
-`add_webpage`（网页入库）、`ask_kb`（RAG 问答）。
+挂载成功后 AI 获得 11 个工具：`write_memory`（写记忆）、`search_memory`（混合检索）、
+`read_memory` / `update_memory` / `delete_memory`、`link_memory` / `unlink_memory` /
+`list_links`（记忆关联）、`add_document`（文档入库）、`add_webpage`（网页入库）、
+`ask_kb`（RAG 问答）。
+
+记忆关联是轻量知识图谱：两条记忆关系明确时（替代、依赖、从属、矛盾），
+让 AI 用 `link_memory` 建一条边即可。检索会自动带出一跳邻居，结果里的
+`via` 字段标明来自哪条种子记忆；没有关联数据时检索结果与以前完全一致。
 
 **使用示例**（在 AI 对话里直接说）：
 
 ```
 把"用户偏好深色主题、主力语言 Python"记到记忆库
 帮我搜一下之前存过的项目决策
+把这两条记忆关联起来：项目已从 Flask 迁移到 FastAPI
 把 D:\docs\设计规范.pdf 入库
 问一下知识库：这个项目的检索方案是什么？
 ```
@@ -387,22 +393,39 @@ python -m kb add "用户偏好中文回复"          # 不传 project → 全局
 
 ## 5. 维护命令（forget / dedup）
 
-N23a 新增两个维护 CLI（`python -m kb forget` / `dedup`），默认 **dry-run 安全优先**（只输出候选不修改数据），直接调用存储层遍历，不经过 REST/服务层。
+两个维护 CLI（`python -m kb forget` / `dedup`）默认 **dry-run 安全优先**（只输出候选不修改数据）。
+`forget` 通过服务层执行级联清理（Chroma / BM25 / 稀疏索引 / 关联边 / 计数 / 审计），
+`dedup` 仍为只读扫描。
 
-### 5.1 forget — 扫描陈旧未命中记忆
+### 5.1 forget — 扫描并清理陈旧记忆
 
 ```bash
-# 预览超 90 天未命中的记录（dry-run 默认开启，不删除）
+# 预览：默认扫描全局库 + 全部项目子库（dry-run 默认开启，不删除）
 python -m kb forget --stale --days 90 --dry-run
 
-# 确认后删除（需输入 yes 二次确认）
+# 只看指定项目子库 / 只看全局库
+python -m kb forget --stale --days 90 --project kb --dry-run
+python -m kb forget --stale --days 90 --global-only --dry-run
+
+# 保护 pinned 标签与仍有关联边的记忆（默认保护关联），并纳入文档 chunk
+python -m kb forget --stale --days 180 --keep-tag pinned --include-documents --dry-run
+
+# 确认后删除（需输入 yes；删除前默认写备份）
 python -m kb forget --stale --days 90 --no-dry-run
 ```
 
 - `--stale`：陈旧未命中模式（当前唯一模式，必传）
-- `--days N`：未命中天数阈值，默认 90
-- `--dry-run/--no-dry-run`：默认 dry-run（仅输出候选表：记录ID/内容摘要/最后命中时间/天数）；`--no-dry-run` 需输入 `yes` 确认后才删除
+- `--days N`：未命中天数阈值，默认 90，最小 1
+- `--project NAME` / `--global-only`：限定单个项目子库或只扫全局库；默认全作用域，两者互斥
+- 默认只清理 `memory`；`--include-documents` 才纳入 `doc_chunk` / `web_chunk`
+- `--keep-tag TAG`：带该标签的记忆不入选，可重复传；适合标记 `pinned` 等长期保留项
+- 默认跳过仍有关联边的记忆（知识图谱节点不轻易删除）；`--include-linked` 解除保护
+- `--backup/--no-backup`：删除前把候选完整内容写入
+  `<data_dir>/forget-backups/forget-*.jsonl`，默认开启；备份失败会中止删除
+- `--dry-run/--no-dry-run`：默认 dry-run（候选表含作用域/记录ID/摘要/最后命中/天数）；
+  `--no-dry-run` 输入 `yes` 确认后执行，并按作用域汇总删除数量
 - 天数计算：`last_accessed` 为空时用 `created_at` 替代（从未命中=创建时间）
+- 级联清理：Chroma 记录、BM25、稀疏索引、关联边、`count.txt` 计数，并写 `forget` 审计事件
 
 ### 5.2 dedup — 扫描语义重复对
 

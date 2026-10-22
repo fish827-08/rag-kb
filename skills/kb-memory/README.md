@@ -23,8 +23,11 @@ folder, with `SKILL.md` at that folder's root.
 - Document and web-page ingestion with hybrid retrieval (vector + BM25 fusion).
 - Memory language follows the operating-system language by default
   (`KB_MEMORY_LANG=auto`), with user-defined rules in `~/.kb/rules.md`.
-- 8 MCP tools: `write_memory`, `search_memory`, `read_memory`, `update_memory`,
-  `delete_memory`, `add_document`, `add_webpage`, `ask_kb`.
+- 11 MCP tools: `write_memory`, `search_memory`, `read_memory`, `update_memory`,
+  `delete_memory`, `link_memory`, `unlink_memory`, `list_links`, `add_document`,
+  `add_webpage`, `ask_kb`.
+- Lightweight memory links: explicit relations between memories, with automatic
+  one-hop retrieval expansion (no extra service or database).
 - HTTP fallback endpoints for clients without MCP.
 - No LLM required for write/search; `/ask` is optional.
 

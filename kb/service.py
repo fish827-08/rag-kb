@@ -10,6 +10,7 @@ from kb.config import Settings, get_settings
 from kb.embedder import Embedder, EmbeddingUnavailableError
 from kb.ingest import (UnsupportedFormatError, WebFetchError, chunk_text,
                        fetch_webpage, parse_file)
+from kb.links import LinkError, validate_relation
 from kb.llm import LLMClient, LLMStatus
 from kb.models import Record, RecordType
 from kb.scopes import ScopeManager
@@ -241,7 +242,9 @@ class KBService:
         self.settings.embed_model = resolve_embed_model(self.settings, bool(all_records))
         self.embedder = Embedder(
             self.settings.embed_model, device=self.device,
-            idle_unload_seconds=self.settings.idle_unload_seconds)
+            idle_unload_seconds=self.settings.idle_unload_seconds,
+            torch_threads=self.settings.torch_threads,
+            embed_batch_size=self.settings.embed_batch_size)
         self.scopes = ScopeManager(
             self.settings, self.embedder, self._write_lock,
             reranker=self._build_reranker(),
@@ -473,10 +476,195 @@ class KBService:
             scope.bm25.remove(record_id)
             self._persist_bm25(scope)
             self._sparse_remove(scope, [record_id])
+            if scope.links is not None:
+                scope.links.remove_record(record_id)
             self._audit_access("delete", agent_id, type=record.type.value,
                                record_id=record_id, namespace=record.namespace,
                                client=client, project=project)
             return True
+
+    def batch_delete_records(self, record_ids: list[str],
+                             project: str | None = None,
+                             agent_id: str = "default",
+                             client: str = "default") -> int:
+        """批量删除记录并级联清理 BM25/稀疏索引/关联边/计数缓存。
+
+        删除不可逆前由调用方负责确认；不存在的 ID 直接跳过。按作用域分组后
+        每个作用域只落盘一次 BM25，并写一条 forget 审计事件。
+        English: Batch-delete records with cascade cleanup of BM25, sparse index,
+        link edges and count cache. Callers own the irreversible confirmation;
+        missing IDs are skipped. Groups by scope so each BM25 corpus is persisted once,
+        and writes one forget audit event per scope."""
+        ids = list(dict.fromkeys(record_ids or []))
+        if not ids:
+            return 0
+        with self._write_lock:
+            groups: dict[str, tuple[object, list[str]]] = {}
+            for rid in ids:
+                scope, record = self.scopes.locate(rid, project)
+                if record is None:
+                    continue
+                groups.setdefault(scope.name, (scope, []))[1].append(rid)
+            total = 0
+            for name, (scope, group_ids) in groups.items():
+                scope.store.delete(group_ids)
+                scope.bm25.remove_many(group_ids)
+                self._persist_bm25(scope)
+                self._sparse_remove(scope, group_ids)
+                if scope.links is not None:
+                    scope.links.remove_records(group_ids)
+                self.scopes.sync_count(scope)
+                self._audit_access(
+                    "forget", agent_id, type="memory",
+                    content=f"批量遗忘 {len(group_ids)} 条记录"
+                            f"（{name or '全局'}）",
+                    hits=len(group_ids), client=client,
+                    project=name or None)
+                total += len(group_ids)
+            return total
+
+    # ---- 记忆关联（轻量知识图谱，2026-10-22 links spec）----
+    def _locate_link_pair(self, from_id: str, to_id: str,
+                          project: str | None, *, require_memory: bool = True):
+        """定位关联两端并校验：同作用域、存在、均为 memory（require_memory 时）。
+
+        返回 (scope, from_record, to_record)；不满足约束抛 LinkError。
+        English: Locate both link endpoints and validate existence, same scope, and
+        memory type (when require_memory); raises LinkError otherwise."""
+        scope_a, rec_a = self.scopes.locate(from_id, project)
+        scope_b, rec_b = self.scopes.locate(to_id, project)
+        if rec_a is None or rec_b is None:
+            missing = from_id if rec_a is None else to_id
+            raise LinkError("NOT_FOUND", f"记录不存在：{missing}")
+        if scope_a.name != scope_b.name:
+            raise LinkError("CROSS_SCOPE",
+                            "两条记忆不在同一作用域（全局库/项目子库）内，无法关联")
+        if require_memory and (rec_a.type is not RecordType.MEMORY
+                               or rec_b.type is not RecordType.MEMORY):
+            raise LinkError("MEMORY_ONLY", "仅 memory 类型记录可以建立关联")
+        return scope_a, rec_a, rec_b
+
+    def link_memories(self, from_id: str, to_id: str,
+                      relation: str = "related",
+                      agent_id: str = "default",
+                      client: str = "default",
+                      project: str | None = None) -> dict:
+        """建立两条记忆的关联；重复建边幂等（created=false）。
+
+        约束：禁止自关联、关系白名单、同作用域、两端均为 memory、
+        单条记录边数不超过 KB_LINK_MAX_PER_RECORD。
+        English: Link two memories; duplicate edges are idempotent (created=false).
+        Constraints: no self-link, whitelisted relation, same scope, memory-only,
+        and per-record edge count under KB_LINK_MAX_PER_RECORD."""
+        if from_id == to_id:
+            raise LinkError("SELF_LINK", "不能把记忆关联到自身")
+        relation = validate_relation(relation)
+        with self._write_lock:
+            scope, _, _ = self._locate_link_pair(from_id, to_id, project)
+            cap = max(0, int(self.settings.link_max_per_record or 0))
+            if cap and not scope.links.has(from_id, to_id, relation):
+                for rid in (from_id, to_id):
+                    if scope.links.count_for(rid) >= cap:
+                        raise LinkError(
+                            "LIMIT_REACHED",
+                            f"记录 {rid} 的关联数已达上限 {cap}")
+            created = scope.links.add(from_id, to_id, relation)
+            self._audit_access("link", agent_id, type="memory",
+                               record_id=from_id,
+                               content=f"{from_id} -[{relation}]-> {to_id}",
+                               client=client, project=project)
+            return {"ok": True, "from_id": from_id, "to_id": to_id,
+                    "relation": relation, "created": created}
+
+    def unlink_memories(self, from_id: str, to_id: str,
+                        relation: str | None = None,
+                        agent_id: str = "default",
+                        client: str = "default",
+                        project: str | None = None) -> int:
+        """取消关联（任一方向）；relation 为空时删除该对全部关系，返回删除数。
+        English: Remove links between two records in either direction; when relation
+        is empty, remove all relations of the pair; returns the removed count."""
+        relation = validate_relation(relation) if relation else None
+        with self._write_lock:
+            scope, _, _ = self._locate_link_pair(from_id, to_id, project,
+                                                 require_memory=False)
+            removed = scope.links.remove(from_id, to_id, relation)
+            self._audit_access("unlink", agent_id, type="memory",
+                               record_id=from_id,
+                               content=f"{from_id} -/- {to_id}",
+                               client=client, project=project)
+            return removed
+
+    def list_links(self, record_id: str, relation: str | None = None,
+                   project: str | None = None) -> dict:
+        """列某条记忆的一跳邻居（含内容/类型/标签/方向）；记录不存在抛 LinkError。
+        English: List one-hop neighbors of a memory (content/type/tags/direction);
+        raises LinkError when the record is missing."""
+        relation = validate_relation(relation) if relation else None
+        scope, record = self.scopes.locate(record_id, project)
+        if record is None:
+            raise LinkError("NOT_FOUND", f"记录不存在：{record_id}")
+        links = scope.links.neighbors(record_id) if scope.links else []
+        if relation:
+            links = [item for item in links if item["relation"] == relation]
+        # 同一邻居可能有多条关系，Chroma get 要求 ID 唯一
+        neighbor_ids = list(dict.fromkeys(item["id"] for item in links))
+        records = scope.store.get_many(neighbor_ids)
+        items = []
+        for item in links:
+            neighbor = records.get(item["id"])
+            if neighbor is None or neighbor.type is not RecordType.MEMORY:
+                continue
+            items.append({**item, "content": neighbor.content,
+                          "type": neighbor.type.value, "tags": neighbor.tags})
+        return {"record_id": record_id, "links": items}
+
+    def _expand_links(self, results: list[dict], project: str | None,
+                      type: str | None, tag: str | None) -> list[dict]:
+        """基础命中后的 1 跳扩展：前 3 条 memory 命中作种子，邻居按比例计分。
+
+        返回追加项（带 via）；总追加数受 KB_LINK_EXPAND_LIMIT 约束。
+        English: One-hop expansion after base hits: the first 3 memory hits act as
+        seeds and neighbors are scored by ratio; additional items (with via) are
+        bounded by KB_LINK_EXPAND_LIMIT."""
+        limit = max(0, int(self.settings.link_expand_limit or 0))
+        if not results or limit <= 0 or type not in (None, "memory"):
+            return []
+        ratio = float(self.settings.link_expand_score_ratio)
+        seen = {item["id"] for item in results}
+        extras: list[dict] = []
+        seeds = [item for item in results
+                 if item.get("type") == "memory"][:3]
+        for seed in seeds:
+            if len(extras) >= limit:
+                break
+            scope, _ = self.scopes.locate(seed["id"], project)
+            if scope is None or scope.links is None:
+                continue
+            for link in scope.links.neighbors(seed["id"]):
+                if len(extras) >= limit:
+                    break
+                neighbor_id = link["id"]
+                if neighbor_id in seen:
+                    continue
+                neighbor = scope.store.get(neighbor_id)
+                if neighbor is None or neighbor.type is not RecordType.MEMORY:
+                    continue
+                if tag and tag not in neighbor.tags:
+                    continue
+                seen.add(neighbor_id)
+                extras.append({
+                    "id": neighbor.id,
+                    "content": neighbor.content,
+                    "score": round(float(seed.get("score", 0.0)) * ratio, 6),
+                    "type": neighbor.type.value,
+                    "source": neighbor.source,
+                    "tags": neighbor.tags,
+                    "created_at": neighbor.created_at,
+                    "agent_id": neighbor.agent_id,
+                    "via": {"id": seed["id"], "relation": link["relation"]},
+                })
+        return extras
 
     # ---- 文档摄取与管理 ----
     def add_document(self, path: str | Path,
@@ -591,6 +779,8 @@ class KBService:
             scope.bm25.remove_many(ids)
             self._persist_bm25(scope)
             self._sparse_remove(scope, ids)
+            if scope.links is not None:
+                scope.links.remove_records(ids)
         scope.store.add(records, vectors)
         return len(ids)
 
@@ -605,6 +795,8 @@ class KBService:
             scope.bm25.remove_many(ids)
             self._persist_bm25(scope)
             self._sparse_remove(scope, ids)
+            if scope.links is not None:
+                scope.links.remove_records(ids)
             return n
 
     # ---- 检索与统计 ----
@@ -706,8 +898,13 @@ class KBService:
                project: str | None = None) -> list[dict]:
         """混合检索；带 project 时合并项目子库与全局库，项目命中加分。
 
+        轻量关联扩展（2026-10-22 links spec）：link_expand_enabled 时对前 3 条
+        memory 命中做 1 跳扩展，追加最多 link_expand_limit 条邻居（带 via），
+        无关联数据时结果与基础检索完全一致。
         English: Hybrid retrieval; with a project, merge that project's sub-store and
-        the global store, boosting project hits."""
+        the global store, boosting project hits. With link_expand_enabled, the first
+        3 memory hits are expanded one hop, appending at most link_expand_limit
+        neighbors (tagged via); with no links the results are identical to base search."""
         if project and self.scopes.has_project(project):
             scope = self.scopes.get(project)
             project_hits = scope.retriever.search(
@@ -730,6 +927,12 @@ class KBService:
             results = self.retriever.search(
                 query, top_k=top_k, mode=mode, type=type, tag=tag,
                 agent_id=agent_id, client=client, project=project or "")
+        if getattr(self.settings, "link_expand_enabled", True):
+            extras = self._expand_links(results, project, type, tag)
+            if extras:
+                results = sorted(results + extras,
+                                 key=lambda item: item.get("score", 0.0),
+                                 reverse=True)[:top_k + len(extras)]
         self._audit_access("search", agent_id, query=query,
                            hits=len(results), namespace="default",
                            client=client, project=project or "")

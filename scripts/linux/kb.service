@@ -10,8 +10,13 @@ Type=simple
 User=__USER__
 WorkingDirectory=__REPO__
 Environment=HF_ENDPOINT=https://hf-mirror.com
-Environment=KB_DEVICE=auto
-Environment=KB_LLM_MODE=auto
+# CPU 服务器（含 2 核 2G）默认不加载 torch 探测 GPU、不启用 LLM；
+# 有显卡的机器改成 KB_DEVICE=cuda（或先交互运行一次让选择写入 runtime.json）。
+Environment=KB_DEVICE=cpu
+Environment=KB_LLM_MODE=off
+# 2 核 2G 可再打开以下两项（线程数默认按 cgroup/affinity 自动、最多 4）：
+# Environment=KB_TORCH_THREADS=2
+# Environment=KB_EMBED_BATCH_SIZE=16
 ExecStart=__PYTHON__ -m kb serve
 Restart=on-failure
 RestartSec=5

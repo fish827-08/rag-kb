@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from kb.bm25 import BM25Index
+from kb.links import LinkStore
 from kb.retriever import HybridRetriever
 from kb.storage import ChromaStore
 
@@ -55,6 +56,7 @@ class Scope:
     retriever: HybridRetriever
     sparse_embedder: object | None = None
     sparse_index: object | None = None
+    links: LinkStore | None = None
 
     @property
     def bm25_cache(self) -> Path:
@@ -108,8 +110,9 @@ class ScopeManager:
             sparse_embedder=sparse_embedder, sparse_index=sparse_index,
             write_lock=self.write_lock)
         _write_count(base, len(records))
+        links = LinkStore(base / "links.db")
         return Scope(project or "", base, store, bm25, retriever,
-                     sparse_embedder, sparse_index)
+                     sparse_embedder, sparse_index, links)
 
     def get(self, project: str | None) -> Scope:
         """取作用域；项目库首次访问时打开，超出上限淘汰最久未用的项目库。"""
@@ -126,6 +129,8 @@ class ScopeManager:
                     if name:
                         evicted = self._scopes.pop(name)
                         _write_count(evicted.base_dir, evicted.store.count())
+                        if evicted.links is not None:
+                            evicted.links.close()
                         break
                 else:
                     break
@@ -173,6 +178,13 @@ class ScopeManager:
             if record is not None:
                 return scope, record
         return None, None
+
+    def sync_count(self, scope: Scope) -> None:
+        """记录数变更后刷新 count.txt，避免未打开子库读到陈旧计数。
+
+        English: Refresh count.txt after record changes so unopened sub-stores do not
+        report stale counts."""
+        _write_count(scope.base_dir, scope.store.count())
 
     def total_records(self) -> int:
         """全局 + 所有项目库的记录总数（用于 healthz/stats）。

@@ -205,6 +205,7 @@ _MCP_INSTRUCTIONS: dict[str, str] = {
 
 【何时检索（search_memory）】
 - 任务开始、回答涉及历史决策/用户偏好、跨会话接力时，先主动检索召回，query 用自然语言描述语义。
+- 两条记忆关系明确（同主题、前后替代、依赖、从属、矛盾）时，用 link_memory 建立关联；关联要少而准，不要把所有记忆都连起来。list_links 可查看一跳邻居，检索会自动带出关联记忆（结果中的 via 字段标明来源）。
 
 【对用户反馈（重要，极简）】
 - 写入/更新成功：只轻提一句，如"已记住你的偏好"；失败才说明原因（如"没记：与已有记忆重复/内容敏感/格式不支持"）。
@@ -233,6 +234,7 @@ Do NOT write: chit-chat, transient computation, implementation details directly 
 
 [When to search (search_memory)]
 - Proactively recall at task start, when an answer involves past decisions/preferences, or on cross-session handoff; ask in natural language describing the semantics.
+- When two memories have a clear relationship (same topic, supersession, dependency, part-of, contradiction), link them with link_memory; keep links few and precise rather than connecting everything. list_links shows one-hop neighbors, and searches automatically surface linked memories (the via field marks the source).
 
 [Feedback to user (important — keep it minimal)]
 - On successful write/update: mention it briefly, e.g. "Noted your preference."

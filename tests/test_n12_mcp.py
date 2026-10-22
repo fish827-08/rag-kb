@@ -9,12 +9,13 @@ def msvc(env_isolated):
     return KBService()
 
 
-def test_八个工具函数全部注册(msvc):
+def test_十一个工具函数全部注册(msvc):
     from kb.mcp import create_mcp_server
     mcp = create_mcp_server(msvc)
     tools = {t.name for t in mcp._tool_manager.list_tools()}
     assert tools == {"write_memory", "search_memory", "read_memory", "update_memory",
-                     "delete_memory", "add_document", "add_webpage", "ask_kb"}
+                     "delete_memory", "add_document", "add_webpage", "ask_kb",
+                     "link_memory", "unlink_memory", "list_links"}
 
 
 def test_服务器注入全局instructions_且双语按语言切换(msvc, monkeypatch):

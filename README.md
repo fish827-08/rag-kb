@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.1.2）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.2.0）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -44,20 +44,37 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 - **隐私护栏**：敏感 namespace 强制本地回答不出网；`/ask` 智能路由（本地优先，难题可选云端）
 - **断网可用**：模型与数据全部落本地，无网络时存取与检索功能完整
 
-## 快速开始（Windows / Linux / macOS）
+## 快速开始（Linux / Windows / macOS）
 
-**从 PyPI 安装（推荐）：**
+**Linux（推荐，含 2 核 2G 小服务器）：先装 CPU 版 torch，再装 kb。**
 
 ```bash
-pip install "kb-memory[ingest]"   # 核心 + 文档/网页摄取；[llm]=云端问答，[full]=全部
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU 轮子约 196 MB
+pip install "kb-memory[ingest]"
 python -m kb serve
 ```
 
-**Linux 无显卡机器先装 CPU 版 torch**（PyPI 默认拉 CUDA 轮子，体积大得多）：
+> 不先装 CPU 版 torch 时，PyPI 默认会拉 CUDA 版本（torch + cudnn + nccl 等合计 **2–3 GB**），
+> 这是 Linux 新用户最大的下载坑；只做记忆存取与检索不需要显卡。
+
+**2 核 2G 服务器建议配置**（写入 `.env` 或环境变量）：
+
+```ini
+KB_DEVICE=cpu
+KB_LLM_MODE=off
+KB_TORCH_THREADS=2          # 0=自动（按 cgroup/affinity 配额，最多 4）
+KB_EMBED_BATCH_SIZE=16      # 默认 32；内存紧张降到 8–16
+KB_IDLE_UNLOAD_SECONDS=300  # 空闲 5 分钟卸载嵌入模型
+```
+
+启动阶段不加载嵌入模型（百 MB 级）；首次检索/写入才加载默认 `bge-small`（约 92 MB），
+加载后常驻通常 < 1 GB，检索为毫秒级，2 核 2G 可运行。LLM 问答（`/ask`）在 2G 上
+建议保持关闭或使用云端。
+
+**Windows / macOS：**
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install "kb-memory[ingest]"
+pip install "kb-memory[ingest]"   # 核心 + 文档/网页摄取；[llm]=云端问答，[full]=全部
 python -m kb serve
 ```
 
@@ -72,12 +89,14 @@ python -m kb serve
 ```
 
 > **首次安装要下载什么、大概多久**（先看一眼，避免以为卡死了）：
-> - 核心 Python 依赖约 **400–600 MB**（Windows CPU 版 `torch` 约 124 MB 为最大单体；
->   Linux 先装 CPU 轮子可避免默认 CUDA 轮子带来的数 GB 下载）；
+> - Linux 先装 CPU 版 `torch`（约 **196 MB**）后，整条核心依赖约 **0.5–0.7 GB**；
+>   Windows / macOS 核心依赖约 **400–600 MB**（Windows CPU 版 `torch` 约 124 MB 为最大单体）；
 > - 可选 `[ingest]` 额外约几十 MB（PDF/DOCX/Office 解析、网页提取、目录监听）；
 > - **首次写入/检索时**才加载并下载嵌入模型（懒加载，启动本身很轻），**默认 `bge-small-zh-v1.5` 约 92 MB**（若显式配了 `KB_EMBED_MODEL=BAAI/bge-m3`，则约 2.2 GB）；
-> - 国内网络建议加 pip 镜像（实测阿里云可用、清华可能 403）：
->   `pip install "kb-memory[ingest]" -i https://mirrors.aliyun.com/pypi/simple/`
+> - 国内网络可加 pip 镜像加速（实测阿里云可用、清华可能 403），但镜像同步新包有延迟
+>   （实测阿里云对 `kb-memory` 返回过 404）；建议同时挂官方源兜底：
+>   `pip install "kb-memory[ingest]" -i https://mirrors.aliyun.com/pypi/simple/ --extra-index-url https://pypi.org/simple/`
+>   若仍报 `No matching distribution`，改用官方源：`pip install "kb-memory[ingest]" -i https://pypi.org/simple/`
 > - 模型下载走 HuggingFace 镜像：`$env:HF_ENDPOINT='https://hf-mirror.com'`（Windows）/ `export HF_ENDPOINT=https://hf-mirror.com`（Linux、macOS）。
 >
 > 重要：用源码 venv 安装时 `kb` 命令只装在虚拟环境内。**每个新终端都要先激活虚拟环境**
@@ -98,9 +117,9 @@ curl http://127.0.0.1:8000/api/v1/healthz
 > `/healthz` 的 `embedder` 字段会显示 `unloaded/loading/ok/error`，模型加载失败时
 > 写/查请求返回 **503 `EMBED_MODEL_UNAVAILABLE`**（含模型名与修复建议），不再裸 500。
 >
-> **CPU 即可运行，不占显卡**：全新安装默认拿到 CPU 版 torch（`device=cpu`），
-> 不占用 GPU 显存，无独立显卡的机器也能完整使用。有显卡想加速（大库、批量入库）
-> 可另装 CUDA 版 torch 后显式 `KB_DEVICE=cuda` 启用 GPU 加速。
+> **CPU 即可运行，不占显卡**：Windows / macOS 安装默认使用 CPU 版 torch；
+> Linux 按上面的命令先装 CPU 轮子即可，无独立显卡的机器也能完整使用。
+> 有显卡想加速（大库、批量入库）可另装 CUDA 版 torch 后显式 `KB_DEVICE=cuda`。
 >
 > **LLM 默认关闭（`KB_LLM_MODE=off`）**：服务启动不会探测/加载/调用任何大模型，
 > 零显存、零成本、纯离线；记忆写入、文档入库、混合检索完整可用。
@@ -250,8 +269,9 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 }
 ```
 
-挂载后可用的 MCP 工具：`write_memory` / `search_memory` / `read_memory` /
-`update_memory` / `delete_memory` / `add_document` / `add_webpage` / `ask_kb`。
+挂载后可用的 MCP 工具（11 个）：`write_memory` / `search_memory` / `read_memory` /
+`update_memory` / `delete_memory` / `link_memory` / `unlink_memory` / `list_links` /
+`add_document` / `add_webpage` / `ask_kb`。
 
 > 启用 `KB_API_KEY` 鉴权后，MCP 客户端需在连接配置加 `headers`（`Authorization: Bearer <key>`）；
 > 仓库内 `.mcp.json` 模板不含真实 key（JSON 不支持注释），配法见 [USER_GUIDE §5.2](docs/USER_GUIDE.md#52-客户端适配n20启用鉴权后各客户端如何带-key)。
@@ -265,6 +285,9 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 | GET | `/api/v1/memories/{id}` | 读取单条记忆 |
 | PATCH | `/api/v1/memories/{id}` | 更新内容或标签 |
 | DELETE | `/api/v1/memories/{id}` | 删除单条记忆 |
+| POST | `/api/v1/memories/{id}/links` | 建立记忆关联 `{to_id, relation?}`；relation: `related/supersedes/depends_on/part_of/contradicts` |
+| GET | `/api/v1/memories/{id}/links` | 列一跳关联（含内容/方向；`?project=&relation=`） |
+| DELETE | `/api/v1/memories/{id}/links/{to_id}` | 取消关联（任一方向；删除后同步清理） |
 | POST | `/api/v1/search` | 混合检索 `{query, top_k?, mode?, type?, tag?}`，mode: `hybrid/vector/keyword` |
 | POST | `/api/v1/documents` | 文档入库：multipart `file` 字段或 JSON `{"path": "本地路径"}` |
 | GET | `/api/v1/documents` | 已入库文档列表（按 source 聚合） |
@@ -277,6 +300,11 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 | GET | `/api/v1/governance/config` | 治理配置：衰减+新鲜度开关与参数（只读） |
 | POST | `/api/v1/memories` → **409** | 启用语义去重（`KB_DEDUP_ENABLED=true`）后写入命中重复返回 409：`{"error":"DUPLICATE","duplicate_of":"<已有记录id>","similarity":<相似度>}`（不写入） |
 
+> 记忆关联默认启用一跳检索扩展：命中的 memory 会带出直接关联的邻居（结果附
+> `via: {id, relation}`），无关联数据时与基础检索完全一致；开关与上限见
+> `KB_LINK_EXPAND_ENABLED` / `KB_LINK_EXPAND_LIMIT`。设计见
+> [memory-links spec](docs/superpowers/specs/2026-10-22-kb-memory-links-design.md)。
+>
 > 记忆治理（去重/衰减/新鲜度）均默认关闭、零行为变化；用法见 [USER_GUIDE §3.5](docs/USER_GUIDE.md#35-记忆治理a3语义去重--衰减--新鲜度)。
 
 示例（Windows PowerShell 可直接复制；中文必须按 UTF-8 字节发送）：
@@ -314,11 +342,13 @@ curl -X POST http://127.0.0.1:8000/api/v1/memories \
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
 | `KB_LLM_MODE` | `off` | LLM 模式：`off`（默认，不加载/不调用 LLM，零显存零成本）/ `local`（仅本地 Ollama）/ `auto`（本地优先，云端降级）/ `cloud` |
-| `KB_DEVICE` | 空 | 嵌入模型设备：空=自动检测，可显式设 `cpu` / `cuda` |
+| `KB_DEVICE` | 空 | 嵌入模型设备：空或 `auto`=自动检测（非交互启动回退 `cpu`），可显式设 `cpu` / `cuda` |
 | `KB_WATCH_DIR` | `data` | serve 模式监听目录，文件变动自动入库；空串或 `.` = 不启动 |
 | `KB_DATA_DIR` | `kb_data` | 运行数据根目录（ChromaDB、运行时状态等） |
 | `KB_API_HOST` / `KB_API_PORT` | `127.0.0.1` / `8000` | REST 与 MCP 监听地址 |
 | `KB_EMBED_MODEL` | `BAAI/bge-small-zh-v1.5` | 嵌入模型（轻量默认，约 92 MB）；可换 `BAAI/bge-m3`（约 2.2 GB，更强），见「嵌入模型怎么选」 |
+| `KB_TORCH_THREADS` / `KB_EMBED_BATCH_SIZE` | `0` / `32` | 低配 CPU 调优：线程数 `0`=自动（按 cgroup/affinity，最多 4）；2G 内存可把批大小降到 8–16 |
+| `KB_IDLE_UNLOAD_SECONDS` | `600` | 嵌入模型空闲 N 秒后卸载；`0`=不卸载 |
 | `KB_LLM_MODEL` | 空 | 本地 Ollama 模型名（默认空=不配；配 `KB_LLM_MODE=local/auto` 时须按自己电脑选模型，以 `ollama list` 为准） |
 | `KB_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 端点 |
 | `KB_LLM_API_KEY` / `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL` | 空 | 云端 LLM（可选）：**任意 OpenAI 兼容服务商**（DeepSeek / OpenAI / 通义 / 硅基流动等），仅填在本机 `.env` |
@@ -327,6 +357,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/memories \
 | `KB_API_KEY` | 空 | 空=不鉴权（本地回环零摩擦）；非空=启用 Bearer/X-API-Key 鉴权 |
 | `KB_RERANK_ENABLED` / `KB_RERANK_MODEL` / `KB_RERANK_TOP_N` | `false` / `BAAI/bge-reranker-v2-m3` / `20` | 检索精排（A3.5）：融合候选送 CrossEncoder 重排，默认关 |
 | `KB_SPARSE_ENABLED` | `false` | 稀疏第三路（A3.5）：BGE-M3 稀疏向量 + 倒排索引参与归一化加权融合，默认关 |
+| `KB_LINK_EXPAND_ENABLED` / `KB_LINK_EXPAND_LIMIT` / `KB_LINK_EXPAND_SCORE_RATIO` | `true` / `3` / `0.5` | 记忆关联一跳扩展：每次最多追加邻居数、邻居分数相对种子的比例 |
+| `KB_LINK_MAX_PER_RECORD` | `50` | 单条记忆的关联边上限（防止单点成为巨型枢纽） |
 
 ## CLI 速查（无需启动服务）
 
@@ -337,7 +369,7 @@ python -m kb stats                            # 统计：类型分布 / 访问�
 python -m kb ask "问题" --client TraeWork      # 终端 RAG 问答（LLM 不可用时输出检索命中）
 python -m kb audit --client TraeWork --days 7   # 查某客户端/项目存过/读过什么
 python -m kb eval --file tests/eval_zh_50.jsonl   # 检索质量评测（Recall@1/@5 + MRR）
-python -m kb forget --stale --days 90         # 清理超期未命中记忆
+python -m kb forget --stale --days 90 --dry-run  # 全作用域预览（默认 dry-run，删除前自动备份）
 python -m kb dedup --threshold 0.92           # 语义去重
 ```
 
@@ -348,7 +380,7 @@ python -m kb dedup --threshold 0.92           # 语义去重
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（425 项通过 / 1 跳过，含 eval_zh_50.jsonl 检索评测数据集）
+tests/         kb 验收测试（462 项通过 / 1 跳过，含 eval_zh_50.jsonl 检索评测数据集）
 docs/          用户指南、开发者手册与设计文档
 kb_data/       kb 运行数据（gitignore）
 ```

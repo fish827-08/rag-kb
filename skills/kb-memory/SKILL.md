@@ -47,24 +47,30 @@ writes `~/.kb/install.json` → starts the service detached with `KB_DATA_DIR`.
 
 ### B. Manual install (pip)
 
+**Linux (recommended, including 2 vCPU / 2 GB servers): install the CPU torch
+wheel first** — the default PyPI torch bundles CUDA (2–3 GB+):
+
 ```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # ~196 MB
 pip install "kb-memory[ingest]"    # extras: [llm] for /ask, [full] for both
 python -m kb serve                 # interactive first run (device detection)
 python -m kb serve --non-interactive   # for scripts / autostart
 ```
 
-Linux CPU-only machines should install the CPU torch wheel first to keep the
-download small:
+**Windows / macOS:**
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install "kb-memory[ingest]"
+python -m kb serve
 ```
+
+For a 2 vCPU / 2 GB server, also set `KB_DEVICE=cpu`, `KB_LLM_MODE=off`,
+`KB_TORCH_THREADS=2`, `KB_EMBED_BATCH_SIZE=16` (default 32), and optionally
+`KB_IDLE_UNLOAD_SECONDS=300`.
 
 Missing optional extras produce a readable error naming the extra to install
 (e.g. PDF parsing needs `kb-memory[ingest]`; `/ask` needs `kb-memory[llm]`).
-China / slow network: add `-i https://mirrors.aliyun.com/pypi/simple/` and set
-`HF_ENDPOINT=https://hf-mirror.com` before the first run.
+China / slow network: add `-i https://mirrors.aliyun.com/pypi/simple/ --extra-index-url https://pypi.org/simple/` (mirrors can lag on new releases; official PyPI is the fallback) and set `HF_ENDPOINT=https://hf-mirror.com` before the first run.
 
 ## 2. Find, start, and autostart the service
 
@@ -116,9 +122,9 @@ If `KB_API_KEY` is set, add an auth header to the same server entry:
 "headers": { "Authorization": "Bearer <your-key>" }
 ```
 
-The MCP endpoint exposes exactly these 8 tools:
+The MCP endpoint exposes exactly these 11 tools:
 `write_memory`, `search_memory`, `read_memory`, `update_memory`, `delete_memory`,
-`add_document`, `add_webpage`, `ask_kb`.
+`link_memory`, `unlink_memory`, `list_links`, `add_document`, `add_webpage`, `ask_kb`.
 
 ## 4. Memory behavior rules (for the agent)
 
@@ -139,6 +145,19 @@ The MCP endpoint exposes exactly these 8 tools:
   reserved names (CON, NUL, COM1…) are rejected.
 - Documents and web pages follow the same rule: `add_document` / `add_webpage`
   accept `project` and store their chunks in that project's sub-store.
+
+### Memory links (lightweight graph)
+
+- When two memories have a clear relationship — supersession, dependency,
+  part-of, contradiction, or the same topic — call `link_memory` with
+  `relation` (`related` / `supersedes` / `depends_on` / `part_of` / `contradicts`).
+  Keep links few and precise; do not connect every memory.
+- Only memory records in the same scope (global or one project) can be linked;
+  self-links are rejected. `list_links` shows one-hop neighbors.
+- Searches automatically expand one hop (up to 3 neighbors by default); expanded
+  hits carry `via: {id, relation}` and link cleanup is automatic on delete.
+- Disable expansion with `KB_LINK_EXPAND_ENABLED=false`; with no links, results
+  are identical to plain hybrid search.
 
 ### Memory language
 

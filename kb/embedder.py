@@ -4,8 +4,64 @@ English: Embedder: lazy-loaded embedding model, device support, normalized vecto
 (construction never loads the model).
 """
 import gc
+import math
+import os
+import sys
 import threading
 import time
+from pathlib import Path
+
+
+def _cgroup_cpu_limit() -> int | None:
+    """读取 cgroup v2/v1 的 CPU 配额并向上取整；无限制或不可读返回 None。
+
+    容器内 os.cpu_count() 仍是宿主机核数；不看配额会在 2 核容器里按
+    宿主机核数开线程，互相抢占。
+    """
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text(
+            encoding="utf-8").split()[:2]
+        if quota != "max" and int(period) > 0:
+            return max(1, math.ceil(int(quota) / int(period)))
+    except (OSError, ValueError):
+        pass
+    try:
+        quota = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text(
+            encoding="utf-8"))
+        period = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text(
+            encoding="utf-8"))
+        if quota > 0 and period > 0:
+            return max(1, math.ceil(quota / period))
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def available_cpus() -> int:
+    """可用 CPU 核数：affinity 与 cgroup 配额取小；都读不到时回退 os.cpu_count。"""
+    limits = []
+    try:
+        limits.append(len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        pass
+    cgroup = _cgroup_cpu_limit()
+    if cgroup:
+        limits.append(cgroup)
+    if not limits:
+        limits.append(os.cpu_count() or 1)
+    return max(1, min(limits))
+
+
+def resolve_torch_threads(configured: int = 0,
+                          cpus: int | None = None) -> int:
+    """解析 CPU 线程数：显式值优先；0=自动，按可用核数且最多 4。
+
+    小模型（bge-small）超过 4 线程收益很小，线程过多反而增加调度抖动。
+    """
+    if configured and configured > 0:
+        return configured
+    n = cpus if cpus and cpus > 0 else available_cpus()
+    return max(1, min(n, 4))
 
 
 class EmbeddingUnavailableError(RuntimeError):
@@ -27,12 +83,15 @@ class Embedder:
     """
 
     def __init__(self, model_name: str, device: str = "cpu",
-                 idle_unload_seconds: int = 0):
+                 idle_unload_seconds: int = 0, torch_threads: int = 0,
+                 embed_batch_size: int = 32):
         """只存参数不加载模型；_model 延迟到首次使用。
         English: Store parameters only; defer loading until first use."""
         self.model_name = model_name
         self.device = device
         self.idle_unload_seconds = max(0, int(idle_unload_seconds or 0))
+        self.torch_threads = max(0, int(torch_threads or 0))
+        self.embed_batch_size = max(1, int(embed_batch_size or 32))
         self._model = None
         self._state = "unloaded"   # unloaded | loading | ok | error
         self._error = ""
@@ -44,7 +103,9 @@ class Embedder:
         English: Return a lightweight status suitable for healthz (never triggers loading)."""
         return {"state": self._state, "model": self.model_name,
                 "error": self._error,
-                "idle_unload_seconds": self.idle_unload_seconds}
+                "idle_unload_seconds": self.idle_unload_seconds,
+                "torch_threads": self.torch_threads,
+                "embed_batch_size": self.embed_batch_size}
 
     def _mark_error(self, exc: Exception) -> EmbeddingUnavailableError:
         """记录失败状态并包装成统一异常。
@@ -69,6 +130,8 @@ class Embedder:
             self._state = "loading"
             try:
                 from sentence_transformers import SentenceTransformer
+                if self.device == "cpu":
+                    self._configure_cpu_threads()
                 try:
                     self._model = SentenceTransformer(
                         self.model_name, device=self.device, local_files_only=True)
@@ -83,6 +146,20 @@ class Embedder:
             except Exception as exc:  # noqa: BLE001 - 统一转换为可读错误
                 raise self._mark_error(exc) from exc
 
+    def _configure_cpu_threads(self) -> None:
+        """加载前固定 CPU 线程数，避免容器按宿主机核数开线程。
+
+        set_num_interop_threads 只能在并行工作开始前调用一次；已初始化时
+        忽略 RuntimeError（torch.set_num_threads 仍会生效）。
+        """
+        threads = resolve_torch_threads(self.torch_threads)
+        import torch
+        torch.set_num_threads(threads)
+        try:
+            torch.set_num_interop_threads(1)
+        except RuntimeError:
+            pass
+
     def unload(self) -> bool:
         """卸载模型释放内存；未加载时返回 False。
         English: Unload the model to free memory; returns False when not loaded."""
@@ -93,6 +170,13 @@ class Embedder:
             self._state = "unloaded"
             self._error = ""
             gc.collect()
+            if sys.platform.startswith("linux"):
+                # glibc 默认不把释放的大块内存还给系统；2G 机器上显式归还
+                try:
+                    import ctypes
+                    ctypes.CDLL("libc.so.6").malloc_trim(0)
+                except (OSError, AttributeError):
+                    pass
             if self.device == "cuda":
                 try:
                     import torch
@@ -119,7 +203,8 @@ class Embedder:
             with self._lock:
                 self._ensure_loaded()
                 vecs = self._model.encode(
-                    texts, normalize_embeddings=True, convert_to_numpy=True
+                    texts, normalize_embeddings=True, convert_to_numpy=True,
+                    batch_size=self.embed_batch_size
                 )
                 self._last_used = time.monotonic()
         except EmbeddingUnavailableError:

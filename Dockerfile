@@ -10,9 +10,13 @@
 # 说明：
 #   - torch 显式装 CPU 版（默认版含 CUDA 依赖近 3GB，CPU 镜像足够且瘦身）
 #   - 嵌入模型在构建阶段预下载到 HF_HOME（Glama instance 单调用 60s 超时阈值，首次 embed 再下载必然超时）
+#   - 默认预缓存轻量 bge-small（约 92MB），镜像与内存适合 2 核 2G；
+#     需要更强语义可 --build-arg KB_EMBED_MODEL=BAAI/bge-m3
 #   - 国内构建若 pytorch 官方源慢，可换阿里云镜像：
 #       pip install torch --index-url https://mirrors.aliyun.com/pytorch-wheels/cpu/
 FROM python:3.10-slim
+
+ARG KB_EMBED_MODEL=BAAI/bge-small-zh-v1.5
 
 # 构建工具兜底：个别依赖（onnxruntime/grpcio/uvloop 等）在 slim 下若缺 wheel 需编译
 RUN apt-get update \
@@ -26,6 +30,7 @@ ENV PYTHONUNBUFFERED=1 \
     KB_LOG_DIR=/data/logs \
     KB_DEVICE=cpu \
     KB_LLM_MODE=off \
+    KB_EMBED_MODEL=${KB_EMBED_MODEL} \
     HF_ENDPOINT=https://huggingface.co
 
 WORKDIR /app
@@ -42,14 +47,16 @@ COPY kb ./kb
 COPY .env.example ./
 RUN pip install --no-deps --no-cache-dir -e .
 
-# 4) 预下载 BGE-M3 嵌入模型到 HF_HOME（Glama Try in Browser 单次调用 ≤60s，
-#    必须在 build 阶段把 2GB 模型 + tokenizer + onnx 权重全部缓存到 /data/hf-cache）
-#    执行一次 encode 确保完整下载与权重初始化通过；HF_ENDPOINT 走 hf-mirror。
+# 4) 预下载嵌入模型到 HF_HOME（Glama Try in Browser 单次调用 ≤60s，
+#    必须在 build 阶段把模型 + tokenizer + onnx 权重全部缓存好）
+#    执行一次 encode 确保完整下载与权重初始化通过。
 RUN python - <<'PY'
+import os
 from sentence_transformers import SentenceTransformer
-m = SentenceTransformer('BAAI/bge-m3', device='cpu')
-v = m.encode(['kb-memory warmup: pre-cache BGE-M3 at build time'])
-print(f"[OK] BGE-M3 cached: dim={v.shape[1]}, batch={v.shape[0]}")
+name = os.environ.get("KB_EMBED_MODEL", "BAAI/bge-small-zh-v1.5")
+m = SentenceTransformer(name, device='cpu')
+v = m.encode(['kb-memory warmup: pre-cache model at build time'])
+print(f"[OK] {name} cached: dim={v.shape[1]}, batch={v.shape[0]}")
 PY
 
 # 默认 stdio 模式：MCP 客户端 / Glama 直接拉起，工具集与 REST 同栈

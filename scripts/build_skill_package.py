@@ -43,6 +43,8 @@ REQUIRED_SKILL_MARKERS = (
     "/api/v1/healthz",
     "write_memory",
     "search_memory",
+    "link_memory",
+    "list_links",
     "add_document",
     "add_webpage",
     "ask_kb",
