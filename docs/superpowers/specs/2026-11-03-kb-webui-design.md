@@ -104,6 +104,8 @@ kb = ["static/*"]
 | 热生效 | 保存后重建 `LLMClient` 并清空 `/ask` 答案缓存，无需重启 |
 | 空值语义 | 请求中空串 / 缺省字段 = 不修改；API Key 留空不会被清除 |
 | 鉴权 | 配置了 `KB_API_KEY` 时由中间件校验；未配置时仅允许回环地址写 |
+| 密钥权限 | 配置文件含 Key，写入后收紧：POSIX `chmod 600`，Windows `icacls` 仅授权当前用户 |
+| SSRF | 云端 Base URL 拒绝回环/私有 IP 字面量；确需本地 OpenAI 兼容服务时设 `KB_LLM_ALLOW_PRIVATE_BASE_URL=1` |
 | 字段映射 | UI 的 `cloud_base_url/cloud_model/cloud_api_key` → Settings 的可写字段 `llm_base_url/llm_cloud_model/llm_api_key`（`cloud_*` 是只读 property） |
 
 接口：

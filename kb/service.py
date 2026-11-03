@@ -1,11 +1,15 @@
 """KBService：统一业务编排，组装 store / embedder / bm25 / retriever / llm。
 English: Unified business orchestration that assembles store / embedder / bm25 / retriever / llm."""
+import ipaddress
 import json
 import math
+import os
+import subprocess
 import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
+from urllib.parse import urlparse
 
 from kb.config import Settings, get_settings
 from kb.embedder import Embedder, EmbeddingUnavailableError
@@ -236,12 +240,32 @@ _LLM_PATCH_MAP = {
 }
 
 
-def _check_llm_url(value: str, name: str) -> None:
-    """LLM 端点只接受 http(s)；长度上限防御异常输入。"""
+def _check_llm_url(value: str, name: str, allow_private: bool = True) -> None:
+    """LLM 端点只接受 http(s)；长度上限防御异常输入。
+
+    allow_private=False（云端基址）时拒绝回环/私有 IP 字面量，避免把服务
+    当跳板去访问内网（SSRF）。确实要连本机 OpenAI 兼容服务时设置
+    KB_LLM_ALLOW_PRIVATE_BASE_URL=1 放行。
+    """
     if not value.startswith(("http://", "https://")):
         raise ValueError(f"{name} 必须是 http(s) 地址")
     if len(value) > 200:
         raise ValueError(f"{name} 过长（≤200 字符）")
+    if allow_private:
+        return
+    if os.environ.get("KB_LLM_ALLOW_PRIVATE_BASE_URL", "").strip() in ("1", "true", "yes"):
+        return
+    host = (urlparse(value).hostname or "").lower()
+    if not host:
+        raise ValueError(f"{name} 缺少主机名")
+    if host in ("localhost", "::1"):
+        raise ValueError(f"{name} 不允许指向本机；如确需本地服务请设置 KB_LLM_ALLOW_PRIVATE_BASE_URL=1")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if ip.is_private or ip.is_loopback or ip.is_link_local:
+        raise ValueError(f"{name} 不允许指向私有/回环地址；如确需请设置 KB_LLM_ALLOW_PRIVATE_BASE_URL=1")
 
 
 def normalize_llm_patch(patch: dict) -> dict:
@@ -265,8 +289,11 @@ def normalize_llm_patch(patch: dict) -> dict:
         if field == "llm_mode":
             if v not in LLM_MODES:
                 raise ValueError("mode 只能是 off / local / auto / cloud")
-        elif field in ("ollama_base_url", "llm_base_url"):
+        elif field == "ollama_base_url":
             _check_llm_url(v, key)
+        elif field == "llm_base_url":
+            # 云端基址禁私有/回环字面量（SSRF 缓解），Ollama 本地地址不受此限
+            _check_llm_url(v, key, allow_private=False)
         elif len(v) > 200:
             raise ValueError(f"{key} 过长（≤200 字符）")
         clean[field] = v
@@ -286,12 +313,28 @@ def load_llm_overrides(path: Path) -> dict:
 
 
 def save_llm_overrides(path: Path, data: dict) -> None:
-    """原子写入运行时 LLM 配置（先写 .tmp 再 replace，避免半截文件）。"""
+    """原子写入运行时 LLM 配置（先写 .tmp 再 replace，避免半截文件）。
+
+    文件含 API Key，写入后收紧权限：POSIX chmod 600；Windows 用 icacls
+    去掉继承、只授权当前用户（失败静默，不影响配置生效）。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                    encoding="utf-8")
     tmp.replace(path)
+    try:
+        if os.name == "nt":
+            user = os.environ.get("USERNAME") or ""
+            if user:
+                subprocess.run(
+                    ["icacls", str(path), "/inheritance:r",
+                     "/grant:r", f"{user}:F"],
+                    check=False, capture_output=True, timeout=10)
+        else:
+            os.chmod(path, 0o600)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 class KBService:

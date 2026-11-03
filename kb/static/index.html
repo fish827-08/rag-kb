@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>kb · 知识库与问答</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a7d4f'/%3E%3Ctext x='16' y='22' font-family='system-ui' font-size='14' font-weight='700' fill='%23ffffff' text-anchor='middle'%3Ekb%3C/text%3E%3C/svg%3E">
 <style>
 :root {
   color-scheme: light;
@@ -211,6 +212,17 @@ main {
 }
 footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 24px 28px; }
 footer a { color: var(--muted); }
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+  max-width: 90vw; padding: 10px 16px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  box-shadow: var(--shadow); font-size: 13px; opacity: 0; pointer-events: none;
+  transition: opacity .18s, transform .18s; z-index: 40;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.ok { border-color: var(--brand); color: var(--brand); }
+.toast.err { border-color: var(--danger); color: var(--danger); }
+.drop-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -264,10 +276,10 @@ footer a { color: var(--muted); }
 
           <div class="llm-block" id="cloudBlock">
             <label><span data-i18n="llm.cloudUrl"></span>
-              <input id="cloudUrl" placeholder="https://api.deepseek.com">
+              <input id="cloudUrl" placeholder="OpenAI-compatible endpoint, e.g. https://api.openai.com/v1">
             </label>
             <label><span data-i18n="llm.cloudModel"></span>
-              <input id="cloudModel" placeholder="deepseek-chat">
+              <input id="cloudModel" placeholder="model name">
             </label>
             <label><span data-i18n="llm.cloudKey"></span>
               <input id="cloudKey" type="password" autocomplete="off" data-i18n-ph="llm.cloudKeyPh">
@@ -278,7 +290,6 @@ footer a { color: var(--muted); }
           <button id="saveLlm" class="primary wide" type="button" data-i18n="llm.save"></button>
           <p class="hint" id="llmHint" data-i18n="llm.hint"></p>
         </div>
-
         <div class="set-actions">
           <button id="saveKey" data-i18n="auth.save"></button>
           <button id="clearKey" data-i18n="auth.clear"></button>
@@ -293,7 +304,11 @@ footer a { color: var(--muted); }
     <h2 data-i18n="ingest.title"></h2>
     <div class="drop" id="drop">
       <input id="file" type="file" multiple hidden>
-      <button id="pick" data-i18n="ingest.pick"></button>
+      <input id="folder" type="file" webkitdirectory directory multiple hidden>
+      <div class="drop-actions">
+        <button id="pick" data-i18n="ingest.pick"></button>
+        <button id="pickFolder" data-i18n="ingest.pickFolder"></button>
+      </div>
       <p data-i18n="ingest.dropHint"></p>
     </div>
     <div class="row">
@@ -334,6 +349,7 @@ footer a { color: var(--muted); }
   <a href="/docs" target="_blank" rel="noopener" data-i18n="footer.api"></a> ·
   <a href="/" target="_blank" rel="noopener" data-i18n="footer.nav"></a>
 </footer>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script>
 (function () {
@@ -374,7 +390,7 @@ footer a { color: var(--muted); }
       "llm.cloudKey": "云端 API Key",
       "llm.cloudKeyPh": "留空 = 沿用已保存的值",
       "llm.save": "保存 LLM 配置（立即生效）",
-      "llm.hint": "配置写入 kb_data/llm_config.json，重启后仍生效；本地模式需先运行 ollama serve。",
+      "llm.hint": "保存后立即生效；配置只写在本机 kb_data/llm_config.json，重启后沿用。",
       "llm.reading": "读取中…",
       "llm.readFail": "读取失败",
       "llm.keySet": "已保存 Key（留空保持不变）",
@@ -388,7 +404,8 @@ footer a { color: var(--muted); }
       "llm.status.disabled": "不可用",
       "ingest.title": "知识入库",
       "ingest.pick": "选择文件",
-      "ingest.dropHint": "支持 txt / md / pdf / docx 等格式，也可把文件拖到这里",
+      "ingest.pickFolder": "选择文件夹",
+      "ingest.dropHint": "支持 txt / md / pdf / docx 等格式；可选整个文件夹，会自动过滤不支持的文件",
       "ingest.urlPh": "粘贴网页链接，例如 https://example.com/article",
       "ingest.urlBtn": "抓取网页",
       "docs.title": "已入库文档",
@@ -420,6 +437,10 @@ footer a { color: var(--muted); }
       "url.fail": "网页入库失败：{msg}",
       "docs.readFail": "读取文档列表失败：{msg}",
       "delete.fail": "删除失败：{msg}",
+      "toast.llmSaved": "LLM 配置已保存并生效",
+      "toast.llmSaveFail": "LLM 配置保存失败：{msg}",
+      "toast.uploadDone": "已入库 {n} 个文件",
+      "toast.noSupported": "所选文件里没有支持的格式（{ext}）",
       "footer.note": "服务地址同源 ·",
       "footer.api": "REST API 文档",
       "footer.nav": "导航页"
@@ -454,7 +475,7 @@ footer a { color: var(--muted); }
       "llm.cloudKey": "Cloud API key",
       "llm.cloudKeyPh": "blank = keep saved value",
       "llm.save": "Save LLM config (apply now)",
-      "llm.hint": "Saved to kb_data/llm_config.json and kept after restart; local mode needs ollama serve running.",
+      "llm.hint": "Applies immediately; saved only to the local kb_data/llm_config.json and kept after restart.",
       "llm.reading": "loading…",
       "llm.readFail": "read failed",
       "llm.keySet": "key saved (leave blank to keep)",
@@ -468,7 +489,8 @@ footer a { color: var(--muted); }
       "llm.status.disabled": "unavailable",
       "ingest.title": "Ingest",
       "ingest.pick": "Choose files",
-      "ingest.dropHint": "txt / md / pdf / docx supported; drag files here too",
+      "ingest.pickFolder": "Choose folder",
+      "ingest.dropHint": "txt / md / pdf / docx supported; pick a whole folder and unsupported files are filtered out",
       "ingest.urlPh": "Paste a web page URL, e.g. https://example.com/article",
       "ingest.urlBtn": "Fetch page",
       "docs.title": "Documents",
@@ -500,6 +522,10 @@ footer a { color: var(--muted); }
       "url.fail": "Web ingest failed: {msg}",
       "docs.readFail": "Failed to load documents: {msg}",
       "delete.fail": "Delete failed: {msg}",
+      "toast.llmSaved": "LLM config saved and applied",
+      "toast.llmSaveFail": "Failed to save LLM config: {msg}",
+      "toast.uploadDone": "{n} file(s) ingested",
+      "toast.noSupported": "No supported files selected ({ext})",
       "footer.note": "Same-origin service ·",
       "footer.api": "REST API docs",
       "footer.nav": "Home"
@@ -552,6 +578,28 @@ footer a { color: var(--muted); }
     var el = $("ingestStatus");
     el.textContent = text;
     el.className = "status" + (kind ? " " + kind : "");
+  }
+
+  var SUPPORTED = [".md", ".txt", ".pdf", ".docx", ".csv", ".json",
+                   ".html", ".htm", ".pptx", ".xlsx", ".xls"];
+  var toastTimer = null;
+
+  function showToast(text, kind) {
+    var el = $("toast");
+    el.textContent = text;
+    el.className = "toast show" + (kind ? " " + kind : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.className = "toast"; }, 3000);
+  }
+
+  function filterSupported(files) {
+    var list = Array.prototype.slice.call(files || []);
+    var ok = list.filter(function (f) {
+      var name = (f.name || "").toLowerCase();
+      var dot = name.lastIndexOf(".");
+      return dot >= 0 && SUPPORTED.indexOf(name.slice(dot)) >= 0;
+    });
+    return { ok: ok, total: list.length };
   }
 
   function errorText(err) {
@@ -694,9 +742,12 @@ footer a { color: var(--muted); }
     }, 20000).then(function (data) {
       applyLlm(data, true);
       $("llmHint").textContent = T("llm.saved", { mode: data.mode, status: data.status });
+      showToast(T("toast.llmSaved"), "ok");
       checkHealth();
     }).catch(function (err) {
-      $("llmHint").textContent = T("llm.saveFail", { msg: errorText(err) });
+      var msg = errorText(err);
+      $("llmHint").textContent = T("llm.saveFail", { msg: msg });
+      showToast(T("toast.llmSaveFail", { msg: msg }), "err");
     });
   }
 
@@ -776,10 +827,17 @@ footer a { color: var(--muted); }
   }
 
   function uploadFiles(files) {
-    if (!files || !files.length || state.busy) return;
+    if (state.busy) return;
+    var picked = filterSupported(files);
+    if (picked.total && !picked.ok.length) {
+      showToast(T("toast.noSupported", { ext: SUPPORTED.join(" ") }), "err");
+      return;
+    }
+    var list = picked.ok;
+    if (!list.length) return;
     state.busy = true;
     $("pick").disabled = true;
-    var list = Array.prototype.slice.call(files);
+    $("pickFolder").disabled = true;
     var done = 0;
     var failed = [];
     setStatus(T("upload.start", { n: list.length }), "busy");
@@ -803,12 +861,17 @@ footer a { color: var(--muted); }
     chain.then(function () {
       state.busy = false;
       $("pick").disabled = false;
+      $("pickFolder").disabled = false;
       if (failed.length) {
         setStatus(T("upload.someFailed", {
           ok: list.length - failed.length, n: list.length, bad: failed.length
         }) + "\n" + failed.join("\n"), "err");
+        showToast(T("upload.someFailed", {
+          ok: list.length - failed.length, n: list.length, bad: failed.length
+        }), "err");
       } else {
         setStatus(T("upload.allDone", { n: list.length }), "ok");
+        showToast(T("toast.uploadDone", { n: list.length }), "ok");
       }
       loadDocs();
     });
@@ -959,6 +1022,11 @@ footer a { color: var(--muted); }
   function bind() {
     $("pick").addEventListener("click", function () { $("file").click(); });
     $("file").addEventListener("change", function (e) {
+      uploadFiles(e.target.files);
+      e.target.value = "";
+    });
+    $("pickFolder").addEventListener("click", function () { $("folder").click(); });
+    $("folder").addEventListener("change", function (e) {
       uploadFiles(e.target.files);
       e.target.value = "";
     });
