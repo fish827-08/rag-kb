@@ -13,6 +13,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.requests import Request
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from kb import __version__
@@ -148,6 +149,7 @@ _NAV_HTML = """<!DOCTYPE html>
   <div class="card">
     <div class="head"><h1>kb 记忆服务</h1></div>
     <div class="body">
+      <a href="/ui">知识库与问答界面</a>
       <a href="/api/v1/healthz">API 状态</a>
       <a href="/docs">REST API 文档（Swagger）</a>
     </div>
@@ -269,6 +271,8 @@ class AskRequest(BaseModel):
     agent_id: str = "default"
     client: str = "HTTP"
     project: str | None = None  # 项目名（可选，选择项目子库；空=全局库）
+    # 检索条数：默认 5 保持旧行为；长文档（如整本书）可调到 8~10 提高召回覆盖
+    top_k: int = Field(default=5, ge=1, le=50)
 
     @field_validator("question")
     @classmethod
@@ -483,8 +487,10 @@ def _wrap_api_key(app, settings):
             return
         method = scope.get("method", "")
         path = scope.get("path", "")
-        # 白名单：GET /api/v1/healthz 及其别名 /health（存活探针，无敏感数据）
-        if method == "GET" and path in ("/api/v1/healthz", "/health"):
+        # 白名单：GET /api/v1/healthz 及其别名 /health（存活探针，无敏感数据）；
+        # GET / 与 /ui* 为纯静态页面（不含任何数据），同样免鉴权，页面自身再带 Key 访问 /api/v1/*
+        if method == "GET" and (path in ("/api/v1/healthz", "/health", "/")
+                                or path.startswith("/ui")):
             await app(scope, receive, send)
             return
         # 取 key：Authorization: Bearer <key> 优先
@@ -881,7 +887,8 @@ def create_app(settings: Settings | None = None,
         English: Basic RAG Q&A; returns 503 with setup guidance when the LLM is disabled."""
         try:
             return kb.ask(body.question, agent_id=body.agent_id,
-                          client=body.client, project=body.project)
+                          client=body.client, project=body.project,
+                          top_k=body.top_k)
         except LLMDisabledError as exc:
             raise HTTPException(status_code=503, detail={
                 "error": "LLM_DISABLED", "message": str(exc)})
@@ -1036,6 +1043,10 @@ def create_app(settings: Settings | None = None,
         return {"window": window, "total_lines": len(recent),
                 "by_level": by_level, "by_logger": by_logger}
 
+    # Web UI（2026-11-03）：单文件静态页挂在 /ui，HTML 随包分发（见 pyproject package-data）
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.is_dir():
+        app.mount("/ui", StaticFiles(directory=static_dir, html=True), name="web-ui")
     # MCP streamable http 端点挂载在 /mcp（子路径 "/"，即完整路径 /mcp/）；
     # 外包 SSE charset 中间件，保证 text/event-stream 响应头带 charset=utf-8
     app.mount("/mcp", _wrap_sse_charset(mcp_app))

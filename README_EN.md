@@ -391,7 +391,7 @@ python -m kb dedup --threshold 0.92
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (462 passed / 1 skipped, incl. eval_zh_50.jsonl)
+tests/         kb acceptance & regression tests (476 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
 docs/          design specs, developer handbook, user guides

@@ -111,6 +111,10 @@ python -m kb serve
 curl http://127.0.0.1:8000/api/v1/healthz
 ```
 
+**浏览器界面（2026-11-03 新增）**：打开 `http://127.0.0.1:8000/ui`，可直接上传文档、
+抓取网页、查看已入库文档并做 RAG 问答（含来源片段与分数）。未配置 LLM 时勾选
+「仅检索」即可先验证召回；页面同样是纯本地静态文件，离线可用。
+
 > 嵌入模型采用懒加载：启动后空闲时几乎不占内存，**首次写入或检索**才加载
 > `BAAI/bge-small-zh-v1.5`（约 92 MB，自动下载并缓存，之后断网可用）；
 > 未配置 LLM 时服务照常启动，`/ask` 返回 503 与配置指引。
@@ -297,7 +301,7 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 | DELETE | `/api/v1/documents/{source}` | 按 source 删除该文档全部记录（本地文件名等简单 source） |
 | DELETE | `/api/v1/documents?source=<urlencoded>` | 按查询参数删除（**URL 等含斜杠的 source 必须用这个**） |
 | POST | `/api/v1/ingest/web` | 网页入库 `{url}`，抓取正文切分入库；同 URL 重复入库自动替换旧记录 |
-| POST | `/api/v1/ask` | RAG 问答 `{question}`；未配置 LLM 返回 503 |
+| POST | `/api/v1/ask` | RAG 问答 `{question, top_k?}`（`top_k` 默认 5，长文档可调至 8~10）；未配置 LLM 返回 503 |
 | GET | `/api/v1/healthz` | 健康检查与服务统计（含 `embedder` 状态） |
 | GET | `/api/v1/governance/stats` | 记忆治理统计：`total_count`/`avg_access_count`/`stale_90d_count`（只读） |
 | GET | `/api/v1/governance/config` | 治理配置：衰减+新鲜度开关与参数（只读） |
@@ -367,6 +371,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/memories \
 
 ```powershell
 python -m kb add "记忆内容" --tags 偏好 --client TraeWork                       # 写入（project 缺省自动取当前目录名）
+python -m kb import .\docs --project kb                              # 批量导入文件/目录（一次编码、一次建 BM25）
 python -m kb search "查询词" --client TraeWork                                 # 混合检索（v2.1：不传 project 查全局；传 project 合并子库）
 python -m kb stats                            # 统计：类型分布 / 访问热度 / 陈旧分布
 python -m kb ask "问题" --client TraeWork      # 终端 RAG 问答（LLM 不可用时输出检索命中）
@@ -383,7 +388,7 @@ python -m kb dedup --threshold 0.92           # 语义去重
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（462 项通过 / 1 跳过，含 eval_zh_50.jsonl 检索评测数据集）
+tests/         kb 验收测试（476 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
 docs/          用户指南、开发者手册与设计文档
 kb_data/       kb 运行数据（gitignore）
 ```
