@@ -49,3 +49,12 @@ build/
 vibe_images/
 # 旧看板分享包（构建产物，不再入库）
 .trae-html-share-packages/
+# 测试与本地运行残留（2026-11-03 清理：含本机绝对路径，严禁入库）
+pytest-of-Hide/
+chroma_test_*/
+chroma_min_test/
+pip-build-tracker-*/
+jieba.cache
+_tmp/
+/tmp*/
+*/.pytest-of-*/
