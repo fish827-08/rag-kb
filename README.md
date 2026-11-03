@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.0）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.1）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -39,7 +39,7 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 - **记忆语言与自定义规则（v2.1）**：`KB_MEMORY_LANG=auto` 跟随操作系统语言存储记忆；`~/.kb/rules.md` 自定义"什么时候该存记忆"
 - **存取审计**：每次写/读/改/删/检索/问答记 JSON 到 `logs/agent-audit/<客户端>__<项目>.log`（按 client+project 分文件）；用户可查：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 CLI `kb audit --client <客户端>`
 - **知识入库**：本地文档（txt/md/pdf/docx 等）上传或路径导入，支持**整文件夹批量导入**并自动过滤不支持的文件；网页正文抓取入库
-- **表格导入与精准问答（v2.4）**：CSV / XLSX 逐行入库（`列名=值` 文本），可直接问「小明的语文成绩」这类单元格问题，**无需 LLM 也能精确作答**；另支持总分/平均等简单聚合
+- **表格导入与精准问答（v2.4）**：CSV / XLSX 逐行入库（`列名=值` 文本），可直接问「小明的语文成绩」这类单元格问题，**无需 LLM 也能精确作答**；多 sheet（如 15 个班级表）按表名消歧（「五班张芳」只答五班），另支持总分/平均等简单聚合
 - **知识图谱可视化（v2.4）**：Web UI 用 SVG 展示记忆节点与关联边，点击节点查看内容；文档/网页/表格不进入图谱
 - **RAG 与记忆分离（v2.4）**：文档/网页/表格属于 RAG 知识库，**不参与遗忘与衰减**，只在显式删除时移除；衰减/新鲜度仅作用于 memory
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
@@ -406,7 +406,7 @@ python -m kb dedup --threshold 0.92           # 语义去重
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / tables / watcher / api / mcp / cli +
                reranker / sparse / eval）
-tests/         kb 验收测试（510 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
+tests/         kb 验收测试（515 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
 docs/          用户指南、开发者手册与设计文档
 kb_data/       kb 运行数据（gitignore）
 ```

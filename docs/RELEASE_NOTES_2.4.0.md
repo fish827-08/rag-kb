@@ -19,13 +19,23 @@
 - REST 契约向后兼容：仅新增 `/api/v1/graph`；`/ask` 仅新增可选 `table` 字段与 `llm="table"`。
 - 旧 `KB_DEEPSEEK_*` 环境变量仍兼容读取；但不再有内置默认值。
 
+## 验收补强（大表实测后修复）
+
+- **多 sheet 消歧**：15 个班级 sheet 的同名学生会按问题里的表名（「五班」「十五班」）只答对应 sheet；未写表名时每条答案带表名前缀。
+- **聚合口径修正**：平均分排除学号与已有总分列；短数字（如分数 50）不再误命中问题里的长数字（如 1500）。
+
 ## 自动化验证
 
-`pytest tests/ -q` → **510 passed, 1 skipped**（2026-11-03 实测，约 2.5 分钟）。
+`pytest tests/ -q` → **515 passed, 1 skipped**（2026-11-03 实测，约 2.5 分钟）。
+
+实测数据：
+
+- 15 sheet × 30 行 Excel（450 行）：解析 0.30s、入库 9.45s、表格问答 0.02s、检索 0.08s，重启后 450 条记录完整读回；
+- 2000 行 CSV（超过 500 行自动聚合为 223 个多行块）：入库 14.28s，按姓名问单元格 0.02s 精准命中。
 
 新增测试：
 
-- `tests/test_n37_tables.py`：CSV/XLSX 解析、逐行入库、精准问答、聚合
+- `tests/test_n37_tables.py`：CSV/XLSX 解析、逐行入库、精准问答、聚合、GBK、多 sheet 消歧、短数字防误命中
 - `tests/test_n38_graph.py`：图谱节点/边、文档块不入选、项目合并、limit
 - `tests/test_n39_separation.py`：衰减/新鲜度只作用 memory、`forget` 默认 memory-only
 - `tests/test_n40_ui_fixes.py`：favicon 200、LLM 默认不绑定 DeepSeek、云端缺参保存失败、UI 含图谱
