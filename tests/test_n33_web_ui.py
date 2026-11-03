@@ -49,6 +49,14 @@ def test_根导航页含UI入口(client_no_key):
     assert 'href="/ui"' in r.text
 
 
+def test_UI中英双语(client_no_key):
+    """页面自带语言切换，且同时包含中英文文案（README 也有中英两份）。"""
+    body = client_no_key.get("/ui").text
+    assert 'id="langToggle"' in body
+    assert "本地知识库" in body
+    assert "Local knowledge base" in body
+
+
 def test_有Key时静态页放行_数据端点仍鉴权(client_with_key):
     """静态页面本身不含数据，免 Key；数据端点必须带 Key。"""
     assert client_with_key.get("/ui").status_code == 200
