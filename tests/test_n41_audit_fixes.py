@@ -220,6 +220,16 @@ def test_UI语言切换不删除LLM下拉框():
     assert 'id="llmMode"' in html
 
 
+def test_来源表格按字段渲染():
+    """来源里的 `列名=值 | ...` 应渲染成两列字段，而不是原始文本。"""
+    from pathlib import Path
+    html = (Path(__file__).resolve().parents[1]
+            / "kb" / "static" / "index.html").read_text(encoding="utf-8")
+    assert "function tableFields(" in html
+    assert "function renderSourceContent(" in html
+    assert '"src-fields"' in html
+
+
 @pytest.mark.integration
 def test_损坏的xls报格式错误(env_isolated, tmp_path):
     """坏文件仍要报 UnsupportedFormatError；真正的 .xls 由 xlrd 解析。"""

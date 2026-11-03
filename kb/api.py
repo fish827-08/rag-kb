@@ -896,7 +896,9 @@ def create_app(settings: Settings | None = None,
                             tmp_path.unlink(missing_ok=True)
                             raise HTTPException(status_code=413, detail={
                                 "error": "PAYLOAD_TOO_LARGE",
-                                "message": f"文件超过上限 {limit} 字节"})
+                                "message": (f"文件超过上限 {limit} 字节"
+                                            f"（约 {limit / 1024 / 1024:.0f} MB，"
+                                            "可用 KB_MAX_UPLOAD_BYTES 调整）")})
                         tmp.write(chunk)
                     tmp_path = Path(tmp.name)
                 try:
@@ -1073,7 +1075,7 @@ def create_app(settings: Settings | None = None,
     def healthz() -> dict:
         # /health 为 /api/v1/healthz 的别名（复用同一处理函数）：部分 agent/探针习惯探测 /health，
         # 避免 404 误判“服务未启动”。鉴权白名单同步豁免（见 _wrap_api_key）。
-        return {"status": "ok", **kb.stats()}
+        return {"status": "ok", **kb.stats(), "version": __version__}
 
     @app.post("/api/v1/monitor/summary")
     def post_monitor_summary() -> dict:
