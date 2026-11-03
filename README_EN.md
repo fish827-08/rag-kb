@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.4.2).
+service (v2.4.3).
 
 ## Why kb
 
@@ -71,6 +71,9 @@ service (v2.4.2).
   `type/tag` filtering before top_k, SSRF guard + 5MB cap for web ingestion, upload
   cap `KB_MAX_UPLOAD_BYTES` (100MB), unified error JSON, non-ASCII API keys, and
   project record counts that survive restarts.
+- **Paged reads for large stores (v2.4.3)** — `iter_all` now reads in batches of 500
+  instead of one unbounded `get`, lowering peak memory when opening large libraries
+  and rebuilding BM25; includes a 680-record / 5-restart regression test.
 - **Access audit** — every write/read/update/delete/search/ask emits a JSON line
   under `logs/agent-audit/`; query it through `GET /api/v1/audit?client=<client>`
   or `kb audit --client <client>`.

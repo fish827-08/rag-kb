@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.2）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.3）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -43,6 +43,7 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 - **知识图谱可视化（v2.4）**：Web UI 用 SVG 展示记忆节点与关联边，点击节点查看内容；文档/网页/表格不进入图谱
 - **RAG 与记忆分离（v2.4）**：文档/网页/表格属于 RAG 知识库，**不参与遗忘与衰减**，只在显式删除时移除；衰减/新鲜度仅作用于 memory
 - **审计加固（v2.4.2）**：检索相关性下限 `KB_MIN_VECTOR_SCORE`（默认 0.30）、`type/tag` 过滤提前、网页入库 SSRF 防护与 5MB 响应上限、单文件上传上限 `KB_MAX_UPLOAD_BYTES`（默认 100MB）、统一错误 JSON、非 ASCII API Key 兼容、项目计数重启不丢
+- **大库读取分页（v2.4.3）**：`iter_all` 改为每批 500 条分页读取，降低大库打开/重建 BM25 时的峰值内存；新增 680 条库 5 次进程重启的回归用例
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
 - **CLI 工具**：`kb add/search/stats/ask/eval/forget/dedup`——终端直接完成写入、检索、统计与 RAG 问答
 - **隐私护栏**：敏感 namespace 强制本地回答不出网；`/ask` 智能路由（本地优先，难题可选云端）
@@ -215,6 +216,15 @@ KB_LLM_CLOUD_MODEL=deepseek-v4-flash       # 云端模型名
 - **报错里出现「torch 版本不满足 transformers 要求」**：transformers 检测到 torch 过旧会
   静默禁用 PyTorch 后端，底层只抛 `NameError: name 'nn' is not defined`。`kb` 在加载模型前
   预检这条依赖链，并直接给出两个版本号——按提示升级 torch（`pip install -U torch`）即可。
+
+### 常见问题：重启后报 `Error loading hnsw index`
+
+- **先排除外部环境**：不要用受限终端/沙箱与普通终端交替打开同一个 `kb_data`，也不要强杀进程。
+  外部清理 `chroma.sqlite3-journal` 会让 Chroma 的 HNSW 段在下次启动时读不出来。
+- **先停服务并备份**整个 `kb_data/`（至少 `chroma.sqlite3`）。
+- 若记录仍在、只是索引不可读：删除对应 `chroma/<segment-id>/` 目录（保留 `chroma.sqlite3`）
+  后重启，Chroma 会从库内向量重建索引。这是最后手段，务必先备份。
+- 回归测试已覆盖「680 条 × 5 次进程重启」；仍复现请带日志与数据目录结构提 issue。
 
 ## 让 Agent 接入 kb（客户端无关）
 
