@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.1）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.2）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -42,6 +42,7 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 - **表格导入与精准问答（v2.4）**：CSV / XLSX 逐行入库（`列名=值` 文本），可直接问「小明的语文成绩」这类单元格问题，**无需 LLM 也能精确作答**；多 sheet（如 15 个班级表）按表名消歧（「五班张芳」只答五班），另支持总分/平均等简单聚合
 - **知识图谱可视化（v2.4）**：Web UI 用 SVG 展示记忆节点与关联边，点击节点查看内容；文档/网页/表格不进入图谱
 - **RAG 与记忆分离（v2.4）**：文档/网页/表格属于 RAG 知识库，**不参与遗忘与衰减**，只在显式删除时移除；衰减/新鲜度仅作用于 memory
+- **审计加固（v2.4.2）**：检索相关性下限 `KB_MIN_VECTOR_SCORE`（默认 0.30）、`type/tag` 过滤提前、网页入库 SSRF 防护与 5MB 响应上限、单文件上传上限 `KB_MAX_UPLOAD_BYTES`（默认 100MB）、统一错误 JSON、非 ASCII API Key 兼容、项目计数重启不丢
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
 - **CLI 工具**：`kb add/search/stats/ask/eval/forget/dedup`——终端直接完成写入、检索、统计与 RAG 问答
 - **隐私护栏**：敏感 namespace 强制本地回答不出网；`/ask` 智能路由（本地优先，难题可选云端）
@@ -406,7 +407,7 @@ python -m kb dedup --threshold 0.92           # 语义去重
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / tables / watcher / api / mcp / cli +
                reranker / sparse / eval）
-tests/         kb 验收测试（515 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
+tests/         kb 验收测试（536 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
 docs/          用户指南、开发者手册与设计文档
 kb_data/       kb 运行数据（gitignore）
 ```

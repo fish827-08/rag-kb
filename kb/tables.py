@@ -60,26 +60,46 @@ def _parse_csv(path: Path) -> list[dict]:
 
 
 def _parse_xlsx(path: Path) -> list[dict]:
-    """读取 XLSX/XLSM：openpyxl 只读模式逐 sheet 取行；缺失依赖给安装指引。"""
+    """读取 XLSX/XLSM：openpyxl 只读模式逐 sheet 取行；缺失依赖给安装指引。
+
+    v2.4.1：同时读「缓存值」与「公式」两遍。只有公式、没有缓存值的单元格
+    （如脚本生成文件的总分列）保留公式文本，避免整列被当成空值丢弃。
+    English: Read both cached values and formulas. A formula-only cell (e.g. a
+    generated workbook whose total column has no cached value) keeps the formula
+    text instead of being dropped as empty."""
     openpyxl = _ingest_import("openpyxl", "解析 Excel ")
     try:
-        workbook = openpyxl.load_workbook(str(path), read_only=True,
-                                          data_only=True)
+        valued = openpyxl.load_workbook(str(path), read_only=True,
+                                        data_only=True)
+        formula = openpyxl.load_workbook(str(path), read_only=True,
+                                         data_only=False)
     except Exception as exc:
         raise UnsupportedFormatError(
             f"Excel 解析失败（{path.name}）：{exc}") from exc
     tables = []
     try:
-        for sheet in workbook.worksheets:
+        formula_sheets = {s.title: s for s in formula.worksheets}
+        for sheet in valued.worksheets:
+            sheet_f = formula_sheets.get(sheet.title)
             raw = []
+            row_fs = sheet_f.iter_rows(values_only=True) if sheet_f else None
             for row in sheet.iter_rows(values_only=True):
-                raw.append(["" if v is None else _cell_text(v) for v in row])
+                row_f = next(row_fs, ()) if row_fs is not None else ()
+                cells = []
+                for idx, value in enumerate(row):
+                    f = row_f[idx] if idx < len(row_f) else None
+                    if value is None and isinstance(f, str) and f.startswith("="):
+                        cells.append(f)  # 仅公式、无缓存值：保留公式文本
+                    else:
+                        cells.append("" if value is None else _cell_text(value))
+                raw.append(cells)
             tables.append({"sheet": sheet.title or "Sheet", "raw": raw})
     finally:
-        try:
-            workbook.close()
-        except Exception:
-            pass
+        for wb in (valued, formula):
+            try:
+                wb.close()
+            except Exception:
+                pass
     return _normalize_tables(tables, path.name)
 
 
@@ -121,7 +141,8 @@ def row_to_text(headers: list[str], row: list[str]) -> str:
         v = (value or "").strip()
         if not v:
             continue
-        v = v.replace(_CELL_SEP.strip(), "／").replace(_KV_SEP, "＝")
+        v = (v.replace("\r", " ").replace("\n", " ")
+             .replace(_CELL_SEP.strip(), "／").replace(_KV_SEP, "＝"))
         parts.append(f"{header}{_KV_SEP}{v}")
     return _CELL_SEP.join(parts)
 
@@ -200,24 +221,36 @@ def _is_selector(value: str) -> bool:
     return len(v) >= 4
 
 
-def query_rows(rows: list[dict], question: str) -> str | None:
-    """确定性表格查询：按单元格值定位行、按列名筛选列，支持求和/平均。
+# 表格意图词：问题里没有列名时，靠这些词判断「确实在问表格数据」，
+# 避免「北京有哪些旅游景点」这类问题被城市表劫持。
+_INTENT_WORDS = ("成绩", "分数", "得分", "总分", "合计", "平均", "电话", "手机",
+                 "地址", "邮箱", "年龄", "薪资", "工资", "价格", "数量", "排名",
+                 "score", "phone", "address", "salary", "price", "average",
+                 "total")
+_META_KEYS = {_SHEET_KEY, "_record_id"}
 
-    命中规则：
-    - 问题中出现某行任一单元格值（长度 ≥2）→ 该行为候选；
-    - 问题中出现列名 → 该列作为输出过滤（可多列）；
-    - 含「总分/合计/求和」或「平均/均值」时对数值列聚合。
-    无候选行返回 None（调用方回落到 RAG，不改变既有行为）。
 
-    English: Deterministic table query: locate rows by cell values and filter
-    columns by header names, with sum/average aggregation. Returns None when no
-    row matches so the caller falls back to the regular RAG path.
+def _row_content_key(row: dict) -> tuple:
+    """去重键：忽略 sheet/记录 ID 等元字段，只比较真实单元格。"""
+    return tuple(sorted((k, v) for k, v in row.items() if k not in _META_KEYS))
+
+
+def match_table_rows(rows: list[dict], question: str):
+    """匹配表格行，返回 (候选行, 列名命中, 命中值) 或 None。
+
+    规则（v2.4.1 收紧）：
+    1) 问题必须命中列名，或包含表格意图词（成绩/总分/电话等），否则不判为表格问题；
+    2) 先按表名过滤（最长匹配）；单元格值用 `_is_selector` 防短数字误命中；
+    3) 同名行去重；多个前缀候选（用户5/55/550）只保留最长命中值对应的行。
+
+    English: Match table rows, returning (rows, header hits, matched values) or None.
+    The question must hit a column name or contain a table-intent word; sheet names
+    filter first (longest match); short numbers are not selectors; duplicate rows are
+    collapsed and longer prefix matches win.
     """
     q = (question or "").strip().lower()
     if not q or not rows:
         return None
-    # 多 sheet 消歧：问题里出现表名（如「五班」）时，只保留该 sheet 的行。
-    # 多个表名互为子串（「五班」⊂「十五班」）时取最长匹配，避免误选。
     sheet_names = {r.get(_SHEET_KEY) for r in rows if r.get(_SHEET_KEY)}
     matched_sheets = sorted((s for s in sheet_names if s and s.lower() in q),
                             key=len, reverse=True)
@@ -226,19 +259,46 @@ def query_rows(rows: list[dict], question: str) -> str | None:
     headers: list[str] = []
     for row in rows:
         for key in row:
-            if key != _SHEET_KEY and key not in headers:
+            if key not in _META_KEYS and key not in headers:
                 headers.append(key)
     header_hits = [h for h in headers if h.lower() in q]
-    matched = []
-    matched_values = []
+    if not header_hits and not any(w in q for w in _INTENT_WORDS):
+        return None
+    candidates: list[tuple[dict, list[str]]] = []
     for row in rows:
         hits = [v for k, v in row.items()
-                if k != _SHEET_KEY and _is_selector(v) and v.lower() in q]
+                if k not in _META_KEYS and _is_selector(v) and v.lower() in q]
         if hits:
-            matched.append(row)
-            matched_values.extend(hits)
-    if not matched:
+            candidates.append((row, hits))
+    if not candidates:
         return None
+    # 同内容行去重（项目库 + 全局库同时存在同一张表时只答一次）
+    seen: set[tuple] = set()
+    unique: list[tuple[dict, list[str]]] = []
+    for row, hits in candidates:
+        key = _row_content_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((row, hits))
+    # 前缀消歧：只保留最长命中值的行（用户550 不再同时命中 用户5/55）
+    best_len = max(max(len(v) for v in hits) for _, hits in unique)
+    unique = [(row, hits) for row, hits in unique
+              if max(len(v) for v in hits) == best_len]
+    matched_values = [v for _, hits in unique for v in hits]
+    return [row for row, _ in unique], header_hits, matched_values
+
+
+def query_table(rows: list[dict], question: str):
+    """确定性表格查询，返回 (answer_text, matched_rows) 或 None。
+
+    English: Deterministic table query returning (answer_text, matched_rows) or None.
+    """
+    info = match_table_rows(rows, question)
+    if not info:
+        return None
+    matched, header_hits, matched_values = info
+    q = (question or "").strip().lower()
     want_sum = any(w in q for w in _SUM_WORDS)
     want_avg = any(w in q for w in _AVG_WORDS)
 
@@ -256,22 +316,23 @@ def query_rows(rows: list[dict], question: str) -> str | None:
                     break
         if not base:
             for k, v in row.items():
-                if k != _SHEET_KEY and _as_number(v) is None:
+                if k not in _META_KEYS and _as_number(v) is None:
                     base = v
                     break
         if not base:
-            base = next((v for k, v in row.items() if k != _SHEET_KEY), "")
+            base = next((v for k, v in row.items() if k not in _META_KEYS), "")
         sheet = row.get(_SHEET_KEY)
         return f"{sheet} {base}".strip() if sheet else base
 
     def _value_cols(row: dict, explicit: list[str]) -> list[str]:
         """参与聚合的数值列：显式列优先，否则排除学号/总分等非指标列。"""
         cols = [c for c in explicit
-                if c != _SHEET_KEY and _as_number(row.get(c)) is not None]
+                if c not in _META_KEYS and _as_number(row.get(c)) is not None]
         if cols:
             return cols
         return [c for c in row
-                if c not in _NON_VALUE_KEYS and _as_number(row.get(c)) is not None]
+                if c not in _META_KEYS and c not in _NON_VALUE_KEYS
+                and _as_number(row.get(c)) is not None]
 
     lines = []
     for row in matched:
@@ -292,8 +353,21 @@ def query_rows(rows: list[dict], question: str) -> str | None:
                 else:
                     lines.append(f"{label}：总分={_fmt_number(total)}")
                 continue
-        cols = explicit or [k for k in row if k != _SHEET_KEY]
+        if explicit:
+            # 已经作为行标识的列（如「用户=用户550」）不重复输出
+            cols = [c for c in explicit
+                    if row.get(c) not in matched_values] or explicit
+        else:
+            cols = [k for k in row if k not in _META_KEYS]
         parts = [f"{c}={row[c]}" for c in cols if row.get(c)]
         if parts:
             lines.append(f"{label}：" + "，".join(parts))
-    return "\n".join(lines) if lines else None
+    if not lines:
+        return None
+    return "\n".join(lines), matched
+
+
+def query_rows(rows: list[dict], question: str) -> str | None:
+    """兼容入口：只返回答案文本（测试与旧调用方使用）。"""
+    result = query_table(rows, question)
+    return result[0] if result else None

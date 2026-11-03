@@ -1,4 +1,5 @@
 """数据模型：Record 与 Chroma metadata 互转（Chroma metadata 不支持 list，tags 逗号拼接）。"""
+import json
 import math
 from datetime import datetime
 from enum import Enum
@@ -45,7 +46,10 @@ class Record(BaseModel):
             "client": self.client,
             "project": self.project,
             "source": self.source,
-            "tags": ",".join(self.tags),
+            # v2.4.1：标签含逗号时用 JSON 存，避免 "a,b" 被拆成两个标签；
+            # 无逗号仍用旧格式，保证既有数据与测试零迁移
+            "tags": (json.dumps(self.tags, ensure_ascii=False)
+                     if any("," in t for t in self.tags) else ",".join(self.tags)),
             "importance": self.importance,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -67,13 +71,26 @@ class Record(BaseModel):
             client=metadata.get("client", "default"),
             project=metadata.get("project", ""),
             source=metadata.get("source"),
-            tags=[t for t in (metadata.get("tags", "") or "").split(",") if t],
+            tags=_parse_tags(metadata.get("tags", "")),
             importance=metadata.get("importance", 0.5),
             created_at=metadata.get("created_at", ""),
             updated_at=metadata.get("updated_at", ""),
             access_count=metadata.get("access_count", 0),
             last_accessed=metadata.get("last_accessed", ""),
         )
+
+
+def _parse_tags(raw) -> list[str]:
+    """解析 metadata 里的 tags：JSON 数组（新格式）或逗号分隔（旧格式）。"""
+    text = raw or ""
+    if text.startswith("["):
+        try:
+            data = json.loads(text)
+            if isinstance(data, list):
+                return [str(t) for t in data if str(t)]
+        except (ValueError, TypeError):
+            pass
+    return [t for t in text.split(",") if t]
 
 
 def decay_factor(last_accessed: str, created_at: str, access_count: int,

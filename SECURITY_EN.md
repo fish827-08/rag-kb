@@ -18,7 +18,7 @@
 
 1. **Always set a key when binding externally**: if you need `KB_API_HOST=0.0.0.0` (LAN/container access), set `KB_API_KEY` and terminate TLS behind a reverse proxy (nginx/caddy).
 2. **Key handling**: keep the key only in your local `.env` (gitignored). Never commit it to the repo, code, or commit history.
-3. **Web ingestion**: `/api/v1/webpages` fetches arbitrary URLs — don't expose it to untrusted callers.
+3. **Web ingestion**: `/api/v1/ingest/web` fetches external URLs; loopback/private/link-local targets are rejected by default, with redirect and response-size caps (set `KB_WEB_ALLOW_PRIVATE=1` only for local testing). Still don't expose it to untrusted callers.
 4. **Sensitive data**: add privacy-bearing namespaces to `KB_SENSITIVE_NAMESPACES` so related Q&A stays on the local model.
 5. **Directory watcher**: `KB_WATCH_DIR` is auto-ingested; avoid pointing it at directories containing sensitive system files.
 

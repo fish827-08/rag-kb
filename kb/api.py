@@ -12,6 +12,7 @@ from typing import Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.requests import Request
 from fastapi.staticfiles import StaticFiles
@@ -209,10 +210,21 @@ class MemoryCreate(BaseModel):
 
 
 class MemoryUpdate(BaseModel):
-    """更新记忆请求；至少一项非空。
-    English: Update-memory request; at least one field must be non-empty."""
+    """更新记忆请求；至少一项非空，content 不允许空串/纯空白（与创建一致）。
+    English: Update-memory request; at least one field must be non-empty, and content
+    rejects blank strings exactly like creation."""
     content: str | None = None
     tags: list[str] | None = None
+
+    @field_validator("content")
+    @classmethod
+    def content_not_blank(cls, v: str | None) -> str | None:
+        """PATCH 传入 content 时必须是有效非空文本（None 表示不修改）。"""
+        if v is None:
+            return v
+        if not v.strip():
+            raise ValueError("content 不能为空或纯空白")
+        return v
 
 
 class LinkCreate(BaseModel):
@@ -340,6 +352,15 @@ class LLMConfigRequest(BaseModel):
     cloud_base_url: str | None = None
     cloud_model: str | None = None
     cloud_api_key: str | None = None
+
+
+def _keys_equal(provided: str, configured: str) -> bool:
+    """API Key 常量时间比较；统一转 UTF-8 bytes，支持中文/非 ASCII Key。
+
+    English: Constant-time API-key comparison over UTF-8 bytes, so non-ASCII keys
+    work instead of raising UnicodeEncodeError."""
+    return hmac.compare_digest(provided.encode("utf-8", errors="ignore"),
+                               configured.encode("utf-8"))
 
 
 def _require_llm_write(request: Request, settings: Settings) -> None:
@@ -545,7 +566,7 @@ def _wrap_api_key(app, settings):
                     provided_key = v.decode("latin-1", errors="replace").strip()
                     break
         # compare_digest 比较（防时序攻击）；缺失或不匹配均 401（不区分，防探测）
-        if not provided_key or not hmac.compare_digest(provided_key, api_key):
+        if not provided_key or not _keys_equal(provided_key, api_key):
             body = json.dumps(
                 {"error": "UNAUTHORIZED",
                  "message": "missing or invalid api key"}
@@ -667,6 +688,19 @@ def create_app(settings: Settings | None = None,
         return JSONResponse(status_code=exc.status_code,
                             content={"error": "HTTP_ERROR", "message": str(exc.detail)})
 
+    @app.exception_handler(RequestValidationError)
+    def validation_exc_handler(request: Request,
+                               exc: RequestValidationError) -> JSONResponse:
+        """参数校验失败也返回统一错误 JSON（与文档宣称的 {error,message} 一致）。"""
+        errors = exc.errors() or []
+        first = errors[0] if errors else {}
+        loc = ".".join(str(x) for x in first.get("loc", []) if x != "body")
+        msg = first.get("msg", "参数非法")
+        message = f"{loc}: {msg}" if loc else str(msg)
+        return JSONResponse(status_code=422,
+                            content={"error": "INVALID_ARGUMENT",
+                                     "message": message})
+
     @app.post("/api/v1/memories")
     def create_memory(body: MemoryCreate) -> dict:
         from kb.governance import DuplicateError
@@ -689,7 +723,8 @@ def create_app(settings: Settings | None = None,
     def list_memories(type: str | None = None, tag: str | None = None,
                       source: str | None = None, q: str | None = None,
                       project: str | None = None,
-                      limit: int = 100, offset: int = 0) -> dict:
+                      limit: int = Query(100, ge=1, le=1000),
+                      offset: int = Query(0, ge=0)) -> dict:
         err = validate_project(project)
         if err:
             raise HTTPException(status_code=422, detail={
@@ -836,12 +871,26 @@ def create_app(settings: Settings | None = None,
                 if err:
                     raise HTTPException(status_code=422, detail={
                         "error": "INVALID_ARGUMENT", "message": err})
+                limit = int(getattr(kb.settings, "max_upload_bytes", 0) or 0)
+                size = 0
                 with tempfile.NamedTemporaryFile(
                         suffix=Path(name).suffix, delete=False) as tmp:
-                    tmp.write(await upload.read())
+                    while True:
+                        chunk = await upload.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if limit and size > limit:
+                            tmp_path = Path(tmp.name)
+                            tmp_path.unlink(missing_ok=True)
+                            raise HTTPException(status_code=413, detail={
+                                "error": "PAYLOAD_TOO_LARGE",
+                                "message": f"文件超过上限 {limit} 字节"})
+                        tmp.write(chunk)
                     tmp_path = Path(tmp.name)
                 try:
-                    return kb.add_document(tmp_path, source=name, project=project)
+                    return kb.add_document(tmp_path, source=name,
+                                           client="HTTP", project=project)
                 finally:
                     tmp_path.unlink(missing_ok=True)
             try:
@@ -928,6 +977,12 @@ def create_app(settings: Settings | None = None,
         except LLMDisabledError as exc:
             raise HTTPException(status_code=503, detail={
                 "error": "LLM_DISABLED", "message": str(exc)})
+        except Exception as exc:
+            # LLM 运行中途故障（Ollama 掉线/超时/云端错误）→ 统一 JSON 502，
+            # 而不是 FastAPI 默认的纯文本 500
+            raise HTTPException(status_code=502, detail={
+                "error": "LLM_ERROR",
+                "message": f"LLM 调用失败：{exc}"}) from exc
 
     @app.get("/api/v1/graph")
     def graph(project: str | None = None,
@@ -986,7 +1041,8 @@ def create_app(settings: Settings | None = None,
     def audit(client: str | None = None, project: str | None = None,
               agent: str | None = None,
               action: str | None = None,
-              days: int | None = None, limit: int = 100) -> dict:
+              days: int | None = Query(None, ge=1),
+              limit: int = Query(100, ge=1, le=1000)) -> dict:
         """用户查询存取审计（v2 spec 2.5）：按 (client, project) 过滤分文件
         agent-audit，可选 action/days/limit。返回 {"items": [...], "total": N}。
         agent 为兼容参数（旧三段式文件名回溯）。

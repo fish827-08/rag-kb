@@ -230,7 +230,7 @@ python -m kb eval --file tests/eval_hongloumeng.jsonl --top-k 10 --rerank   # �
 ## 7. 测试与验证
 
 ```powershell
-pytest tests/ -q          # 全量：515 passed, 1 skipped（2026-11-03 实测，约 2.5 分钟）
+pytest tests/ -q          # 全量：536 passed, 1 skipped（2026-11-03 实测，约 3 分钟）
 pytest tests/test_n33_web_ui.py -q   # Web UI 的 8 项验收
 pytest tests/test_n34_bulk_ingest.py -q  # 批量导入的 3 项验收
 pytest tests/test_n35_llm_config.py -q   # 运行时 LLM 配置的 8 项验收
@@ -239,7 +239,7 @@ pytest tests/test_n38_graph.py -q        # v2.4 知识图谱接口
 pytest tests/test_n39_separation.py -q   # v2.4 RAG 与记忆分离（不遗忘）
 ```
 
-计数口径：`pytest tests/ --collect-only -q | Select-Object -Last 1` 会打印「516 tests collected」。
+计数口径：`pytest tests/ --collect-only -q | Select-Object -Last 1` 会打印「537 tests collected」。
 如果你的环境跑出别的数字，先看收集数——差异通常来自依赖缺失或不在同一 commit，而不是测试本身少跑。
 
 唯一的 1 项跳过是 `tests/test_v21_runtime.py` 的「Linux 开机自启」用例（Windows 下启动项用 `.cmd` 实现），

@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.4.1).
+service (v2.4.2).
 
 ## Why kb
 
@@ -67,6 +67,10 @@ service (v2.4.1).
 - **RAG/memory separation (v2.4)** — documents, web pages and tables live in the RAG
   knowledge base and **never decay or get forgotten**; decay/freshness apply to
   `memory` records only.
+- **Audit hardening (v2.4.2)** — relevance floor `KB_MIN_VECTOR_SCORE` (default 0.30),
+  `type/tag` filtering before top_k, SSRF guard + 5MB cap for web ingestion, upload
+  cap `KB_MAX_UPLOAD_BYTES` (100MB), unified error JSON, non-ASCII API keys, and
+  project record counts that survive restarts.
 - **Access audit** — every write/read/update/delete/search/ask emits a JSON line
   under `logs/agent-audit/`; query it through `GET /api/v1/audit?client=<client>`
   or `kb audit --client <client>`.
@@ -421,7 +425,7 @@ python -m kb dedup --threshold 0.92
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / tables / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (515 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
+tests/         kb acceptance & regression tests (536 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
 docs/          design specs, developer handbook, user guides

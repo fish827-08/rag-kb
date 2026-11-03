@@ -11,6 +11,7 @@ English: Bilingual messages plus the MCP instructions contract.
   into the MCP instructions.
 """
 import locale
+import os
 from pathlib import Path
 
 from kb.config import get_settings
@@ -25,14 +26,9 @@ def detect_lang() -> str:
             return cfg_lang
     except Exception:
         pass
-    # auto：检测系统 locale
-    try:
-        code, _ = locale.getdefaultlocale()
-        if code and code.lower().startswith("zh"):
-            return "zh"
-    except Exception:
-        pass
-    return "en"
+    # auto：检测系统 locale（不再用已弃用的 getdefaultlocale）
+    code = system_language_code()
+    return "zh" if code.lower().startswith("zh") else "en"
 
 
 # 常见语言代码 → 语言名（供 MCP instructions 明确要求 agent 使用的书写语言）
@@ -64,11 +60,11 @@ def system_language_code() -> str:
     except Exception:
         pass
     if not code:
-        try:
-            code, _ = locale.getdefaultlocale()
-        except Exception:
-            pass
-    return (code or "en").replace("_", "-")
+        code = os.environ.get("LC_ALL") or os.environ.get("LANG") or ""
+    # C / POSIX / 空 locale 不是可用语言，统一回退 English
+    if code.split(".")[0].upper() in ("C", "POSIX"):
+        code = ""
+    return (code.split(".")[0] or "en").replace("_", "-")
 
 
 def memory_lang() -> str:

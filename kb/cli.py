@@ -364,6 +364,17 @@ def _service() -> KBService:
     return KBService(get_settings())
 
 
+def _iter_all_records(svc) -> list:
+    """全局库 + 全部项目子库的记录（CLI 统计/去重不再只看全局库）。"""
+    records = list(svc.store.iter_all())
+    scopes = getattr(svc, "scopes", None)
+    if scopes is None:
+        return records
+    for name in scopes.project_names():
+        records.extend(scopes.get(name).store.iter_all())
+    return records
+
+
 # ---- serve 启动健壮性：端口预检与 kb.pid 自管理（任务 #2）----
 
 def _pid_file() -> Path:
@@ -446,7 +457,9 @@ def import_cmd(paths: list[str] = typer.Argument(..., help="文件或目录，�
         if p.is_dir():
             files.extend(sorted(
                 x for x in p.rglob("*") if x.is_file()
-                and x.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}))
+                and x.suffix.lower() in {".md", ".txt", ".pdf", ".docx",
+                                         ".csv", ".xlsx", ".xlsm", ".html",
+                                         ".htm", ".pptx"}))
         elif p.is_file():
             files.append(p)
         else:
@@ -508,7 +521,7 @@ def stats(
     """
     svc = _service()
     base = svc.stats()
-    records = list(svc.store.iter_all())
+    records = _iter_all_records(svc)
 
     console.print(f"[bold]记忆库统计 (Memory Stats)[/bold]　记录 {base['records']} 条 · "
                   f"device={base['device']} · llm={base['llm']}")
@@ -582,7 +595,7 @@ def ask(
             console.print(t)
     except LLMDisabledError:
         # LLM 不可用：检索结果仍有价值，输出命中并给出配置指引
-        hits = svc.search(question, top_k=top_k)
+        hits = svc.search(question, top_k=top_k, project=project)
         if getattr(getattr(svc, "settings", None), "llm_mode", "") == "off":
             reason = "LLM 已关闭（KB_LLM_MODE=off，默认不调用 LLM）"
         else:
@@ -818,7 +831,7 @@ def dedup(
       kb dedup --threshold 0.90 --dry-run # 自定义阈值
     """
     svc = _service()
-    records = list(svc.store.iter_all())
+    records = _iter_all_records(svc)
     if len(records) < 2:
         console.print("[green]记录不足2条，无需去重扫描[/green]")
         return
@@ -828,7 +841,13 @@ def dedup(
     for r in records:
         vec = svc.embedder.embed_texts([r.content])[0]
         records_with_emb.append((r, vec))
-    pairs = find_duplicate_pairs(records_with_emb, threshold=threshold)
+    # 只在同一作用域内比较，避免把「全局库」和「项目库」里内容相似的记忆误判为重复
+    pairs = []
+    for name in [""] + svc.scopes.project_names():
+        subset = [x for x in records_with_emb
+                  if (x[0].project or "") == (name or "")]
+        if len(subset) >= 2:
+            pairs.extend(find_duplicate_pairs(subset, threshold=threshold))
     if not pairs:
         console.print(f"[green]无相似度 > {threshold} 的重复对[/green]")
         return

@@ -274,7 +274,7 @@ footer a { color: var(--muted); }
 
         <div class="set-group">
           <h4><span data-i18n="llm.title"></span> <span class="mini" id="llmBadge">…</span></h4>
-          <label data-i18n="llm.modeLabel">模式
+          <label><span data-i18n="llm.modeLabel"></span>
             <select id="llmMode">
               <option value="off" data-i18n="llm.modeOff"></option>
               <option value="local" data-i18n="llm.modeLocal"></option>
@@ -632,7 +632,7 @@ footer a { color: var(--muted); }
   }
 
   var SUPPORTED = [".md", ".txt", ".pdf", ".docx", ".csv", ".json",
-                   ".html", ".htm", ".pptx", ".xlsx", ".xls"];
+                   ".html", ".htm", ".pptx", ".xlsx", ".xlsm"];
   var toastTimer = null;
 
   function showToast(text, kind) {
@@ -1096,6 +1096,7 @@ footer a { color: var(--muted); }
       svg.appendChild(tip);
       return;
     }
+    $("graphDetail").textContent = T("graph.nodeTip");
     var W = 800, H = 420, cx = W / 2, cy = H / 2;
     var sorted = nodes.slice().sort(function (a, b) {
       return (b.degree || 0) - (a.degree || 0);
