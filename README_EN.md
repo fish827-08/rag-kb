@@ -57,7 +57,7 @@ service (v2.4.4).
   language; `~/.kb/rules.md` customizes when the agent should store memories.
 - **Ingestion** — upload or import local documents (txt/md/pdf/docx) and fetch web
   pages; pick a whole folder for batch import with unsupported files filtered out.
-- **Table import & precise Q&A (v2.4)** — CSV/XLSX is ingested row by row
+- **Table import & precise Q&A (v2.4)** — CSV/XLS/XLSX is ingested row by row
   (`column=value` text), so questions like "Xiaoming's Chinese score" are answered
   exactly, **even without an LLM**; multi-sheet workbooks are disambiguated by sheet
   name ("Class 5 Zhang Fang" answers only Class 5), with simple sum/average
@@ -345,8 +345,8 @@ with the global store. Record IDs are generated server-side.
 | POST | `/api/v1/memories/{id}/links` | Link memories `{to_id, relation?}`; relation: `related/supersedes/depends_on/part_of/contradicts` |
 | GET | `/api/v1/memories/{id}/links` | List one-hop links (content/direction; `?project=&relation=`) |
 | DELETE | `/api/v1/memories/{id}/links/{to_id}` | Remove links in either direction |
-| POST | `/api/v1/search` | Hybrid search `{query, top_k?, mode?, type?, tag?}` — mode: `hybrid/vector/keyword`; blank query → 422 |
-| POST | `/api/v1/documents` | Ingest a document or table: multipart `file` or JSON `{"path": "..."}`; CSV/XLSX is stored row by row; re-ingesting the same source replaces old chunks |
+| POST | `/api/v1/search` | Hybrid search `{query, top_k?, mode?, type?, tag?, table?}` — mode: `hybrid/vector/keyword`; `table=true` tries deterministic table Q&A first; blank query → 422 |
+| POST | `/api/v1/documents` | Ingest a document or table: multipart `file` or JSON `{"path": "..."}`; CSV/XLS/XLSX is stored row by row; re-ingesting the same source replaces old chunks |
 | GET | `/api/v1/documents` | List ingested documents (grouped by source) |
 | DELETE | `/api/v1/documents/{source}` | Delete all records of a document (simple sources such as file names) |
 | DELETE | `/api/v1/documents?source=<urlencoded>` | Delete by query parameter (required for URLs containing slashes) |

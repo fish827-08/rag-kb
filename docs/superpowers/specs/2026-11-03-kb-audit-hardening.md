@@ -40,7 +40,7 @@
 
 - 网页入库 SSRF 防护：仅 http(s)，拒绝回环/私有/链路本地/保留地址；手动跟随 ≤3 次重定向并逐跳校验；响应体 ≤5MB；本地调试用 `KB_WEB_ALLOW_PRIVATE=1`。
 - `C` / `POSIX` locale 回退 English，移除 `locale.getdefaultlocale` 弃用调用。
-- `.xls` 明确拒绝并提示另存为 `.xlsx`。
+- `.xls` 由可选依赖 `xlrd` 解析；损坏/非 BIFF 文件报 `UnsupportedFormatError`，不再提示另存为 `.xlsx`。
 - 空 CSV 错误回显上传文件名而非临时文件名。
 - 图谱有节点时显示「点击节点」提示，不再显示「暂无数据」。
 - 内部 `kb-monitor` / `kb-dispatch` 记录不进「已入库文档」列表。

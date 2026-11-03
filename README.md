@@ -42,7 +42,7 @@ python -m kb ask "用户550的分数是多少" --project smoke
 # → 用户550：分数=30     （表格确定性匹配，未配置 LLM 也能答）
 ```
 
-CSV 用标准库解析，XLSX 用 `openpyxl` 逐 sheet 读取；每行变成 `列名=值 | ...` 文本，
+CSV 用标准库解析，XLSX 用 `openpyxl`、旧版 `.xls` 用 `xlrd` 逐 sheet 读取；每行变成 `列名=值 | ...` 文本，
 既能精确命中单元格，也能走向量 + BM25 混合检索。多 sheet 会按表名消歧（问「五班张芳」
 只答五班）。它不替代 SQL/BI，适合“快速在一堆表里找一个值/一行记录”的场景。
 
@@ -84,7 +84,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/documents/用例.csv" -Meth
 - **记忆语言与自定义规则（v2.1）**：`KB_MEMORY_LANG=auto` 跟随操作系统语言存储记忆；`~/.kb/rules.md` 自定义"什么时候该存记忆"
 - **存取审计**：每次写/读/改/删/检索/问答记 JSON 到 `logs/agent-audit/<客户端>__<项目>.log`（按 client+project 分文件）；用户可查：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 CLI `kb audit --client <客户端>`
 - **知识入库**：本地文档（txt/md/pdf/docx 等）上传或路径导入，支持**整文件夹批量导入**并自动过滤不支持的文件；网页正文抓取入库
-- **表格导入与精准问答（v2.4）**：CSV / XLSX 逐行入库（`列名=值` 文本），可直接问「小明的语文成绩」这类单元格问题，**无需 LLM 也能精确作答**；多 sheet（如 15 个班级表）按表名消歧（「五班张芳」只答五班），另支持总分/平均等简单聚合
+- **表格导入与精准问答（v2.4）**：CSV / XLS / XLSX 逐行入库（`列名=值` 文本），可直接问「小明的语文成绩」这类单元格问题，**无需 LLM 也能精确作答**；多 sheet（如 15 个班级表）按表名消歧（「五班张芳」只答五班），另支持总分/平均等简单聚合、同名多行、按值反查与薪酬/学历/地点限定
 - **知识图谱可视化（v2.4）**：Web UI 用 SVG 展示记忆节点与关联边，点击节点查看内容；文档/网页/表格不进入图谱
 - **RAG 与记忆分离（v2.4）**：文档/网页/表格属于 RAG 知识库，**不参与遗忘与衰减**，只在显式删除时移除；衰减/新鲜度仅作用于 memory
 - **审计加固（v2.4.2）**：检索相关性下限 `KB_MIN_VECTOR_SCORE`（默认 0.30）、`type/tag` 过滤提前、网页入库 SSRF 防护与 5MB 响应上限、单文件上传上限 `KB_MAX_UPLOAD_BYTES`（默认 100MB）、统一错误 JSON、非 ASCII API Key 兼容、项目计数重启不丢
@@ -365,8 +365,8 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 | POST | `/api/v1/memories/{id}/links` | 建立记忆关联 `{to_id, relation?}`；relation: `related/supersedes/depends_on/part_of/contradicts` |
 | GET | `/api/v1/memories/{id}/links` | 列一跳关联（含内容/方向；`?project=&relation=`） |
 | DELETE | `/api/v1/memories/{id}/links/{to_id}` | 取消关联（任一方向；删除后同步清理） |
-| POST | `/api/v1/search` | 混合检索 `{query, top_k?, mode?, type?, tag?}`，mode: `hybrid/vector/keyword` |
-| POST | `/api/v1/documents` | 文档/表格入库：multipart `file` 字段或 JSON `{"path": "本地路径"}`；CSV/XLSX 逐行入库 |
+| POST | `/api/v1/search` | 混合检索 `{query, top_k?, mode?, type?, tag?, table?}`，mode: `hybrid/vector/keyword`；`table=true` 先尝试确定性表格问答 |
+| POST | `/api/v1/documents` | 文档/表格入库：multipart `file` 字段或 JSON `{"path": "本地路径"}`；CSV/XLS/XLSX 逐行入库 |
 | GET | `/api/v1/documents` | 已入库文档列表（按 source 聚合，含 `kind=doc/web/table`） |
 | DELETE | `/api/v1/documents/{source}` | 按 source 删除该文档全部记录（本地文件名等简单 source） |
 | DELETE | `/api/v1/documents?source=<urlencoded>` | 按查询参数删除（**URL 等含斜杠的 source 必须用这个**） |

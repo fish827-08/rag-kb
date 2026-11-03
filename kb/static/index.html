@@ -442,7 +442,7 @@ footer a { color: var(--muted); }
       "ingest.title": "知识入库",
       "ingest.pick": "选择文件",
       "ingest.pickFolder": "选择文件夹",
-      "ingest.dropHint": "支持 txt / md / pdf / docx / csv / xlsx 等格式；CSV 与 Excel 会逐行入库，可直接按表格数据提问；可选整个文件夹并自动过滤不支持的文件",
+      "ingest.dropHint": "支持 txt / md / pdf / docx / csv / xls / xlsx 等格式；CSV 与 Excel 会逐行入库，可直接按表格数据提问；可选整个文件夹并自动过滤不支持的文件",
       "ingest.urlPh": "粘贴网页链接，例如 https://example.com/article",
       "ingest.urlBtn": "抓取网页",
       "graph.title": "记忆图谱",
@@ -534,7 +534,7 @@ footer a { color: var(--muted); }
       "ingest.title": "Ingest",
       "ingest.pick": "Choose files",
       "ingest.pickFolder": "Choose folder",
-      "ingest.dropHint": "txt / md / pdf / docx / csv / xlsx supported; CSV and Excel are ingested row by row and can be queried directly; pick a whole folder and unsupported files are filtered out",
+      "ingest.dropHint": "txt / md / pdf / docx / csv / xls / xlsx supported; CSV and Excel are ingested row by row and can be queried directly; pick a whole folder and unsupported files are filtered out",
       "ingest.urlPh": "Paste a web page URL, e.g. https://example.com/article",
       "ingest.urlBtn": "Fetch page",
       "graph.title": "Memory graph",
@@ -632,7 +632,7 @@ footer a { color: var(--muted); }
   }
 
   var SUPPORTED = [".md", ".txt", ".pdf", ".docx", ".csv", ".json",
-                   ".html", ".htm", ".pptx", ".xlsx", ".xlsm"];
+                   ".html", ".htm", ".pptx", ".xlsx", ".xlsm", ".xls"];
   var toastTimer = null;
 
   function showToast(text, kind) {
@@ -1016,7 +1016,8 @@ footer a { color: var(--muted); }
     var timer = setInterval(tick, 1000);
 
     var path = searchOnly ? "/api/v1/search" : "/api/v1/ask";
-    var body = searchOnly ? { query: q, top_k: topK } : { question: q, top_k: topK };
+    var body = searchOnly ? { query: q, top_k: topK, table: true }
+                          : { question: q, top_k: topK };
     if (p) body.project = p;
 
     api(path, {
@@ -1027,9 +1028,14 @@ footer a { color: var(--muted); }
       var answer = $("answer");
       answer.textContent = "";
       if (searchOnly) {
-        var hits = (data && data.results) || [];
-        answer.textContent = T("ask.emptyHits", { n: hits.length });
-        renderSources(hits);
+        if (data && data.table) {
+          answer.textContent = data.answer || "—";
+          renderSources((data && data.sources) || []);
+        } else {
+          var hits = (data && data.results) || [];
+          answer.textContent = T("ask.emptyHits", { n: hits.length });
+          renderSources(hits);
+        }
       } else {
         answer.textContent = (data && data.answer) || "—";
         renderSources((data && data.sources) || []);

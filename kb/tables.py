@@ -16,17 +16,52 @@ from pathlib import Path
 
 from kb.ingest import UnsupportedFormatError, _ingest_import
 
-TABLE_EXTS = {".csv", ".xlsx", ".xlsm"}
+TABLE_EXTS = {".csv", ".xlsx", ".xlsm", ".xls"}
 _CELL_SEP = " | "
 _KV_SEP = "="
 # 聚合关键词：总分/合计/求和 与 平均/均值
 _SUM_WORDS = ("总分", "合计", "求和", "总和", "sum")
 _AVG_WORDS = ("平均", "均值", "average", "avg")
+_LIST_WORDS = ("有哪些", "哪些", "列出", "列一下", "列个", "名单", "列表", "所有")
 _SHEET_RE = re.compile(r"^\[([^\]]{1,60})\]\s")
 # 非指标列：求和/平均时排除（学号、序号等标识列，以及已有的汇总列）
 _NON_VALUE_KEYS = {"__sheet", "学号", "编号", "序号", "工号", "id", "ID",
                    "总分", "合计", "平均", "均值"}
 _SHEET_KEY = "__sheet"
+
+# 表头识别：真实业务表常在表头上方放一行标题（甚至“附件”），
+# 不能把第一行直接当表头。扫描前 10 行，取非空单元格最多、且含表头关键词的一行。
+_HEADER_SCAN_ROWS = 10
+_HEADER_HINTS = ("序号", "编号", "名称", "单位", "岗位", "职位", "电话", "联系人",
+                 "地点", "地址", "学历", "专业", "年龄", "薪酬", "薪资", "工资",
+                 "待遇", "要求", "名额", "人数", "数量", "备注", "分数", "成绩",
+                 "班级", "姓名")
+
+# 列名同义词：概念 → 常见写法（长词在前，避免“电话”先于“联系电话”命中）。
+# 匹配只看表头去掉括号单位后的主干，因此“薪酬待遇（元/月）”与“薪资福利待遇（…）”
+# 都会归到「薪酬待遇」。
+_COLUMN_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "序号": ("序号", "编号"),
+    "企业名称": ("企业名称", "公司名称", "单位名称", "招聘单位", "用人单位",
+                 "用工单位", "企业"),
+    "主管部门": ("主管部门", "部门"),
+    "招聘岗位": ("招聘岗位", "岗位名称", "职位名称", "岗位", "职位"),
+    "招聘名额": ("招聘名额", "招聘人数", "名额", "人数", "数量"),
+    "学历要求": ("学历要求", "最低学历", "学历"),
+    "专业要求": ("专业要求", "专业"),
+    "年龄要求": ("年龄要求", "年龄"),
+    "其他要求": ("其他要求", "任职要求", "岗位要求"),
+    "薪酬待遇": ("薪酬福利待遇", "薪资福利待遇", "薪酬待遇", "薪资待遇",
+                 "薪酬", "薪资", "工资", "待遇", "月薪", "年薪"),
+    "工作地点": ("工作地点", "上班地点", "工作地址", "上班地址", "地点", "地址"),
+    "联系人": ("联系人", "联络人", "联系人姓名"),
+    "联系电话": ("联系电话", "咨询电话", "联系方式", "电话号码", "手机号码",
+                 "电话", "手机"),
+    "备注": ("备注", "说明"),
+}
+# 合并单元格补全：这些列在“一个公司多个岗位”的续行里通常为空，
+# 空值沿用上一行；岗位/薪酬/名额等列不补，避免把不同岗位写成同一个。
+_FILL_CONCEPTS = {"企业名称", "主管部门", "联系人", "联系电话", "工作地点"}
 
 
 def parse_table_file(path: Path | str) -> list[dict]:
@@ -38,8 +73,7 @@ def parse_table_file(path: Path | str) -> list[dict]:
     if ext in (".xlsx", ".xlsm"):
         return _parse_xlsx(path)
     if ext == ".xls":
-        raise UnsupportedFormatError(
-            "旧版 .xls 暂不支持，请用 Excel 另存为 .xlsx 后重试")
+        return _parse_xls(path)
     raise UnsupportedFormatError(f"不是表格文件：{ext or '<无扩展名>'}（{path.name}）")
 
 
@@ -103,6 +137,48 @@ def _parse_xlsx(path: Path) -> list[dict]:
     return _normalize_tables(tables, path.name)
 
 
+def _parse_xls(path: Path) -> list[dict]:
+    """读取旧版 .xls（BIFF）：xlrd 只读逐 sheet 取行；缺失依赖给安装指引。
+
+    .xls 在招聘/政府类表格里仍很常见，不能只提示用户另存为 .xlsx。
+    English: Read legacy .xls (BIFF) with xlrd sheet by sheet; missing dependency
+    yields install guidance. Legacy .xls is still common in HR/government sheets,
+    so asking users to re-save as .xlsx is not acceptable."""
+    xlrd = _ingest_import("xlrd", "解析旧版 Excel ")
+    try:
+        book = xlrd.open_workbook(str(path), on_demand=True)
+    except Exception as exc:
+        raise UnsupportedFormatError(
+            f"Excel 解析失败（{path.name}）：{exc}") from exc
+    tables = []
+    try:
+        for sheet in book.sheets():
+            if sheet.nrows == 0 or sheet.ncols == 0:
+                continue
+            raw = []
+            for r in range(sheet.nrows):
+                cells = []
+                for c in range(sheet.ncols):
+                    cell = sheet.cell(r, c)
+                    if cell.ctype == xlrd.XL_CELL_DATE:
+                        try:
+                            dt = xlrd.xldate_as_datetime(cell.value,
+                                                         book.datemode)
+                            cells.append(dt.strftime("%Y-%m-%d"))
+                            continue
+                        except Exception:
+                            pass
+                    cells.append(_cell_text(cell.value))
+                raw.append(cells)
+            tables.append({"sheet": sheet.name or "Sheet", "raw": raw})
+    finally:
+        try:
+            book.release_resources()
+        except Exception:
+            pass
+    return _normalize_tables(tables, path.name)
+
+
 def _cell_text(value) -> str:
     """单元格值转文本：整数型浮点去掉 .0，其余 str 后去首尾空白。"""
     if isinstance(value, float) and value.is_integer():
@@ -110,8 +186,81 @@ def _cell_text(value) -> str:
     return str(value).strip()
 
 
+def _header_base(header: str) -> str:
+    """表头主干：去掉括号里的单位/说明、空白并转小写。"""
+    base = re.sub(r"[（(【\[].*?[）)】\]]", "", header or "")
+    return re.sub(r"\s+", "", base).lower()
+
+
+def _header_concept(header: str) -> str:
+    """把表头归到同义词概念；未知表头返回空串。"""
+    base = _header_base(header)
+    if not base:
+        return ""
+    for concept, aliases in _COLUMN_SYNONYMS.items():
+        for alias in aliases:
+            if alias.lower() in base:
+                return concept
+    return ""
+
+
+def _pick_header_row(cleaned: list[list[str]]) -> int:
+    """在前 10 行里挑表头：非空单元格多、且含表头关键词的行优先。"""
+    best, best_score = 0, -1
+    for i in range(min(len(cleaned), _HEADER_SCAN_ROWS)):
+        nonempty = sum(1 for cell in cleaned[i] if cell)
+        if nonempty < 2:
+            continue
+        text = "".join(cleaned[i])
+        hints = sum(1 for word in _HEADER_HINTS if word in text)
+        score = nonempty * 2 + hints * 3
+        if score > best_score:
+            best, best_score = i, score
+    return best
+
+
+def _make_headers(row: list[str]) -> list[str]:
+    """生成唯一表头：空列补“列N”，重名追加 _2/_3。"""
+    headers: list[str] = []
+    used: dict[str, int] = {}
+    for i, cell in enumerate(row):
+        name = re.sub(r"\s+", "", cell or "") or f"列{i + 1}"
+        if name in used:
+            used[name] += 1
+            name = f"{name}_{used[name]}"
+        else:
+            used[name] = 1
+        headers.append(name)
+    return headers
+
+
+def _is_footer(row: list[str]) -> bool:
+    """单格“备注/说明”行不是数据行，跳过。"""
+    values = [cell for cell in row if cell]
+    return len(values) == 1 and values[0].startswith(("备注", "说明", "注：", "注:"))
+
+
+def _fill_merged_cells(headers: list[str], rows: list[list[str]]) -> None:
+    """补齐纵向合并单元格：公司/联系人/地点等空值沿用上一行。"""
+    concepts = [_header_concept(h) for h in headers]
+    prev: list[str] | None = None
+    for row in rows:
+        if prev:
+            for i, concept in enumerate(concepts):
+                if concept in _FILL_CONCEPTS and not row[i] and prev[i]:
+                    row[i] = prev[i]
+        prev = row
+
+
 def _normalize_tables(tables: list[dict], filename: str) -> list[dict]:
-    """把原始行归一为 {sheet, headers, rows}：首非空行作表头，补空列名。"""
+    """把原始行归一为 {sheet, headers, rows}。
+
+    真实业务表常在表头上方放标题行（.xls 甚至有两行），因此先找表头行，
+    再取其后数据；纵向合并单元格按关键列续行补全。
+    English: Normalize raw rows into {sheet, headers, rows}. Real business
+    sheets often have title rows above the header (legacy .xls even has two),
+    so detect the header row first, then read data below it; merged cells are
+    forward-filled for key columns."""
     result = []
     for table in tables:
         raw = table["raw"]
@@ -120,13 +269,18 @@ def _normalize_tables(tables: list[dict], filename: str) -> list[dict]:
         cleaned = [row for row in cleaned if any(cell for cell in row)]
         if not cleaned:
             continue
-        headers = [cell or f"列{i + 1}" for i, cell in enumerate(cleaned[0])]
+        header_idx = _pick_header_row(cleaned)
+        headers = _make_headers(cleaned[header_idx])
         rows = []
-        for row in cleaned[1:]:
+        for row in cleaned[header_idx + 1:]:
             if len(row) < len(headers):
                 row = row + [""] * (len(headers) - len(row))
-            rows.append(row[:len(headers)])
+            row = row[:len(headers)]
+            if _is_footer(row):
+                continue
+            rows.append(row)
         if rows:
+            _fill_merged_cells(headers, rows)
             result.append({"sheet": table["sheet"], "headers": headers,
                            "rows": rows})
     if not result:
@@ -228,6 +382,10 @@ _INTENT_WORDS = ("成绩", "分数", "得分", "总分", "合计", "平均", "�
                  "score", "phone", "address", "salary", "price", "average",
                  "total")
 _META_KEYS = {_SHEET_KEY, "_record_id"}
+# 行标识列：反查电话/薪酬/地点时，标签应回到这些列，而不是命中值本身。
+_IDENTITY_CONCEPTS = {"企业名称", "主管部门"}
+_IDENTITY_KEYS = {"姓名", "名称", "用户", "学生", "城市", "班级", "公司",
+                  "单位", "部门", "用户名"}
 
 
 def _row_content_key(row: dict) -> tuple:
@@ -235,44 +393,173 @@ def _row_content_key(row: dict) -> tuple:
     return tuple(sorted((k, v) for k, v in row.items() if k not in _META_KEYS))
 
 
-def match_table_rows(rows: list[dict], question: str):
-    """匹配表格行，返回 (候选行, 列名命中, 命中值) 或 None。
+def _norm_sheet(text: str) -> str:
+    """表名归一：中文数字转阿拉伯数字，去掉“第/份/括号”。
 
-    规则（v2.4.1 收紧）：
-    1) 问题必须命中列名，或包含表格意图词（成绩/总分/电话等），否则不判为表格问题；
-    2) 先按表名过滤（最长匹配）；单元格值用 `_is_selector` 防短数字误命中；
-    3) 同名行去重；多个前缀候选（用户5/55/550）只保留最长命中值对应的行。
+    让「（八月份第2期）」能匹配表名「8月第2期」。
+    English: Normalize sheet names (Chinese numerals → digits, strip 第/份/parens)
+    so "（八月份第2期）" matches the sheet "8月第2期"."""
+    s = (text or "").lower()
+    for ch in ("第", "份", "（", "）", "(", ")", " "):
+        s = s.replace(ch, "")
+    s = s.replace("月份", "月")
+    for cn, digit in (("十二", "12"), ("十一", "11"), ("十", "10"),
+                      ("一", "1"), ("二", "2"), ("三", "3"), ("四", "4"),
+                      ("五", "5"), ("六", "6"), ("七", "7"), ("八", "8"),
+                      ("九", "9"), ("零", "0")):
+        s = s.replace(cn, digit)
+    return s
 
-    English: Match table rows, returning (rows, header hits, matched values) or None.
-    The question must hit a column name or contain a table-intent word; sheet names
-    filter first (longest match); short numbers are not selectors; duplicate rows are
-    collapsed and longer prefix matches win.
-    """
-    q = (question or "").strip().lower()
-    if not q or not rows:
-        return None
-    sheet_names = {r.get(_SHEET_KEY) for r in rows if r.get(_SHEET_KEY)}
-    matched_sheets = sorted((s for s in sheet_names if s and s.lower() in q),
-                            key=len, reverse=True)
-    if matched_sheets:
-        rows = [r for r in rows if r.get(_SHEET_KEY) == matched_sheets[0]]
+
+def _filter_by_sheet(rows: list[dict], q: str) -> list[dict]:
+    """按表名过滤（最长匹配），未指定表名时保留全部。"""
+    names = {r.get(_SHEET_KEY) for r in rows if r.get(_SHEET_KEY)}
+    if not names:
+        return rows
+    qn = _norm_sheet(q)
+    hits = sorted((s for s in names if s and _norm_sheet(s) in qn),
+                  key=lambda s: len(_norm_sheet(s)), reverse=True)
+    return [r for r in rows if r.get(_SHEET_KEY) == hits[0]] if hits else rows
+
+
+def _rows_headers(rows: list[dict]) -> list[str]:
+    """从行里恢复列顺序。"""
     headers: list[str] = []
     for row in rows:
         for key in row:
             if key not in _META_KEYS and key not in headers:
                 headers.append(key)
-    header_hits = [h for h in headers if h.lower() in q]
-    if not header_hits and not any(w in q for w in _INTENT_WORDS):
+    return headers
+
+
+def _question_concepts(q: str) -> set[str]:
+    """问题里出现了哪些列概念（含“薪资→薪酬待遇”“电话→联系电话”）。"""
+    return {concept for concept, aliases in _COLUMN_SYNONYMS.items()
+            if any(alias.lower() in q for alias in aliases)}
+
+
+def _list_column(headers: list[str], q: str) -> str:
+    """列表型问题（“有哪些企业/岗位”）要列出的列。
+
+    取离“有哪些/哪些”最近的目标词：表名里常带“岗位清单”，不能因此把
+    “有哪些企业”误判成列岗位。
+    English: Pick the list target closest to the list phrase, so a sheet title
+    containing “岗位清单” does not hijack “有哪些企业”."""
+    list_pos = max((q.rfind(word) for word in _LIST_WORDS if word in q), default=-1)
+    if list_pos < 0:
+        return ""
+    best, best_key = "", (10 ** 9, 1)
+    for word, concept in (("岗位", "招聘岗位"), ("职位", "招聘岗位"),
+                          ("电话", "联系电话"), ("地址", "工作地点"),
+                          ("地点", "工作地点"), ("企业", "企业名称"),
+                          ("公司", "企业名称"), ("单位", "企业名称")):
+        pos = q.rfind(word)
+        if pos < 0:
+            continue
+        hit = next((h for h in headers if _header_concept(h) == concept), "")
+        if not hit:
+            continue
+        key = (abs(pos - list_pos), 0 if pos >= list_pos else 1)
+        if key < best_key:
+            best, best_key = hit, key
+    if best:
+        return best
+    for concept in _COLUMN_SYNONYMS:
+        if concept in _question_concepts(q):
+            hit = next((h for h in headers if _header_concept(h) == concept), "")
+            if hit:
+                return hit
+    return ""
+
+
+def _salary_bounds(value: str):
+    """薪酬区间：抽数字（支持“万”），返回 (最小, 最大) 或 None。"""
+    nums = [float(n) * (10000 if unit else 1)
+            for n, unit in re.findall(r"(\d+(?:\.\d+)?)\s*(万)?", value or "")]
+    if not nums:
         return None
+    return min(nums), max(nums)
+
+
+# 条件值里出现这些词，说明是“是谁/多少”的提问，不是筛选值。
+_STOP_VALUES = ("谁", "什么", "多少", "哪", "哪儿", "哪里", "哪些", "几",
+                "几个", "怎么样", "如何", "为什么", "何时")
+
+
+def _apply_conditions(rows: list[dict], headers: list[str], q: str):
+    """应用限定条件：薪酬区间、列名是/为X、学历关键词、在X地点。
+
+    返回 (过滤后的行, 是否应用了条件, 不能当定位键的列)。
+    例如“薪酬5000以上”里的 5000 是阈值，不是某一行的单元格值，必须把
+    薪酬列从“按值定位”里排除，否则只会命中恰好写着 5000 的那一行。
+    English: Apply constraints and return (rows, applied, excluded columns).
+    A number inside “salary >= 5000” is a threshold, not a cell selector, so the
+    salary column must be excluded from value-based row selection."""
+    applied = False
+    out = rows
+    exclude: set[str] = set()
+    salary = next((h for h in headers if _header_concept(h) == "薪酬待遇"), "")
+    match = re.search(r"(\d{2,6})\s*(?:元)?\s*(以上|以下|及以上|及以下|起|以内)", q)
+    if match and salary:
+        limit = float(match.group(1))
+        above = match.group(2) in ("以上", "及以上", "起")
+
+        def _ok(row):
+            bounds = _salary_bounds(row.get(salary, ""))
+            if not bounds:
+                return False
+            low, high = bounds
+            return high >= limit if above else low <= limit
+
+        out = [row for row in out if _ok(row)]
+        applied = True
+        exclude.add(salary)
+    for header in headers:
+        concept = _header_concept(header)
+        if not concept:
+            continue
+        for alias in _COLUMN_SYNONYMS[concept]:
+            match = re.search(
+                re.escape(alias) + r"(?:是|为|：|:)\s*([^，,。；;\s]{1,30})", q)
+            if match:
+                value = match.group(1)
+                if value.startswith(_STOP_VALUES):
+                    continue
+                out = [row for row in out if value in (row.get(header) or "")]
+                applied = True
+                exclude.add(header)
+                break
+    edu = next((h for h in headers if _header_concept(h) == "学历要求"), "")
+    if edu:
+        for token in ("博士", "硕士", "研究生", "本科", "大专"):
+            if token in q and any(token in (row.get(edu) or "") for row in rows):
+                out = [row for row in out if token in (row.get(edu) or "")]
+                applied = True
+                exclude.add(edu)
+                break
+    loc = next((h for h in headers if _header_concept(h) == "工作地点"), "")
+    if loc:
+        # 只认“在X的/在X有哪些”，避免把标题里的“职在郫都 筑梦未来”当条件。
+        for token in re.findall(r"在([^，,。；;\s]{2,12})(?:的|有哪些)", q):
+            if any(token in (row.get(loc) or "") for row in rows):
+                out = [row for row in out if token in (row.get(loc) or "")]
+                applied = True
+                exclude.add(loc)
+    return out, applied, exclude
+
+
+def _select_rows(rows: list[dict], q: str, exclude: set[str] | None = None):
+    """按单元格值定位行：同名多行全保留，前缀只取最长命中。"""
+    exclude = exclude or set()
     candidates: list[tuple[dict, list[str]]] = []
     for row in rows:
         hits = [v for k, v in row.items()
-                if k not in _META_KEYS and _is_selector(v) and v.lower() in q]
+                if k not in _META_KEYS and k not in exclude
+                and _is_selector(v) and v.lower() in q]
         if hits:
             candidates.append((row, hits))
     if not candidates:
-        return None
-    # 同内容行去重（项目库 + 全局库同时存在同一张表时只答一次）
+        return [], []
     seen: set[tuple] = set()
     unique: list[tuple[dict, list[str]]] = []
     for row, hits in candidates:
@@ -281,46 +568,154 @@ def match_table_rows(rows: list[dict], question: str):
             continue
         seen.add(key)
         unique.append((row, hits))
-    # 前缀消歧：只保留最长命中值的行（用户550 不再同时命中 用户5/55）
     best_len = max(max(len(v) for v in hits) for _, hits in unique)
     unique = [(row, hits) for row, hits in unique
               if max(len(v) for v in hits) == best_len]
-    matched_values = [v for _, hits in unique for v in hits]
-    return [row for row, _ in unique], header_hits, matched_values
+    return [row for row, _ in unique], [v for _, hits in unique for v in hits]
+
+
+def match_table_rows(rows: list[dict], question: str):
+    """兼容入口：返回 (候选行, 列名命中, 命中值) 或 None。"""
+    q = (question or "").strip().lower()
+    if not q or not rows:
+        return None
+    rows = _filter_by_sheet(rows, q)
+    headers = _rows_headers(rows)
+    concepts = _question_concepts(q)
+    header_hits = [h for h in headers
+                   if h.lower() in q or _header_concept(h) in concepts]
+    if not header_hits and not any(w in q for w in _INTENT_WORDS):
+        return None
+    filtered, conditions, exclude = _apply_conditions(rows, headers, q)
+    selected, values = _select_rows(filtered, q, exclude)
+    if not selected and not conditions:
+        return None
+    return selected or filtered, header_hits, values
+
+
+def _format_list(rows: list[dict], column: str, question: str):
+    """列表型答案：去重后按序号列出。"""
+    values: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        value = (row.get(column) or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            values.append(value)
+    if not values:
+        return None
+    concept = _header_concept(column)
+    unit = {"企业名称": "家", "招聘岗位": "个", "联系电话": "个"}.get(concept, "条")
+    sheet = rows[0].get(_SHEET_KEY, "")
+    head = f"共 {len(values)} {unit}" + (f"（{sheet}）" if sheet else "")
+    lines = [head]
+    for i, value in enumerate(values[:80], 1):
+        lines.append(f"{i}. {value}")
+    if len(values) > 80:
+        lines.append(f"……（共 {len(values)} 条，已列出前 80 条）")
+    return "\n".join(lines), rows
 
 
 def query_table(rows: list[dict], question: str):
     """确定性表格查询，返回 (answer_text, matched_rows) 或 None。
 
+    v2.4.5：表头同义词、合并单元格续行、同名多行、按值反查、
+    列表问题（有哪些企业/岗位）与限定条件（薪酬/学历/地点）。
     English: Deterministic table query returning (answer_text, matched_rows) or None.
-    """
-    info = match_table_rows(rows, question)
-    if not info:
-        return None
-    matched, header_hits, matched_values = info
+    v2.4.5 adds header synonyms, merged-cell forward fill, multi-row entities,
+    value-first lookup, list questions, and salary/education/location constraints."""
     q = (question or "").strip().lower()
+    if not q or not rows:
+        return None
+    rows = _filter_by_sheet(rows, q)
+    if not rows:
+        return None
+    headers = _rows_headers(rows)
+    if not headers:
+        return None
+    concepts = _question_concepts(q)
+    header_hits = [h for h in headers
+                   if h.lower() in q or _header_concept(h) in concepts]
+    if not header_hits and not any(w in q for w in _INTENT_WORDS):
+        return None
+
+    filtered, conditions, exclude = _apply_conditions(rows, headers, q)
+    selected, matched_values = _select_rows(filtered, q, exclude)
+
+    list_col = _list_column(headers, q)
+    if list_col:
+        base = selected
+        if base and matched_values:
+            # 列表问题只允许“公司/姓名/岗位”这类标识值收窄范围；
+            # “职在郫都…”里恰好命中工作地点的“郫都”，不能把企业列表缩成 1 家。
+            keep = []
+            for row in base:
+                for key, value in row.items():
+                    if (key not in _META_KEYS and value in matched_values
+                            and (key in _IDENTITY_KEYS
+                                 or _header_concept(key) in _IDENTITY_CONCEPTS
+                                 or _header_concept(key) == "招聘岗位")):
+                        keep.append(row)
+                        break
+            base = keep or filtered
+        if not base:
+            base = filtered
+        if base:
+            return _format_list(base, list_col, q)
+    if not selected:
+        if not conditions:
+            return None
+        selected = filtered
+
     want_sum = any(w in q for w in _SUM_WORDS)
     want_avg = any(w in q for w in _AVG_WORDS)
+    job_col = next((h for h in headers if _header_concept(h) == "招聘岗位"), "")
 
     def _label(row: dict) -> str:
-        """行标识：优先非数字命中值（姓名/编号），其次数字；多 sheet 时前置表名。"""
-        base = ""
-        for v in row.values():
-            if v in matched_values and _as_number(v) is None:
-                base = v
-                break
-        if not base:
-            for v in row.values():
-                if v in matched_values:
-                    base = v
+        """行标识：公司/姓名优先；其次是岗位；最后才退回命中值。
+
+        反查“电话=187…”或“5000-15000是哪个岗位”时，命中的是电话/薪酬，
+        标签必须回到公司名；而“会计岗的招聘单位是谁”仍以“会计岗”开头。
+        English: Prefer company/person identity, then job title, then matched
+        values; reverse lookups by phone/salary/location must label the company."""
+        matched_identity = ""
+        matched_job = ""
+        for key, value in row.items():
+            if key in _META_KEYS or value not in matched_values:
+                continue
+            concept = _header_concept(key)
+            if concept in _IDENTITY_CONCEPTS or key in _IDENTITY_KEYS:
+                matched_identity = matched_identity or value
+            elif concept == "招聘岗位":
+                matched_job = matched_job or value
+        if matched_identity:
+            base = matched_identity
+        elif matched_job:
+            base = matched_job
+        else:
+            base = ""
+            for key, value in row.items():
+                concept = _header_concept(key)
+                if (key not in _META_KEYS and value
+                        and _as_number(value) is None
+                        and (concept in _IDENTITY_CONCEPTS
+                             or key in _IDENTITY_KEYS)):
+                    base = value
                     break
-        if not base:
-            for k, v in row.items():
-                if k not in _META_KEYS and _as_number(v) is None:
-                    base = v
-                    break
-        if not base:
-            base = next((v for k, v in row.items() if k not in _META_KEYS), "")
+            if not base:
+                for value in row.values():
+                    if (value in matched_values and _as_number(value) is None
+                            and not re.search(r"\d", value)):
+                        base = value
+                        break
+            if not base:
+                for value in row.values():
+                    if value and _as_number(value) is None:
+                        base = value
+                        break
+            if not base:
+                base = next((v for v in row.values()
+                             if v in matched_values), "")
         sheet = row.get(_SHEET_KEY)
         return f"{sheet} {base}".strip() if sheet else base
 
@@ -334,37 +729,75 @@ def query_table(rows: list[dict], question: str):
                 if c not in _META_KEYS and c not in _NON_VALUE_KEYS
                 and _as_number(row.get(c)) is not None]
 
+    def _row_cols(row: dict, label: str) -> list[str]:
+        """输出列：问题点名的列；没有点名时才回退到整行。
+
+        已经作为标签的值不重复输出；同名多行时自动补「招聘岗位」。"""
+        explicit = [h for h in header_hits if row.get(h)]
+        if explicit:
+            cols = [c for c in explicit if row.get(c) != label]
+        else:
+            cols = [k for k in row
+                    if k not in _META_KEYS and row.get(k) and row.get(k) != label]
+        if len(selected) > 1 and job_col and job_col not in cols and row.get(job_col):
+            cols = [job_col] + cols
+        return cols
+
     lines = []
-    for row in matched:
-        label = _label(row)
-        explicit = [h for h in header_hits if h in row]
-        if want_sum or want_avg:
+    if want_sum or want_avg:
+        for row in selected:
+            label = _label(row)
             # 问题明确问「总分」且表里已有总分类：直接读该列，不重复求和
-            if want_sum and "总分" in explicit and row.get("总分"):
+            if want_sum and "总分" in header_hits and row.get("总分"):
                 lines.append(f"{label}：总分={row['总分']}")
                 continue
-            cols = _value_cols(row, explicit)
-            nums = [_as_number(row[c]) for c in cols]
-            nums = [n for n in nums if n is not None]
+            cols = _value_cols(row, header_hits)
+            nums = [n for n in (_as_number(row[c]) for c in cols) if n is not None]
             if nums:
                 total = sum(nums)
                 if want_avg:
                     lines.append(f"{label}：平均={_fmt_number(total / len(nums))}")
                 else:
                     lines.append(f"{label}：总分={_fmt_number(total)}")
-                continue
-        if explicit:
-            # 已经作为行标识的列（如「用户=用户550」）不重复输出
-            cols = [c for c in explicit
-                    if row.get(c) not in matched_values] or explicit
-        else:
-            cols = [k for k in row if k not in _META_KEYS]
-        parts = [f"{c}={row[c]}" for c in cols if row.get(c)]
-        if parts:
-            lines.append(f"{label}：" + "，".join(parts))
+        if not lines:
+            return None
+        return "\n".join(lines), selected
+
+    # 同名多行按“标签 + 其余字段”分组：比亚迪 3 个岗位共享联系人和地点时，
+    # 合成一块“招聘岗位：A / B / C”，不再把三行完整抄三遍。
+    groups: list[dict] = []
+    for row in selected:
+        label = _label(row)
+        cols = _row_cols(row, label)
+        if not cols:
+            continue
+        job = ""
+        if len(selected) > 1 and job_col and job_col in cols:
+            job = (row.get(job_col) or "").strip()
+        others = tuple((c, row.get(c, "")) for c in cols
+                       if not (job and c == job_col))
+        key = (label, others)
+        group = next((g for g in groups if g["key"] == key), None)
+        if group is None:
+            group = {"key": key, "label": label, "others": others, "jobs": []}
+            groups.append(group)
+        if job and job not in group["jobs"]:
+            group["jobs"].append(job)
+    for index, group in enumerate(groups, 1):
+        if not group["jobs"] and len(group["others"]) == 1:
+            col, value = group["others"][0]
+            lines.append(f"{group['label']}：{col}={value}")
+            continue
+        block = [group["label"]]
+        if group["jobs"]:
+            block.append("招聘岗位：" + " / ".join(group["jobs"]))
+        block += [f"{col}：{value}" for col, value in group["others"]]
+        if len(groups) > 1:
+            block[0] = f"{index}. {group['label']}"
+        lines.append("\n".join(block))
     if not lines:
         return None
-    return "\n".join(lines), matched
+    return "\n".join(lines), selected
 
 
 def query_rows(rows: list[dict], question: str) -> str | None:

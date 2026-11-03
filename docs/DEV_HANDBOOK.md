@@ -273,7 +273,7 @@ GET    /                           服务导航页（API 状态/文档链接）
 | scopes.py | 190 | `Scope`（store/bm25/retriever 三件套）+ `ScopeManager`（全局库 + 项目子库懒打开、LRU、locate、count.txt 计数）+ `validate_scope_name` |
 | discovery.py | 150 | `~/.kb/install.json` 清单 → PATH → importlib.metadata 发现顺序；`autostart_enable/disable/status`（Windows 启动目录 / systemd / launchd） |
 | ingest.py | 105 | `parse_file`（PDF/DOCX/markitdown 兜底，可选依赖缺失给 `[ingest]` 指引）→ `chunk_text`（递归切分）；`fetch_webpage`（httpx + trafilatura） |
-| tables.py | 260 | **v2.4** `parse_table_file`（CSV/XLSX）→ `row_to_text` / `parse_row_text`（逐行 `列名=值`）→ `query_rows`（确定性表格问答与求和/平均） |
+| tables.py | 260 | **v2.4** `parse_table_file`（CSV/XLS/XLSX）→ `row_to_text` / `parse_row_text`（逐行 `列名=值`）→ `query_rows`（确定性表格问答、列表/反查/限定条件与求和/平均） |
 | models.py | 101 | `Record` 统一模型 ↔ Chroma metadata 互转；`RecordType` 类型枚举 |
 | logging_setup.py | 74 | `setup_logging` 控制台+轮转文件双 handler |
 | reranker.py | 61 | `Reranker.rerank` 交叉编码精排（懒加载） |

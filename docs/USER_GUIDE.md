@@ -182,10 +182,10 @@ curl "http://127.0.0.1:8000/api/v1/logs/events"
 | 删除 | 本地文件：`DELETE /api/v1/documents/{source}`；网页：`DELETE /api/v1/documents?source=<URL 编码>`（URL 含斜杠，必须用查询参数） |
 | 目录监听 | 设 `KB_WATCH_DIR`（默认 `data`）后，目录内新增文件自动入库、删除自动清理 |
 
-支持格式：txt / md / pdf / docx / csv / xlsx。
+支持格式：txt / md / pdf / docx / csv / xls / xlsx。
 同一 source 重复入库会**先替换旧 chunk 再写入**（返回 `replaced` 数量），不会产生重复检索结果。
 
-**表格（v2.4）**：CSV / Excel 逐行入库为 `列名=值` 文本，可直接按数据提问，例如
+**表格（v2.4）**：CSV / XLS / Excel 逐行入库为 `列名=值` 文本，可直接按数据提问，例如
 「小明的语文成绩」「五班张芳的数学成绩」——多 sheet 会按问题里的表名消歧；
 未配置 LLM 也能精确作答，支持总分 / 平均聚合。表格属于 RAG 知识库，
 **不参与遗忘与衰减**，只在显式删除时移除。

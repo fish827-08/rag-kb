@@ -258,6 +258,7 @@ class SearchRequest(BaseModel):
     agent_id: str = "default"
     client: str = "HTTP"
     project: str | None = None  # 项目名（可选，选择项目子库；空=全局库）
+    table: bool = False          # 先尝试确定性表格问答（无需 LLM）
 
     @field_validator("query")
     @classmethod
@@ -835,8 +836,18 @@ def create_app(settings: Settings | None = None,
     @app.post("/api/v1/search")
     def search(body: SearchRequest) -> dict:
         """混合检索；带 project 时检索该项目子库 + 全局库（项目命中加分）。
+
+        table=true 时先尝试确定性表格问答：命中则直接返回结构化答案，
+        让“仅检索（不调用 LLM）”也能读懂表格结果。
         English: Hybrid retrieval; with project, search that project sub-store plus
-        the global store (project hits are boosted)."""
+        the global store. With table=true, try deterministic table Q&A first and
+        return a structured answer, so "retrieval only" stays readable."""
+        if body.table:
+            answer = kb.table_answer(body.query, project=body.project)
+            if answer is not None:
+                return {"results": [], "table": True,
+                        "answer": answer["answer"],
+                        "sources": answer["sources"]}
         results = kb.search(body.query, top_k=body.top_k, mode=body.mode,
                             type=body.type, tag=body.tag,
                             agent_id=body.agent_id, client=body.client,

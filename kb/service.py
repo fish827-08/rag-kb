@@ -862,16 +862,13 @@ class KBService:
                           project: str | None = None) -> list[Record]:
         """按扩展名把文件转成待入库记录（表格 vs 普通文档）。
 
-        表格（CSV/XLSX）逐行转 `列名=值 | ...` 文本并打 `table` 标签，
+        表格（CSV/XLS/XLSX）逐行转 `列名=值 | ...` 文本并打 `table` 标签，
         RAG 文档仍走 parse_file + chunk_text（行为不变）。
-        English: Convert a file into records: tables (CSV/XLSX) become one
+        English: Convert a file into records: tables (CSV/XLS/XLSX) become one
         `column=value | ...` line per row tagged `table`; regular documents keep
         the parse_file + chunk_text behavior."""
         suffix = path.suffix.lower()
         doc_source = source or path.name
-        if suffix == ".xls":
-            raise UnsupportedFormatError(
-                "旧版 .xls 暂不支持表格问答，请用 Excel 另存为 .xlsx 后重试")
         if suffix in TABLE_EXTS:
             try:
                 return self._table_records(
@@ -1396,6 +1393,10 @@ class KBService:
                             "score": 1.0, "source": record.source})
         return {"answer": answer, "sources": sources[:5], "llm": "table",
                 "table": True}
+
+    def table_answer(self, question: str, project: str | None = None) -> dict | None:
+        """确定性表格问答的公开入口（供 /search 的“仅检索”模式复用）。"""
+        return self._table_answer(question, project)
 
     def graph(self, project: str | None = None, limit: int = 200) -> dict:
         """记忆知识图谱：memory 节点 + links.db 边（RAG 文档块不入图）。
