@@ -9,13 +9,28 @@ def msvc(env_isolated):
     return KBService()
 
 
-def test_十一个工具函数全部注册(msvc):
+def test_十三个工具函数全部注册(msvc):
     from kb.mcp import create_mcp_server
     mcp = create_mcp_server(msvc)
     tools = {t.name for t in mcp._tool_manager.list_tools()}
     assert tools == {"write_memory", "search_memory", "read_memory", "update_memory",
                      "delete_memory", "add_document", "add_webpage", "ask_kb",
-                     "link_memory", "unlink_memory", "list_links"}
+                     "link_memory", "unlink_memory", "list_links",
+                     "list_documents", "delete_document"}
+
+
+def test_文档列表与删除工具(msvc, tmp_path):
+    from kb.mcp import (add_document, create_mcp_server, delete_document,
+                        list_documents)
+    create_mcp_server(msvc)
+    p = tmp_path / "mcp-doc.md"
+    p.write_text("这是一份用于 MCP 文档删除测试的资料。", encoding="utf-8")
+    assert add_document(str(p))["chunks"] >= 1
+    assert any(d["source"] == p.name for d in list_documents())
+    out = delete_document(p.name)
+    assert out["deleted"] >= 1
+    assert list_documents() == []
+    assert delete_document("  ")["error"] == "INVALID_ARGUMENT"
 
 
 def test_服务器注入全局instructions_且双语按语言切换(msvc, monkeypatch):
