@@ -165,6 +165,25 @@ python -m kb serve          # 或 .\venv\Scripts\python.exe -m kb serve
 3. **召回与预算**：页面把「召回条数」调到 8~10；`.env` 里 `KB_CONTEXT_TOKEN_LIMIT=4000`。
 4. **精排**：`KB_RERANK_ENABLED=true`（bge-reranker-v2-m3 约 2GB，CPU 可跑；6GB 显存红线仍安全）。
 
+### 6.1 一个必须知道的限制：单集合别超过约 800 块
+
+实测（2026-11-03，Windows + chromadb 1.5.0/1.5.9 均复现）：**单个 Chroma 集合超过约 800 条后，
+HNSW 索引只在磁盘留下 `index_metadata.pickle`，进程重启读库必失败**（`Error loading hnsw index`）。
+
+| 集合规模 | 重启后能否读回 |
+|---|---|
+| 800 条 | ✅ |
+| 965 条 / 1600 条 / 2337 条 | ❌ `Error loading hnsw index` |
+
+大语料的正确姿势（任选其一）：
+
+- **分项目子库**：如按 30 回一组拆成 4 个 project（每个约 240 块），检索时分别查，
+  前端「项目库」切换即可；
+- **加大切块**：`KB_CHUNK_SIZE=1800` 时整本红楼梦只有约 950 块，仍偏大，建议配合分库；
+- **常驻不重启**：`kb serve` 一次跑到底没问题，但重启前要预期这个报错。
+
+这是 chromadb 侧的限制，不是 kb 的逻辑问题；写进这里是为了避免面试现场重启后「库打不开」。
+
 操作流程：
 
 ```powershell
@@ -239,3 +258,5 @@ pytest tests/test_n34_bulk_ingest.py -q  # 批量导入的 3 项验收
 - **首次上传很慢**：正在下载 `bge-small-zh-v1.5`（约 92MB），之后离线可用。
 - **`/ask` 503**：`KB_LLM_MODE=off` 是默认值，不是故障；前端勾「仅检索」可先验证召回。
 - **改嵌入模型后检索变差**：库里已有数据时会沿用建库模型，想真正切换必须重建库。
+- **导入整本书后重启报 `Error loading hnsw index`**：单集合超过约 800 块会触发，见 6.1，改用分项目子库。
+- **`kb import` 比逐个上传快得多**：226 个文件 2337 块从 367s 降到批量的一次重建；视觉上就是少了一堆「重建 BM25」。
