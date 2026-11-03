@@ -7,6 +7,8 @@ from pathlib import Path
 
 from kb.models import Record
 
+ITER_BATCH = 500   # iter_all 分页批大小：避免单次全量 get 把整库结果集压进内存
+
 
 class VectorStore(ABC):
     """预留 P2 可替换接口；本期只有 ChromaStore 一个实现。
@@ -125,11 +127,23 @@ class ChromaStore(VectorStore):
         return len(ids)
 
     def iter_all(self) -> Iterator[Record]:
-        """全量遍历。
-        English: Iterate all records."""
-        res = self._col.get(include=["documents", "metadatas"])
-        for i, rid in enumerate(res["ids"]):
-            yield Record.from_chroma(rid, res["documents"][i], res["metadatas"][i] or {})
+        """分页遍历全部记录（BM25 重建等），每批 ITER_BATCH 条。
+
+        单次无 limit 的 get 会把整库结果集一次性物化，大库（数万条以上）容易拉高
+        峰值内存；改成分页拉取，返回顺序与字段保持不变。
+        English: Iterate all records in batches of ITER_BATCH (used for BM25 rebuild).
+        A single unbounded get materialises the whole collection and spikes memory on large
+        libraries; paged reads keep the same order and fields."""
+        offset = 0
+        while True:
+            res = self._col.get(include=["documents", "metadatas"],
+                                limit=ITER_BATCH, offset=offset)
+            ids = res["ids"]
+            for i, rid in enumerate(ids):
+                yield Record.from_chroma(rid, res["documents"][i], res["metadatas"][i] or {})
+            if len(ids) < ITER_BATCH:
+                break
+            offset += len(ids)
 
     def list_records(self, type: str | None = None, source: str | None = None,
                      tag: str | None = None, q: str | None = None,
