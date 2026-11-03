@@ -161,3 +161,138 @@ class TestTableService:
         assert len(records) == 1
         assert "table" in records[0].tags
         assert records[0].type.value == "doc_chunk"
+
+
+class TestRealWorldSheets:
+    """真实业务表：标题行、合并单元格、同义词、列表、反查与限定条件。"""
+
+    def test_标题行不影响表头识别(self, tmp_path):
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["2026年招聘岗位表"])
+        ws.append(["序号", "企业名称", "招聘岗位", "薪酬待遇（元/月）"])
+        ws.append(["1", "A公司", "会计", "5000-8000"])
+        p = tmp_path / "有标题.xlsx"
+        wb.save(p)
+        tables = parse_table_file(p)
+        assert tables[0]["headers"] == ["序号", "企业名称", "招聘岗位",
+                                        "薪酬待遇（元/月）"]
+        assert tables[0]["rows"] == [["1", "A公司", "会计", "5000-8000"]]
+
+    def test_合并单元格续行补全(self, tmp_path):
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["企业名称", "招聘岗位", "联系电话", "工作地点"])
+        ws.append(["A公司", "岗位一", "13800000000", "郫都区"])
+        ws.append(["", "岗位二", "", ""])
+        p = tmp_path / "合并.xlsx"
+        wb.save(p)
+        tables = parse_table_file(p)
+        assert tables[0]["rows"][1][0] == "A公司"
+        assert tables[0]["rows"][1][2] == "13800000000"
+        assert tables[0]["rows"][1][3] == "郫都区"
+
+    def test_xls解析走xlrd(self, tmp_path, monkeypatch):
+        """用假 xlrd 验证 .xls 分支的取行与表头归一（真实 .xls 另行实测）。"""
+        import types
+        from kb import tables
+
+        data = [["附件"], ["招聘岗位表"],
+                ["序号", "招聘单位", "招聘岗位", "薪酬待遇"],
+                ["1", "A集团", "会计岗", "4.3万元/年"]]
+
+        class _Cell:
+            def __init__(self, value):
+                self.value = value
+                self.ctype = 1
+
+        class _Sheet:
+            name = "Sheet1"
+            nrows = len(data)
+            ncols = max(len(row) for row in data)
+
+            def cell(self, r, c):
+                row = data[r]
+                return _Cell(row[c] if c < len(row) else "")
+
+        class _Book:
+            datemode = 0
+
+            def sheets(self):
+                return [_Sheet()]
+
+            def release_resources(self):
+                pass
+
+        fake = types.SimpleNamespace(
+            XL_CELL_DATE=3, open_workbook=lambda *a, **k: _Book(),
+            xldate_as_datetime=lambda v, d: None)
+        monkeypatch.setattr(tables, "_ingest_import", lambda *a: fake)
+        p = tmp_path / "old.xls"
+        p.write_bytes(b"fake")
+        result = parse_table_file(p)
+        assert result[0]["headers"] == ["序号", "招聘单位", "招聘岗位", "薪酬待遇"]
+        assert result[0]["rows"] == [["1", "A集团", "会计岗", "4.3万元/年"]]
+
+    def test_薪资待遇命中薪酬待遇并只输出该列(self):
+        rows = [{"企业名称": "A公司", "招聘岗位": "销售",
+                 "薪酬待遇（元/月）": "5000-15000", "工作地点": "郫都区"}]
+        answer = query_rows(rows, "A公司的薪资待遇")
+        assert "薪酬待遇（元/月）=5000-15000" in answer
+        assert "工作地点" not in answer
+
+    def test_同名多行合并岗位(self):
+        rows = [
+            {"企业名称": "A公司", "招聘岗位": "岗位一",
+             "联系电话": "13800000000", "工作地点": "郫都区"},
+            {"企业名称": "A公司", "招聘岗位": "岗位二",
+             "联系电话": "13800000000", "工作地点": "郫都区"},
+        ]
+        answer = query_rows(rows, "A公司的联系电话和工作地点")
+        assert "岗位一 / 岗位二" in answer
+        assert answer.count("联系电话：13800000000") == 1
+        assert "工作地点：郫都区" in answer
+
+    def test_按电话反查公司(self):
+        rows = [{"企业名称": "A公司", "招聘岗位": "客服",
+                 "联系电话": "13800000000"}]
+        answer = query_rows(rows, "13800000000是谁的电话")
+        assert "A公司" in answer
+        assert "联系电话=13800000000" in answer
+
+    def test_列表问题列出企业(self):
+        rows = [
+            {"__sheet": "8月第2期", "企业名称": "A公司", "招聘岗位": "会计"},
+            {"__sheet": "8月第2期", "企业名称": "B公司", "招聘岗位": "销售"},
+        ]
+        answer = query_rows(rows, "8月第2期有哪些企业")
+        assert answer.splitlines()[0] == "共 2 家（8月第2期）"
+        assert "1. A公司" in answer and "2. B公司" in answer
+
+    def test_表名里的岗位不抢列表目标(self):
+        rows = [
+            {"__sheet": "8月第2期", "企业名称": "A公司", "招聘岗位": "会计"},
+            {"__sheet": "8月第2期", "企业名称": "B公司", "招聘岗位": "销售"},
+        ]
+        answer = query_rows(rows, "大学生就业岗位清单有哪些企业")
+        assert "共 2 家" in answer
+        assert "A公司" in answer
+
+    def test_薪酬下限筛选(self):
+        rows = [
+            {"__sheet": "8月第2期", "企业名称": "A公司", "薪酬待遇（元/月）": "5000-15000"},
+            {"__sheet": "8月第2期", "企业名称": "B公司", "薪酬待遇（元/月）": "3000-4000"},
+            {"__sheet": "8月第2期", "企业名称": "C公司", "薪酬待遇（元/月）": "面议"},
+        ]
+        answer = query_rows(rows, "薪酬5000以上的企业有哪些")
+        assert "A公司" in answer and "B公司" not in answer and "C公司" not in answer
+
+    def test_中文表名匹配阿拉伯数字表名(self):
+        rows = [
+            {"__sheet": "8月第2期", "企业名称": "A公司", "招聘岗位": "会计"},
+            {"__sheet": "7月第1期", "企业名称": "B公司", "招聘岗位": "销售"},
+        ]
+        answer = query_rows(rows, "（八月份第2期）有哪些企业")
+        assert "A公司" in answer and "B公司" not in answer

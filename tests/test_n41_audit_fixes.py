@@ -221,12 +221,31 @@ def test_UI语言切换不删除LLM下拉框():
 
 
 @pytest.mark.integration
-def test_旧版xls明确拒绝(env_isolated, tmp_path):
+def test_损坏的xls报格式错误(env_isolated, tmp_path):
+    """坏文件仍要报 UnsupportedFormatError；真正的 .xls 由 xlrd 解析。"""
     from kb.service import KBService, UnsupportedFormatError
     p = tmp_path / "old.xls"
     p.write_bytes(b"not really xls")
     with pytest.raises(UnsupportedFormatError):
         KBService().add_document(p)
+
+
+@pytest.mark.integration
+def test_仅检索也能返回表格答案(env_isolated, tmp_path):
+    from kb.service import KBService
+    p = tmp_path / "岗位.csv"
+    p.write_text("企业名称,招聘岗位,薪酬待遇\nA公司,会计,5000-8000\n",
+                 encoding="utf-8")
+    KBService().add_document(p, project="jobs")
+    c = _Client.make()
+    with c:
+        r = c.post("/api/v1/search",
+                   json={"query": "A公司的薪酬待遇", "project": "jobs",
+                         "table": True})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["table"] is True
+    assert "5000-8000" in data["answer"]
 
 
 @pytest.mark.integration
