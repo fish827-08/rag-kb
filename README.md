@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.4）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.5）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -90,6 +90,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/documents/用例.csv" -Meth
 - **审计加固（v2.4.2）**：检索相关性下限 `KB_MIN_VECTOR_SCORE`（默认 0.30）、`type/tag` 过滤提前、网页入库 SSRF 防护与 5MB 响应上限、单文件上传上限 `KB_MAX_UPLOAD_BYTES`（默认 100MB）、统一错误 JSON、非 ASCII API Key 兼容、项目计数重启不丢
 - **大库读取分页（v2.4.3）**：`iter_all` 改为每批 500 条分页读取，降低大库打开/重建 BM25 时的峰值内存；新增 680 条库 5 次进程重启的回归用例
 - **MCP 文档管理（v2.4.4）**：新增 `list_documents` / `delete_document`，MCP 侧也能展示与删除 RAG 知识库（共 13 个工具）
+- **Excel 兼容性与问答优化（v2.4.5）**：兼容不带 `<dimension>` 的导出文件（原先会报“表格为空”）、识别标题行与合并单元格、支持 `.xls`；多 sheet 同名实体只返回目标列有值的表，公式单元格提示“为公式”，来源按字段两列展示；`/search` 支持 `table=true`，仅检索也能返回结构化表格答案
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
 - **CLI 工具**：`kb add/search/stats/ask/eval/forget/dedup`——终端直接完成写入、检索、统计与 RAG 问答
 - **隐私护栏**：敏感 namespace 强制本地回答不出网；`/ask` 智能路由（本地优先，难题可选云端）

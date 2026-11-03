@@ -12,6 +12,7 @@ deterministic row-level answering.
 import csv
 import io
 import re
+from datetime import date, datetime
 from pathlib import Path
 
 from kb.ingest import UnsupportedFormatError, _ingest_import
@@ -115,6 +116,14 @@ def _parse_xlsx(path: Path) -> list[dict]:
         formula_sheets = {s.title: s for s in formula.worksheets}
         for sheet in valued.worksheets:
             sheet_f = formula_sheets.get(sheet.title)
+            # 部分导出工具（财务系统、BI、WPS 另存）不写 <dimension>，
+            # read_only 模式会因此读到 0 行，必须重置维度后重新扫描。
+            # English: Some exporters omit <dimension>; read_only mode then sees
+            # zero rows, so reset the dimensions before scanning.
+            if hasattr(sheet, "reset_dimensions"):
+                sheet.reset_dimensions()
+            if sheet_f is not None and hasattr(sheet_f, "reset_dimensions"):
+                sheet_f.reset_dimensions()
             raw = []
             row_fs = sheet_f.iter_rows(values_only=True) if sheet_f else None
             for row in sheet.iter_rows(values_only=True):
@@ -180,7 +189,13 @@ def _parse_xls(path: Path) -> list[dict]:
 
 
 def _cell_text(value) -> str:
-    """单元格值转文本：整数型浮点去掉 .0，其余 str 后去首尾空白。"""
+    """单元格值转文本：日期去时分秒，整数型浮点去掉 .0。"""
+    if isinstance(value, datetime):
+        if value.time() == datetime.min.time():
+            return value.strftime("%Y-%m-%d")
+        return value.strftime("%Y-%m-%d %H:%M")
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value).strip()
@@ -359,6 +374,17 @@ def _fmt_number(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
 
 
+def _is_formula(value: str) -> bool:
+    """单元格是否只是公式文本（无缓存结果）。
+
+    openpyxl data_only 读到 None 时，_parse_xlsx 会保留公式原文；这类值
+    不能当成答案展示，否则用户看到的是 `＝SUM(...)`。
+    English: Whether a cell is formula text without a cached result; such values
+    must not be shown as answers."""
+    v = (value or "").strip()
+    return v.startswith("=") or v.startswith("＝")
+
+
 def _is_selector(value: str) -> bool:
     """单元格值是否可作为「定位键」：非数字值直接可用；纯数字需 ≥4 位。
 
@@ -378,14 +404,21 @@ def _is_selector(value: str) -> bool:
 # 表格意图词：问题里没有列名时，靠这些词判断「确实在问表格数据」，
 # 避免「北京有哪些旅游景点」这类问题被城市表劫持。
 _INTENT_WORDS = ("成绩", "分数", "得分", "总分", "合计", "平均", "电话", "手机",
-                 "地址", "邮箱", "年龄", "薪资", "工资", "价格", "数量", "排名",
-                 "score", "phone", "address", "salary", "price", "average",
-                 "total")
+                 "地址", "邮箱", "年龄", "薪资", "工资", "价格", "金额",
+                 "销售额", "数量", "排名", "成本", "毛利", "利润", "库存",
+                 "score", "phone", "address", "salary", "price", "amount",
+                 "average", "total")
 _META_KEYS = {_SHEET_KEY, "_record_id"}
 # 行标识列：反查电话/薪酬/地点时，标签应回到这些列，而不是命中值本身。
+# _NAME_KEYS 优先于编号类 _IDENTITY_KEYS（客户名称优先于客户编号）。
 _IDENTITY_CONCEPTS = {"企业名称", "主管部门"}
-_IDENTITY_KEYS = {"姓名", "名称", "用户", "学生", "城市", "班级", "公司",
-                  "单位", "部门", "用户名"}
+_NAME_KEYS = {"企业名称", "公司名称", "单位名称", "客户名称", "供应商名称",
+              "项目名称", "产品名称", "姓名", "名称", "部门", "月份",
+              "指标名称", "城市", "工作城市"}
+_IDENTITY_KEYS = _NAME_KEYS | {"用户", "学生", "班级", "公司", "单位",
+                               "用户名", "仓库", "工号", "订单编号",
+                               "采购单号", "报销单号", "项目编号", "客户编号",
+                               "供应商编号", "产品编号"}
 
 
 def _row_content_key(row: dict) -> tuple:
@@ -599,7 +632,7 @@ def _format_list(rows: list[dict], column: str, question: str):
     seen: set[str] = set()
     for row in rows:
         value = (row.get(column) or "").strip()
-        if value and value not in seen:
+        if value and value not in seen and not _is_formula(value):
             seen.add(value)
             values.append(value)
     if not values:
@@ -662,6 +695,20 @@ def query_table(rows: list[dict], question: str):
             base = filtered
         if base:
             return _format_list(base, list_col, q)
+
+    # 多 sheet 同名实体：优先保留“问题点名的列确实有值”的行。
+    # 问联系电话时，销售订单行没有该列，不应把整行倒出来。
+    if selected and header_hits:
+        def _usable(row, header):
+            value = (row.get(header) or "").strip()
+            return bool(value) and not _is_formula(value)
+
+        scores = [sum(1 for h in header_hits if _usable(row, h))
+                  for row in selected]
+        best = max(scores)
+        if best > 0:
+            selected = [row for row, score in zip(selected, scores)
+                        if score == best]
     if not selected:
         if not conditions:
             return None
@@ -679,29 +726,40 @@ def query_table(rows: list[dict], question: str):
         English: Prefer company/person identity, then job title, then matched
         values; reverse lookups by phone/salary/location must label the company."""
         matched_identity = ""
+        matched_code = ""
         matched_job = ""
         for key, value in row.items():
-            if key in _META_KEYS or value not in matched_values:
+            if key in _META_KEYS or value not in matched_values or _is_formula(value):
                 continue
             concept = _header_concept(key)
-            if concept in _IDENTITY_CONCEPTS or key in _IDENTITY_KEYS:
+            if key in _NAME_KEYS or concept in _IDENTITY_CONCEPTS:
                 matched_identity = matched_identity or value
+            elif key in _IDENTITY_KEYS:
+                matched_code = matched_code or value
             elif concept == "招聘岗位":
                 matched_job = matched_job or value
         if matched_identity:
             base = matched_identity
         elif matched_job:
             base = matched_job
+        elif matched_code:
+            base = matched_code
         else:
             base = ""
             for key, value in row.items():
-                concept = _header_concept(key)
-                if (key not in _META_KEYS and value
-                        and _as_number(value) is None
-                        and (concept in _IDENTITY_CONCEPTS
-                             or key in _IDENTITY_KEYS)):
+                if (key in _NAME_KEYS and value and not _is_formula(value)
+                        and _as_number(value) is None):
                     base = value
                     break
+            if not base:
+                for key, value in row.items():
+                    concept = _header_concept(key)
+                    if (key not in _META_KEYS and value and not _is_formula(value)
+                            and _as_number(value) is None
+                            and (concept in _IDENTITY_CONCEPTS
+                                 or key in _IDENTITY_KEYS)):
+                        base = value
+                        break
             if not base:
                 for value in row.values():
                     if (value in matched_values and _as_number(value) is None
@@ -710,7 +768,7 @@ def query_table(rows: list[dict], question: str):
                         break
             if not base:
                 for value in row.values():
-                    if value and _as_number(value) is None:
+                    if value and not _is_formula(value) and _as_number(value) is None:
                         base = value
                         break
             if not base:
@@ -733,12 +791,18 @@ def query_table(rows: list[dict], question: str):
         """输出列：问题点名的列；没有点名时才回退到整行。
 
         已经作为标签的值不重复输出；同名多行时自动补「招聘岗位」。"""
-        explicit = [h for h in header_hits if row.get(h)]
+        sheet = row.get(_SHEET_KEY, "")
+        base_label = (label[len(sheet) + 1:]
+                      if sheet and label.startswith(sheet + " ") else label)
+        explicit = [h for h in header_hits
+                    if row.get(h) and not _is_formula(row.get(h))]
         if explicit:
-            cols = [c for c in explicit if row.get(c) != label]
+            cols = [c for c in explicit if row.get(c) != base_label]
         else:
             cols = [k for k in row
-                    if k not in _META_KEYS and row.get(k) and row.get(k) != label]
+                    if k not in _META_KEYS and row.get(k)
+                    and not _is_formula(row.get(k))
+                    and row.get(k) != base_label]
         if len(selected) > 1 and job_col and job_col not in cols and row.get(job_col):
             cols = [job_col] + cols
         return cols
@@ -770,6 +834,12 @@ def query_table(rows: list[dict], question: str):
         label = _label(row)
         cols = _row_cols(row, label)
         if not cols:
+            formulas = [h for h, value in row.items()
+                        if h not in _META_KEYS and _is_formula(value)
+                        and (_header_base(h) in q or h.lower() in q)]
+            if formulas:
+                lines.append(f"{label}：{'、'.join(formulas)} 为公式，"
+                             "文件未保存计算结果")
             continue
         job = ""
         if len(selected) > 1 and job_col and job_col in cols:
@@ -786,7 +856,10 @@ def query_table(rows: list[dict], question: str):
     for index, group in enumerate(groups, 1):
         if not group["jobs"] and len(group["others"]) == 1:
             col, value = group["others"][0]
-            lines.append(f"{group['label']}：{col}={value}")
+            line = f"{group['label']}：{col}={value}"
+            if len(groups) > 1:
+                line = f"{index}. {line}"
+            lines.append(line)
             continue
         block = [group["label"]]
         if group["jobs"]:

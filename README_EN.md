@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.4.4).
+service (v2.4.5).
 
 ## Why kb
 
@@ -76,6 +76,11 @@ service (v2.4.4).
   and rebuilding BM25; includes a 680-record / 5-restart regression test.
 - **MCP document management (v2.4.4)** — new `list_documents` / `delete_document`
   tools, so MCP clients can list and delete RAG content as well (13 tools total).
+- **Excel compatibility & Q&A cleanup (v2.4.5)** — handles exporters that omit
+  `<dimension>` (previously “empty table”), detects title rows and merged cells,
+  supports `.xls`; same entity across sheets returns only rows that actually have
+  the requested column; formula cells are reported as formulas; sources render as
+  field/value pairs; `/search` accepts `table=true` for retrieval-only table answers.
 - **Access audit** — every write/read/update/delete/search/ask emits a JSON line
   under `logs/agent-audit/`; query it through `GET /api/v1/audit?client=<client>`
   or `kb audit --client <client>`.

@@ -108,6 +108,8 @@ def test_healthz暴露嵌入器状态(env_isolated, monkeypatch):
         body = c.get("/api/v1/healthz").json()
     assert body["embedder"]["state"] == "error"
     assert body["embedder"]["error"] == "simulated"
+    from kb import __version__
+    assert body["version"] == __version__
 
 
 def test_mcp通道空查询与模型不可用返回结构化错误(env_isolated, monkeypatch):

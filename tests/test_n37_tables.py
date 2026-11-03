@@ -180,6 +180,29 @@ class TestRealWorldSheets:
                                         "薪酬待遇（元/月）"]
         assert tables[0]["rows"] == [["1", "A公司", "会计", "5000-8000"]]
 
+    def test_缺少dimension仍能解析(self, tmp_path):
+        """财务/BI 导出的 xlsx 常没有 <dimension>，read_only 会读到 0 行。"""
+        import re
+        import zipfile
+        openpyxl = pytest.importorskip("openpyxl")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["订单编号", "客户名称", "金额"])
+        ws.append(["SO001", "A公司", "1000"])
+        src = tmp_path / "normal.xlsx"
+        wb.save(src)
+        out = tmp_path / "no-dimension.xlsx"
+        with zipfile.ZipFile(src) as zin, \
+                zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == "xl/worksheets/sheet1.xml":
+                    data = re.sub(rb"<dimension[^>]*/>", b"", data)
+                zout.writestr(item, data)
+        tables = parse_table_file(out)
+        assert tables[0]["headers"] == ["订单编号", "客户名称", "金额"]
+        assert tables[0]["rows"] == [["SO001", "A公司", "1000"]]
+
     def test_合并单元格续行补全(self, tmp_path):
         openpyxl = pytest.importorskip("openpyxl")
         wb = openpyxl.Workbook()
@@ -288,6 +311,38 @@ class TestRealWorldSheets:
         ]
         answer = query_rows(rows, "薪酬5000以上的企业有哪些")
         assert "A公司" in answer and "B公司" not in answer and "C公司" not in answer
+
+    def test_同名实体只返回包含目标列的表(self):
+        """问联系电话时，销售订单行没有该列，不能把整行倒出来。"""
+        rows = [
+            {"__sheet": "销售订单明细", "订单编号": "SO001",
+             "客户名称": "A公司", "数量": "10"},
+            {"__sheet": "客户档案", "客户名称": "A公司",
+             "联系电话": "13800000000"},
+        ]
+        answer = query_rows(rows, "A公司的联系电话")
+        assert "客户档案" in answer
+        assert "销售订单明细" not in answer
+
+    def test_公式值不作为答案(self):
+        rows = [{"企业名称": "A公司", "销售金额(元)": "＝SUM(B2:C2)"}]
+        answer = query_rows(rows, "A公司的销售金额")
+        assert "为公式" in answer
+        assert "＝SUM" not in answer
+
+    def test_日期去掉时分秒(self, tmp_path):
+        openpyxl = pytest.importorskip("openpyxl")
+        from datetime import datetime
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["日期", "备注"])
+        ws.append([datetime(2026, 1, 2), "零点"])
+        ws.append([datetime(2026, 1, 2, 3, 4), "有时分"])
+        p = tmp_path / "日期.xlsx"
+        wb.save(p)
+        rows = parse_table_file(p)[0]["rows"]
+        assert rows[0][0] == "2026-01-02"
+        assert rows[1][0] == "2026-01-02 03:04"
 
     def test_中文表名匹配阿拉伯数字表名(self):
         rows = [
