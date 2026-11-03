@@ -18,7 +18,7 @@
 
 1. **对外监听必设 key**：如需 `KB_API_HOST=0.0.0.0`（局域网/容器访问），务必设置 `KB_API_KEY`，并以 HTTPS 反向代理（如 nginx/caddy）终结 TLS。
 2. **key 管理**：key 只写入本机 `.env`（已被 `.gitignore` 排除），禁止入库、禁止写入代码或提交记录。
-3. **网页入库**：`/api/v1/webpages` 会抓取任意 URL，请勿对不可信来源开放调用权限。
+3. **网页入库**：`/api/v1/ingest/web` 会抓取外部 URL；默认拒绝回环/私有/链路本地地址并限制重定向与响应体大小（本地调试需显式设 `KB_WEB_ALLOW_PRIVATE=1`），仍请勿对不可信来源开放调用权限。
 4. **敏感数据**：将含隐私的 namespace 加入 `KB_SENSITIVE_NAMESPACES`，确保相关问答走本地模型。
 5. **目录监听**：`KB_WATCH_DIR` 指向的目录会被自动摄取，避免指向含系统敏感文件的目录。
 

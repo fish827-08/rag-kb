@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.2
     cache_size: int = 100                       # /ask 答案缓存条数（LRU）
     cache_sim_threshold: float = 0.95           # 缓存命中相似度阈值
+    min_vector_score: float = 0.30              # 向量召回最低余弦分；低于此值视为不相关（0=关闭）
     sensitive_namespaces: str = ""              # 逗号分隔，敏感 namespace 强制本地
     # ---- 日志（日志设计文档第 3 节，N17）----
     log_level: str = "INFO"                     # 全局级别（DEBUG 开发期排查用）
@@ -54,6 +55,7 @@ class Settings(BaseSettings):
     monitor_enabled: bool = False               # 默认不启常驻线程（去常驻：按需端点触发）
     monitor_interval: int = 10                  # 轮询间隔（分钟），≥1，非法回退默认（常驻模式用）
     monitor_startup_run: bool = True            # 启动时立即跑一轮（便于验证；常驻模式用）
+    max_upload_bytes: int = 104857600            # 单文件上传上限（100MB，0=不限制）
     monitor_max_tokens: int = 300               # 摘要输出上限（护栏：≤300，硬约束）
     monitor_autotimer: int = 0                  # KB_MONITOR_AUTOTIMER：外部轮询间隔（分钟），0=关
     dispatch_enabled: bool = True                # KB_DISPATCH_ENABLED：监控单轮后异常调度（comm:dispatch），默认开（TASK-0049）

@@ -7,7 +7,7 @@ import os
 import subprocess
 import threading
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,7 +22,7 @@ from kb.scopes import ScopeManager
 from kb.sparse import SparseEmbedder as _SparseEmbedderClass
 from kb.sparse import SparseIndex
 from kb.storage import ChromaStore
-from kb.tables import (TABLE_EXTS, parse_table_file, query_rows,
+from kb.tables import (TABLE_EXTS, parse_table_file, query_table,
                        row_to_text, rows_from_content)
 
 __all__ = ["KBService", "LLMDisabledError", "UnsupportedFormatError",
@@ -577,6 +577,7 @@ class KBService:
             scope.bm25.add(record)
             self._persist_bm25(scope)
             self._sparse_add(scope, [record])
+            self.scopes.sync_count(scope)
             self._audit_access("write", agent_id, type="memory",
                                record_id=record.id, content=content,
                                namespace=namespace, client=client,
@@ -634,9 +635,9 @@ class KBService:
             if tags is not None:
                 record.tags = tags
             record.updated_at = datetime.now().isoformat()
-            # 先删旧向量，再按同 id 重新嵌入写入（保持主键不变）
-            scope.store.delete([record_id])
+            # v2.4.1：先嵌入再删旧；嵌入失败时旧向量仍在，不会留下空记录
             vec = self.embedder.embed_texts([record.content])[0]
+            scope.store.delete([record_id])
             scope.store.add([record], [vec])
             scope.bm25.remove(record_id)
             scope.bm25.add(record)
@@ -666,6 +667,7 @@ class KBService:
             self._sparse_remove(scope, [record_id])
             if scope.links is not None:
                 scope.links.remove_record(record_id)
+            self.scopes.sync_count(scope)
             self._audit_access("delete", agent_id, type=record.type.value,
                                record_id=record_id, namespace=record.namespace,
                                client=client, project=project)
@@ -867,9 +869,20 @@ class KBService:
         the parse_file + chunk_text behavior."""
         suffix = path.suffix.lower()
         doc_source = source or path.name
+        if suffix == ".xls":
+            raise UnsupportedFormatError(
+                "旧版 .xls 暂不支持表格问答，请用 Excel 另存为 .xlsx 后重试")
         if suffix in TABLE_EXTS:
-            return self._table_records(path, doc_source, agent_id=agent_id,
-                                       client=client, project=project)
+            try:
+                return self._table_records(
+                    path, doc_source, agent_id=agent_id,
+                    client=client, project=project)
+            except UnsupportedFormatError as exc:
+                # multipart 上传时 path 是临时文件名，错误信息应回显上传文件名
+                message = str(exc)
+                if path.name != doc_source:
+                    message = message.replace(path.name, doc_source)
+                raise UnsupportedFormatError(message) from exc
         text = parse_file(path)
         chunks = chunk_text(text, self.settings.chunk_size,
                             self.settings.chunk_overlap)
@@ -954,6 +967,7 @@ class KBService:
             scope.bm25.add_many(records)
             self._persist_bm25(scope)
             self._sparse_add(scope, records)
+            self.scopes.sync_count(scope)
             self._audit_access("ingest", agent_id, type="doc_chunk",
                                source=doc_source, content=records[0].content,
                                namespace=records[0].namespace, client=client,
@@ -980,11 +994,22 @@ class KBService:
             records: list[Record] = []
             failed: list[dict] = []
             files = 0
-            for path in paths:
-                path = Path(path)
+            path_list = [Path(p) for p in paths]
+            # 同名文件（a/doc.md 与 b/doc.md）用「父目录/文件名」区分，避免互相覆盖
+            name_counts = Counter(p.name for p in path_list)
+            used_sources: dict[str, int] = {}
+            for path in path_list:
+                src = path.name
+                if name_counts[path.name] > 1:
+                    src = f"{path.parent.name}/{path.name}"
+                if src in used_sources:
+                    used_sources[src] += 1
+                    src = f"{src}#{used_sources[src]}"
+                else:
+                    used_sources[src] = 1
                 try:
                     file_records = self._records_for_path(
-                        path, source=path.name, agent_id=agent_id,
+                        path, source=src, agent_id=agent_id,
                         client=client, project=project)
                 except (UnsupportedFormatError, OSError) as exc:
                     failed.append({"source": path.name, "error": str(exc)})
@@ -1012,6 +1037,7 @@ class KBService:
             scope.bm25.add_many(records)
             self._persist_bm25(scope)
             self._sparse_add(scope, records)
+            self.scopes.sync_count(scope)
             for source in sorted(sources):
                 self._audit_access("ingest", agent_id, type="doc_chunk",
                                    source=source, content=f"bulk:{source}",
@@ -1050,6 +1076,7 @@ class KBService:
             scope.bm25.add_many(records)
             self._persist_bm25(scope)
             self._sparse_add(scope, records)
+            self.scopes.sync_count(scope)
             self._audit_access("ingest", agent_id, type="web_chunk",
                                source=url, content=records[0].content,
                                namespace=records[0].namespace, client=client,
@@ -1065,8 +1092,9 @@ class KBService:
         web / table (CSV/Excel) / doc. chunks=record count; chars=total content chars;
         last_imported=max created_at."""
         docs: dict[str, dict] = {}
+        internal_sources = {"kb-monitor", "kb-dispatch"}
         for r in self.scopes.get(project).store.iter_all():
-            if not r.source:
+            if not r.source or r.source in internal_sources:
                 continue
             d = docs.setdefault(r.source, {
                 "source": r.source, "chunks": 0, "chars": 0,
@@ -1115,6 +1143,7 @@ class KBService:
             self._sparse_remove(scope, ids)
             if scope.links is not None:
                 scope.links.remove_records(ids)
+            self.scopes.sync_count(scope)
             return n
 
     # ---- 检索与统计 ----
@@ -1235,7 +1264,8 @@ class KBService:
             merged: dict[str, dict] = {}
             for hit in project_hits:
                 item = dict(hit)
-                item["score"] = float(item.get("score", 0.0)) + boost
+                # 项目加分后仍限制在 [0,1]，避免出现 1.05 这类超出相似度语义的分数
+                item["score"] = min(1.0, float(item.get("score", 0.0)) + boost)
                 merged[item["id"]] = item
             for hit in global_hits:
                 merged.setdefault(hit["id"], hit)
@@ -1248,9 +1278,13 @@ class KBService:
         if getattr(self.settings, "link_expand_enabled", True):
             extras = self._expand_links(results, project, type, tag)
             if extras:
-                results = sorted(results + extras,
-                                 key=lambda item: item.get("score", 0.0),
-                                 reverse=True)[:top_k + len(extras)]
+                # v2.4.1：关联扩展只填补 top_k 剩余名额，不再突破 top_k
+                remaining = max(0, top_k - len(results))
+                extras = extras[:remaining]
+                if extras:
+                    results = sorted(results + extras,
+                                     key=lambda item: item.get("score", 0.0),
+                                     reverse=True)[:top_k]
         self._audit_access("search", agent_id, query=query,
                            hits=len(results), namespace="default",
                            client=client, project=project or "")
@@ -1335,8 +1369,7 @@ class KBService:
             scopes.append(self.scopes.get(project))
         scopes.append(self.scopes.global_scope)
         rows: list[dict] = []
-        sources: list[dict] = []
-        seen: set[str] = set()
+        records_by_id: dict[str, object] = {}
         for scope in scopes:
             for record in scope.store.iter_all():
                 if "table" not in (record.tags or []):
@@ -1344,14 +1377,23 @@ class KBService:
                 parsed = rows_from_content(record.content)
                 if not parsed:
                     continue
+                records_by_id[record.id] = record
+                for row in parsed:
+                    row["_record_id"] = record.id
                 rows.extend(parsed)
-                if record.id not in seen:
-                    seen.add(record.id)
-                    sources.append({"id": record.id, "content": record.content,
-                                    "score": 1.0, "source": record.source})
-        answer = query_rows(rows, question)
-        if answer is None:
+        result = query_table(rows, question)
+        if result is None:
             return None
+        answer, matched = result
+        # 来源只取真正命中的记录（不再把所有表格记录塞进 sources）
+        matched_ids = {row.get("_record_id") for row in matched}
+        sources = []
+        for rid in matched_ids:
+            record = records_by_id.get(rid)
+            if record is None:
+                continue
+            sources.append({"id": record.id, "content": record.content,
+                            "score": 1.0, "source": record.source})
         return {"answer": answer, "sources": sources[:5], "llm": "table",
                 "table": True}
 

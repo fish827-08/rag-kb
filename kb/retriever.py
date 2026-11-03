@@ -129,6 +129,14 @@ class HybridRetriever:
             keyword_hits = self.bm25.search(query, top_n=candidate)
         else:
             keyword_hits = []
+        # v2.5：相关性下限——向量路按原始余弦分过滤，BM25 路去掉 0 分记录，
+        # 避免无关问题也返回“归一化后 1.0”的伪高分。
+        min_vec = float(getattr(self.settings, "min_vector_score", 0.0) or 0.0)
+        if min_vec > 0:
+            vector_hits = [(rid, s) for rid, s in vector_hits
+                           if float(s) >= min_vec]
+        # BM25 在单文档语料下可能得到负分（IDF 公式），只剔除「完全 0 分」（无词面重叠）
+        keyword_hits = [(rid, s) for rid, s in keyword_hits if float(s) != 0.0]
         # N25 稀疏第三路（A3.5 spec §3.3）：仅 hybrid 且 sparse_enabled 且组件
         # 已注入时启用；SparseEmbedder 异常按不可用处理（双路兜底，不中断检索）
         sparse_hits: list[tuple[str, float]] = []
@@ -158,6 +166,16 @@ class HybridRetriever:
             # N24：截断放宽到 candidate（非 rerank 路径最终仍截 top_k，零行为变化；
             # rerank 开启时从完整候选池精排）
             fused = sorted(keyword_hits, key=lambda x: x[1], reverse=True)[:candidate]
+
+        # v2.5：type/tag 过滤提前到 top_k 截断之前，避免「有匹配却被截断后过滤成空」
+        if type or tag:
+            filtered_recs = self.store.get_many([rid for rid, _ in fused])
+            fused = [
+                (rid, score) for rid, score in fused
+                if (rec := filtered_recs.get(rid)) is not None
+                and (not type or rec.type.value == type)
+                and (not tag or tag in rec.tags)
+            ]
 
         # 治理排序应用点（TASK-0068 衰减 §3.1 + TASK-0070 新鲜度 §3.3）：仅 hybrid/vector 模式，BM25 不受影响
         # 默认全关零行为变化；衰减看 last_accessed（访问冷热），新鲜度看 updated_at（内容新旧），两者正交相乘

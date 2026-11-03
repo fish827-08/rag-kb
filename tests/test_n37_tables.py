@@ -96,6 +96,22 @@ class TestDeterministicQuery:
         rows = [{"学号": "01500", "姓名": "张三", "数学": "50"}]
         assert query_rows(rows, "1500号学生的数学成绩") is None
 
+    def test_无关问题不劫持表格(self):
+        """「北京有哪些旅游景点」没有列名/意图词 → 不能命中城市表。"""
+        rows = [{"城市": "北京", "人口": "2189", "面积": "16410"}]
+        assert query_rows(rows, "北京有哪些旅游景点") is None
+
+    def test_前缀值只取最长命中(self):
+        rows = [{"用户": "用户5", "分数": "10"},
+                {"用户": "用户55", "分数": "20"},
+                {"用户": "用户550", "分数": "30"}]
+        assert query_rows(rows, "用户550的分数") == "用户550：分数=30"
+
+    def test_重复内容行只答一次(self):
+        rows = [{"城市": "北京", "人口": "2189"},
+                {"城市": "北京", "人口": "2189"}]
+        assert query_rows(rows, "北京的人口是多少") == "北京：人口=2189"
+
     def test_多sheet按表名消歧(self):
         rows = [
             {"__sheet": "五班", "姓名": "张芳", "数学": "99"},

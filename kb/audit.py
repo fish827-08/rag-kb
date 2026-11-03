@@ -157,15 +157,11 @@ def parse_agent_file_name(filename: str) -> dict:
     v2 naming: <client>__<project>.log (two segments); "default" project = default bucket.
     Old three-segment and two-segment agent-based names are still parsed for zero-migration reads."""
     name = Path(filename).name
-    for suffix in (".log",):
-        if name.endswith(suffix):
-            base = name[: -len(suffix)]
-            break
-    else:
-        base = name
-    # 去掉可能的按天轮转后缀 .YYYY-MM-DD
-    parts = base.split(".")
-    stem = parts[0] if parts else base
+    # 先去掉按天轮转后缀 .YYYY-MM-DD，再剥 .log（文件名可能是 x.log.2026-08-29）；
+    # 不能按 "." 分割（client 可含点号，如 my.client）
+    stem = re.sub(r"\.\d{4}-\d{2}-\d{2}$", "", name)
+    if stem.endswith(".log"):
+        stem = stem[: -len(".log")]
     segs = stem.split(_SEP)
     client = segs[0] if len(segs) > 0 else "unknown"
     project = segs[1] if len(segs) > 1 else "default"

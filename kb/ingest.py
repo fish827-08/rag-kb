@@ -12,9 +12,14 @@ httpx / trafilatura）均在函数内延迟导入，服务启动不加载；其�
 pypdf/python-docx/markitdown/trafilatura 属于可选 extra `[ingest]`，
 缺失时返回带安装指引的可读错误。
 """
+import ipaddress
+import os
+import socket
 from pathlib import Path
+from urllib.parse import urlparse
 
 _INGEST_HINT = "请运行 pip install \"kb-memory[ingest]\" 后重试"
+_MAX_WEB_BYTES = 5 * 1024 * 1024  # 网页正文原始 HTML 上限 5MB
 
 
 def _ingest_import(module: str, what: str):
@@ -94,15 +99,65 @@ def chunk_text(text: str, size: int, overlap: int) -> list[str]:
     return splitter.split_text(text)
 
 
+def _validate_public_url(url: str) -> None:
+    """网页入库 SSRF 防护：仅 http(s)，拒绝回环/私有/链路本地/保留地址。
+
+    本地调试可设 KB_WEB_ALLOW_PRIVATE=1 放行（默认关闭）。
+    English: SSRF guard for web ingestion: only http(s); reject loopback, private,
+    link-local and reserved addresses. Set KB_WEB_ALLOW_PRIVATE=1 for local testing."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise WebFetchError(f"仅支持 http(s) 网页：{url}")
+    host = parsed.hostname
+    if not host:
+        raise WebFetchError(f"URL 缺少主机名：{url}")
+    if os.environ.get("KB_WEB_ALLOW_PRIVATE", "").strip().lower() in (
+            "1", "true", "yes"):
+        return
+    try:
+        infos = socket.getaddrinfo(host, parsed.port or 80,
+                                   type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise WebFetchError(f"域名解析失败（{host}）：{exc}") from exc
+    for info in infos:
+        address = info[4][0]
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast):
+            raise WebFetchError(f"URL 指向私有/回环地址，已拒绝：{url}")
+
+
 def _fetch_html(url: str) -> str:
-    """httpx 抓取页面 HTML：超时 15s、UA 伪装常规浏览器、跟随重定向；
-    4xx/5xx 与网络错误抛原始异常（由 fetch_webpage 统一包装）。"""
+    """httpx 抓取页面 HTML：超时 15s、UA 伪装浏览器、手动跟随最多 3 次重定向，
+    每一跳都做 SSRF 校验，并限制响应体大小（5MB）。
+    English: Fetch HTML with a 15s timeout, browser UA, up to 3 manual redirects
+    (each hop validated for SSRF), and a 5MB response-size cap."""
     import httpx
+    current = url
     with httpx.Client(timeout=15, headers={"User-Agent": _WEB_USER_AGENT},
-                      follow_redirects=True) as client:
-        resp = client.get(url)
-        resp.raise_for_status()
-        return resp.text
+                      follow_redirects=False) as client:
+        for _ in range(4):
+            _validate_public_url(current)
+            with client.stream("GET", current) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location")
+                    if not location:
+                        raise WebFetchError(f"重定向缺少 Location：{current}")
+                    current = str(httpx.URL(current).join(location))
+                    continue
+                resp.raise_for_status()
+                data = bytearray()
+                for chunk in resp.iter_bytes():
+                    data.extend(chunk)
+                    if len(data) > _MAX_WEB_BYTES:
+                        raise WebFetchError(
+                            f"网页响应体超过 {_MAX_WEB_BYTES} 字节上限")
+                return bytes(data).decode(resp.encoding or "utf-8",
+                                          errors="replace")
+        raise WebFetchError(f"重定向次数过多：{url}")
 
 
 def fetch_webpage(url: str) -> str:
