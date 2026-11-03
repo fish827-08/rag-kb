@@ -12,7 +12,7 @@ from typing import Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.requests import Request
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -123,12 +123,20 @@ def _normalize_level(level: str | None) -> str | None:
     return lvl
 
 
+# ---- 站点图标（v2.4）：浏览器直接请求 /favicon.ico，返回内联 SVG 而非 404 ----
+_FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="8" fill="#312e81"/>'
+    '<circle cx="16" cy="16" r="7" fill="#ffffff"/>'
+    '<circle cx="16" cy="16" r="3" fill="#312e81"/></svg>')
+
 # ---- 根路径极简导航页（N19）：纯字符串 HTML，无模板依赖 ----
 _NAV_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <title>kb 记忆服务</title>
+<link rel="icon" href="/favicon.ico">
 <style>
   body { margin: 0; min-height: 100vh; background: #f4f6f8; color: #24292f;
          font-family: "Microsoft YaHei", system-ui, sans-serif;
@@ -516,7 +524,8 @@ def _wrap_api_key(app, settings):
         path = scope.get("path", "")
         # 白名单：GET /api/v1/healthz 及其别名 /health（存活探针，无敏感数据）；
         # GET / 与 /ui* 为纯静态页面（不含任何数据），同样免鉴权，页面自身再带 Key 访问 /api/v1/*
-        if method == "GET" and (path in ("/api/v1/healthz", "/health", "/")
+        if method == "GET" and (path in ("/api/v1/healthz", "/health", "/",
+                                          "/favicon.ico")
                                 or path.startswith("/ui")):
             await app(scope, receive, send)
             return
@@ -920,6 +929,18 @@ def create_app(settings: Settings | None = None,
             raise HTTPException(status_code=503, detail={
                 "error": "LLM_DISABLED", "message": str(exc)})
 
+    @app.get("/api/v1/graph")
+    def graph(project: str | None = None,
+              limit: int = Query(200, ge=1, le=500)) -> dict:
+        """记忆知识图谱：memory 节点 + 关联边；RAG 文档块不入图（v2.4）。
+        English: Memory knowledge graph: memory nodes plus links (RAG document
+        chunks are excluded) (v2.4)."""
+        err = validate_project(project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
+        return kb.graph(project=project, limit=limit)
+
     @app.get("/api/v1/llm")
     def get_llm() -> dict:
         """当前 LLM 配置与可用性（API Key 只回是否已设置，不回明文）。
@@ -1042,6 +1063,14 @@ def create_app(settings: Settings | None = None,
             "freshness_beta": getattr(s, "freshness_beta", 0.05),
             "freshness_alpha": getattr(s, "freshness_alpha", 0.3),
         }
+
+    @app.get("/favicon.ico")
+    def favicon() -> Response:
+        """站点图标：浏览器会直接请求 /favicon.ico，用内联 SVG 返回避免 404。
+        English: Site icon: browsers request /favicon.ico directly; return inline
+        SVG to avoid a 404."""
+        return Response(content=_FAVICON_SVG, media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/")
     def root() -> HTMLResponse:

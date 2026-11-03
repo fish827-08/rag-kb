@@ -132,6 +132,16 @@ class LinkStore:
                 (record_id, record_id)).fetchone()
             return int(row[0]) if row else 0
 
+    def all_edges(self) -> list[dict]:
+        """返回全部边（只读，供知识图谱可视化）。
+
+        English: Return all edges (read-only, used by the knowledge-graph view)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT from_id, to_id, relation FROM links").fetchall()
+        return [{"from": row[0], "to": row[1], "relation": row[2]}
+                for row in rows]
+
     def neighbors(self, record_id: str) -> list[dict]:
         """列一跳邻居，双向查询；同邻居多条关系各占一项。"""
         with self._lock:

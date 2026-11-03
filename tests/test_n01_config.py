@@ -11,8 +11,11 @@ def test_默认配置(env_isolated):
     assert s.llm_temperature == 0.2
     assert s.llm_max_tokens == 800
     assert s.llm_api_key == ""            # 通用云端键默认空
-    assert s.llm_base_url == "https://api.deepseek.com"
-    assert s.llm_cloud_model == "deepseek-v4-flash"
+    # v2.4：云端不再预填 DeepSeek（避免强绑定过时服务商），由用户显式配置
+    assert s.llm_base_url == ""
+    assert s.llm_cloud_model == ""
+    assert s.cloud_base_url == ""
+    assert s.cloud_model == ""
     assert s.cloud_api_key == ""          # 兼容属性回退 deepseek
     assert s.context_token_limit == 2000
     assert s.chroma_dir == Path(env_isolated) / "chroma"

@@ -181,6 +181,12 @@ class HybridRetriever:
                 rec = recs_by_id.get(rid)
                 if rec is None:
                     continue
+                # v2.4：衰减/新鲜度只作用于 memory；RAG 文档块不遗忘、不降权
+                rtype = getattr(rec, "type", None)
+                rtype = getattr(rtype, "value", rtype)
+                if rtype != RecordType.MEMORY.value:
+                    rescored.append((rid, score))
+                    continue
                 final = score
                 # 衰减（TASK-0068，§3.1）：access_count/last_accessed 用 getattr 兼容 TASK-0067 未合入
                 if decay_on:

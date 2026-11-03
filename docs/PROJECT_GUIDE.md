@@ -53,6 +53,7 @@ REST、MCP 和浏览器界面，负责记忆存取、文档/网页入库、混�
 | `kb/service.py` | 1155 | **核心编排**：CRUD、入库、检索、问答、审计、治理接入 | 写锁、作用域合并、`_ask_auto` 路由都在这里 |
 | `kb/scopes.py` | 209 | 全局库 / 项目子库的物理隔离 | 所有读写入口必须经过 `get/locate`，禁止绕过 |
 | `kb/ingest.py` | 122 | 解析（txt/md/pdf/docx/markitdown）+ 切块 + 网页正文 | 可选依赖缺失时给「装哪个 extras」的明确错误 |
+| `kb/tables.py` | — | **v2.4** CSV/XLSX 解析、逐行文本化、确定性表格问答 | 行文本 `列名=值 \| ...`；无 LLM 也能精准答单元格 |
 | `kb/llm.py` | 155 | 本地 Ollama / 云端 OpenAI 兼容客户端 | `think:false` 直传；`stream:false` 显式关闭 |
 | `kb/api.py` | 1062 | FastAPI 工厂、REST 端点、鉴权/字符集/日志中间件 | 统一错误 JSON `{error, message}` |
 | `kb/mcp.py` | 365 | MCP 工具注册（写/查/读/改/删/关联/入库/问答） | 与 REST 共享同一个 `KBService` 单例 |
@@ -109,7 +110,9 @@ REST、MCP 和浏览器界面，负责记忆存取、文档/网页入库、混�
 
 16. `kb/embedder.py`：懒加载、`unload_if_idle`、错误转 503
 17. `kb/ingest.py`：`parse_file` 分支、`chunk_text` 递归切分、`fetch_webpage`（trafilatura）
-18. `kb/llm.py`：`probe`、`chat`、本地/云端差异（`think:false`、`stream:false`）
+18. `kb/tables.py`：CSV/XLSX 解析、`row_to_text`、`query_rows`（确定性表格问答）
+19. `kb/service.py` 的 `_table_answer` / `graph`：表格优先作答与图谱节点/边组装
+20. `kb/llm.py`：`probe`、`chat`、本地/云端差异（`think:false`、`stream:false`）
 
 **读完应能回答**：为什么服务启动后内存几乎为零？模型没下载时上传会报什么错？（答：懒加载；503 `EMBED_MODEL_UNAVAILABLE`）
 
@@ -227,13 +230,16 @@ python -m kb eval --file tests/eval_hongloumeng.jsonl --top-k 10 --rerank   # �
 ## 7. 测试与验证
 
 ```powershell
-pytest tests/ -q          # 全量：487 passed, 1 skipped（2026-11-03 实测，约 2.5 分钟）
+pytest tests/ -q          # 全量：510 passed, 1 skipped（2026-11-03 实测，约 2.5 分钟）
 pytest tests/test_n33_web_ui.py -q   # Web UI 的 8 项验收
 pytest tests/test_n34_bulk_ingest.py -q  # 批量导入的 3 项验收
 pytest tests/test_n35_llm_config.py -q   # 运行时 LLM 配置的 8 项验收
+pytest tests/test_n37_tables.py -q       # v2.4 表格导入与精准问答
+pytest tests/test_n38_graph.py -q        # v2.4 知识图谱接口
+pytest tests/test_n39_separation.py -q   # v2.4 RAG 与记忆分离（不遗忘）
 ```
 
-计数口径：`pytest tests/ --collect-only -q | Select-Object -Last 1` 会打印「488 tests collected」。
+计数口径：`pytest tests/ --collect-only -q | Select-Object -Last 1` 会打印「511 tests collected」。
 如果你的环境跑出别的数字，先看收集数——差异通常来自依赖缺失或不在同一 commit，而不是测试本身少跑。
 
 唯一的 1 项跳过是 `tests/test_v21_runtime.py` 的「Linux 开机自启」用例（Windows 下启动项用 `.cmd` 实现），

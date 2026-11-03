@@ -27,12 +27,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     llm_model: str = ""                        # 本地 Ollama 模型名（空=未配置，用户按自己电脑显存/需求自配，以 ollama list 为准）
     deepseek_api_key: str = ""             # 兼容旧配置（已弃用，见 llm_api_key/llm_base_url/llm_model）
-    deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_base_url: str = ""            # 已弃用；v2.4 起不再预填 DeepSeek（由用户显式配置）
+    deepseek_model: str = ""               # 已弃用；v2.4 起不再预填 DeepSeek 模型名
     # 通用云端 LLM（OpenAI 兼容接口）：任意服务商（OpenAI/DeepSeek/通义/硅基流动等）
     llm_api_key: str = ""                  # KB_LLM_API_KEY：云服务商 API Key
-    llm_base_url: str = "https://api.deepseek.com"   # KB_LLM_BASE_URL：OpenAI 兼容端点 base_url
-    llm_cloud_model: str = "deepseek-v4-flash"      # KB_LLM_CLOUD_MODEL：云端模型名
+    llm_base_url: str = ""                 # KB_LLM_BASE_URL：OpenAI 兼容端点 base_url（空=未配置）
+    llm_cloud_model: str = ""              # KB_LLM_CLOUD_MODEL：云端模型名（空=未配置）
     chunk_size: int = 500
     chunk_overlap: int = 100
     watch_dir: Path = Path("data")            # 目录监听（serve 挂载）；空串/"."=不启动

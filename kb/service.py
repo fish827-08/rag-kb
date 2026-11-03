@@ -22,12 +22,17 @@ from kb.scopes import ScopeManager
 from kb.sparse import SparseEmbedder as _SparseEmbedderClass
 from kb.sparse import SparseIndex
 from kb.storage import ChromaStore
+from kb.tables import (TABLE_EXTS, parse_table_file, query_rows,
+                       row_to_text, rows_from_content)
 
 __all__ = ["KBService", "LLMDisabledError", "UnsupportedFormatError",
            "WebFetchError", "EmbeddingUnavailableError"]
 
 # RAG 护栏系统提示：强约束仅依据参考文档作答，禁止编造
 RAG_SYSTEM_PROMPT = "仅依据参考文档回答，无相关信息则明确说明，禁止编造。"
+
+# 表格逐行入库上限：超过后按字符预算聚合成多行块，避免大表写爆向量库
+TABLE_MAX_ROW_RECORDS = 500
 
 # 复杂度分类提示（本地 LLM，max_tokens=5）：仅输出 SIMPLE / COMPLEX
 CLASSIFY_PROMPT = "判断问题类型，仅输出 SIMPLE 或 COMPLEX。问题：{q}"
@@ -427,6 +432,19 @@ class KBService:
         with self._write_lock:
             merged = dict(self._llm_overrides)
             merged.update(clean)
+            # v2.4：云端不再预填服务商；配置了 Key 却缺 Base URL/模型时直接报错，
+            # 避免写入一份运行时必然失败的配置（UI 会显示失败提示）。
+            eff_mode = merged.get("llm_mode", self.settings.llm_mode)
+            eff_key = (merged.get("llm_api_key") or self.settings.llm_api_key
+                       or self.settings.deepseek_api_key)
+            eff_base = (merged.get("llm_base_url") or self.settings.llm_base_url
+                        or self.settings.deepseek_base_url)
+            eff_model = (merged.get("llm_cloud_model")
+                         or self.settings.llm_cloud_model
+                         or self.settings.deepseek_model)
+            if eff_mode in ("cloud", "auto") and eff_key and not (eff_base and eff_model):
+                raise ValueError(
+                    "云端模式需同时填写 Base URL 与模型名（v2.4 起不再预填服务商）")
             save_llm_overrides(self.settings.llm_config_file, merged)
             self._llm_overrides = merged
             for field, value in merged.items():
@@ -837,6 +855,73 @@ class KBService:
         return extras
 
     # ---- 文档摄取与管理 ----
+    def _records_for_path(self, path: Path, *, source: str | None = None,
+                          agent_id: str = "default", client: str = "default",
+                          project: str | None = None) -> list[Record]:
+        """按扩展名把文件转成待入库记录（表格 vs 普通文档）。
+
+        表格（CSV/XLSX）逐行转 `列名=值 | ...` 文本并打 `table` 标签，
+        RAG 文档仍走 parse_file + chunk_text（行为不变）。
+        English: Convert a file into records: tables (CSV/XLSX) become one
+        `column=value | ...` line per row tagged `table`; regular documents keep
+        the parse_file + chunk_text behavior."""
+        suffix = path.suffix.lower()
+        doc_source = source or path.name
+        if suffix in TABLE_EXTS:
+            return self._table_records(path, doc_source, agent_id=agent_id,
+                                       client=client, project=project)
+        text = parse_file(path)
+        chunks = chunk_text(text, self.settings.chunk_size,
+                            self.settings.chunk_overlap)
+        return [Record(content=c, type=RecordType.DOC_CHUNK,
+                       source=doc_source, agent_id=agent_id, client=client,
+                       project=project or "") for c in chunks]
+
+    def _table_records(self, path: Path, source: str, *, agent_id: str,
+                       client: str, project: str | None) -> list[Record]:
+        """表格逐行转记录；行数超限时按 chunk_size 聚合成多行块。
+
+        多 sheet 时在行首加 `[表名] ` 前缀（解析时会被剥离），source 仍为
+        文件名，保证同一文件重复导入能整体替换。
+        English: Turn table rows into records; when the row count exceeds the limit,
+        group lines into multi-line blocks by chunk_size. With multiple sheets a
+        `[sheet] ` prefix is added (stripped on parsing); source stays the file name
+        so a re-import replaces the whole file."""
+        tables = parse_table_file(path)
+        multi_sheet = len(tables) > 1
+        records: list[Record] = []
+        for table in tables:
+            prefix = f"[{table['sheet']}] " if multi_sheet else ""
+            lines = []
+            for row in table["rows"]:
+                text = row_to_text(table["headers"], row)
+                if text:
+                    lines.append(prefix + text)
+            if not lines:
+                continue
+            if len(lines) > TABLE_MAX_ROW_RECORDS:
+                blocks: list[str] = []
+                buf: list[str] = []
+                used = 0
+                size = max(1, int(self.settings.chunk_size))
+                for line in lines:
+                    if used + len(line) > size and buf:
+                        blocks.append("\n".join(buf))
+                        buf, used = [], 0
+                    buf.append(line)
+                    used += len(line) + 1
+                if buf:
+                    blocks.append("\n".join(buf))
+                contents = blocks
+            else:
+                contents = lines
+            records.extend(
+                Record(content=c, type=RecordType.DOC_CHUNK, source=source,
+                       agent_id=agent_id, client=client,
+                       project=project or "", tags=["table"])
+                for c in contents)
+        return records
+
     def add_document(self, path: str | Path,
                      source: str | None = None,
                      agent_id: str = "default",
@@ -856,17 +941,13 @@ class KBService:
         isolated exactly like memories."""
         with self._write_lock:
             path = Path(path)
-            text = parse_file(path)
-            chunks = chunk_text(text, self.settings.chunk_size,
-                                self.settings.chunk_overlap)
             doc_source = source or path.name
-            if not chunks:
+            records = self._records_for_path(
+                path, source=doc_source, agent_id=agent_id, client=client,
+                project=project)
+            if not records:
                 return {"source": doc_source, "chunks": 0}
             scope = self.scopes.get(project)
-            records = [Record(content=c, type=RecordType.DOC_CHUNK,
-                              source=doc_source, agent_id=agent_id, client=client,
-                              project=project or "")
-                       for c in chunks]
             vecs = self.embedder.embed_texts([r.content for r in records])
             replaced = self._replace_source_locked(scope, doc_source, records, vecs)
             # 改进项 1B：批量并入语料后单次重建（此前每个 chunk 触发一次全量重建）
@@ -902,21 +983,17 @@ class KBService:
             for path in paths:
                 path = Path(path)
                 try:
-                    text = parse_file(path)
-                except UnsupportedFormatError as exc:
+                    file_records = self._records_for_path(
+                        path, source=path.name, agent_id=agent_id,
+                        client=client, project=project)
+                except (UnsupportedFormatError, OSError) as exc:
                     failed.append({"source": path.name, "error": str(exc)})
                     continue
-                chunks = chunk_text(text, self.settings.chunk_size,
-                                    self.settings.chunk_overlap)
-                if not chunks:
+                if not file_records:
                     failed.append({"source": path.name, "error": "空文档"})
                     continue
                 files += 1
-                records.extend(
-                    Record(content=c, type=RecordType.DOC_CHUNK,
-                           source=path.name, agent_id=agent_id, client=client,
-                           project=project or "")
-                    for c in chunks)
+                records.extend(file_records)
             if not records:
                 return {"files": 0, "chunks": 0, "replaced": 0, "failed": failed}
             # 先算全部向量再删旧，嵌入失败不会清空已有数据（同 add_document）
@@ -980,16 +1057,24 @@ class KBService:
             return {"source": url, "chunks": len(records), "replaced": replaced}
 
     def list_documents(self, project: str | None = None) -> list[dict]:
-        """按 source 聚合文档列表（source 非空的所有记录，不限 type）。
+        """按 source 聚合文档列表（source 非空的所有记录，不限 type），并标注 kind。
+
+        kind=web（网页）/ table（CSV/Excel）/ doc（普通文档），供前端区分 RAG 内容来源；
         chunks=该 source 记录数；chars=content 总字符数；last_imported=最大 created_at。
-        English: Aggregate a document list by source (all records with a non-empty source, any type).
-        chunks=record count for the source; chars=total content chars; last_imported=max created_at."""
+        English: Aggregate a document list by source (any type) and label its kind:
+        web / table (CSV/Excel) / doc. chunks=record count; chars=total content chars;
+        last_imported=max created_at."""
         docs: dict[str, dict] = {}
         for r in self.scopes.get(project).store.iter_all():
             if not r.source:
                 continue
             d = docs.setdefault(r.source, {
-                "source": r.source, "chunks": 0, "chars": 0, "last_imported": ""})
+                "source": r.source, "chunks": 0, "chars": 0,
+                "last_imported": "", "kind": "doc"})
+            if r.type == RecordType.WEB_CHUNK:
+                d["kind"] = "web"
+            elif "table" in (r.tags or []):
+                d["kind"] = "table"
             d["chunks"] += 1
             d["chars"] += len(r.content)
             if r.created_at > d["last_imported"]:
@@ -1195,6 +1280,8 @@ class KBService:
         - llm_mode=auto：智能路由（缓存 → 本地分类 → 敏感覆盖 → 分支路由），见 _ask_auto；
         - LLM 禁用时抛 LLMDisabledError（API 层转 503 + 配置指引）。
         - v2.1（2026-10-20）：带 project 时检索该项目子库 + 全局库，并写 ask 存取审计。
+        - v2.4（2026-11-03）：先尝试确定性表格查询（命中直接返回，无 LLM 也能答），
+          未命中再走原 RAG 流程。
         English: RAG Q&A: retrieve → build context (truncated by char budget) → guarded prompt → generate → attach sources.
         - top_k=5 retrieval, results joined into context in descending score order;
         - char budget = context_token_limit * 2 (~2:1 token-to-char estimate);
@@ -1202,7 +1289,16 @@ class KBService:
         - llm_mode=auto: smart routing (cache → local classify → sensitive override → branch), see _ask_auto;
         - throws LLMDisabledError when LLM is disabled (mapped to 503 with guidance by the API layer).
         - v2.1: with project, retrieval covers that project's sub-store plus the global store;
-          an ask access-audit is emitted."""
+          an ask access-audit is emitted.
+        - v2.4: try the deterministic table query first (return directly on a hit, even without
+          an LLM); otherwise continue with the regular RAG path."""
+        table_result = self._table_answer(question, project)
+        if table_result is not None:
+            self._audit_access("ask", agent_id, query=question,
+                               hits=len(table_result["sources"]),
+                               namespace="default", client=client,
+                               project=project or "")
+            return table_result
         if self.llm.status is LLMStatus.DISABLED:
             if self.settings.llm_mode == "off":
                 raise LLMDisabledError(
@@ -1225,6 +1321,88 @@ class KBService:
         self._audit_access("ask", agent_id, query=question, hits=len(results),
                            namespace="default", client=client, project=project)
         return result
+
+    def _table_answer(self, question: str, project: str | None) -> dict | None:
+        """确定性表格问答：扫描带 table 标签的记录并逐行匹配，命中即返回。
+
+        与 RAG 不同，这里不调用 LLM、不做向量检索，答案直接来自表格单元格，
+        因此 `小明 语文 95` 这类问题可以精确命中；未命中返回 None 交给原流程。
+        English: Deterministic table Q&A: scan records tagged `table` and match rows
+        directly. No LLM or vector retrieval is involved, so exact cell questions hit
+        precisely; returns None when nothing matches, letting the normal path continue."""
+        scopes = []
+        if project and self.scopes.has_project(project):
+            scopes.append(self.scopes.get(project))
+        scopes.append(self.scopes.global_scope)
+        rows: list[dict] = []
+        sources: list[dict] = []
+        seen: set[str] = set()
+        for scope in scopes:
+            for record in scope.store.iter_all():
+                if "table" not in (record.tags or []):
+                    continue
+                parsed = rows_from_content(record.content)
+                if not parsed:
+                    continue
+                rows.extend(parsed)
+                if record.id not in seen:
+                    seen.add(record.id)
+                    sources.append({"id": record.id, "content": record.content,
+                                    "score": 1.0, "source": record.source})
+        answer = query_rows(rows, question)
+        if answer is None:
+            return None
+        return {"answer": answer, "sources": sources[:5], "llm": "table",
+                "table": True}
+
+    def graph(self, project: str | None = None, limit: int = 200) -> dict:
+        """记忆知识图谱：memory 节点 + links.db 边（RAG 文档块不入图）。
+
+        项目存在时合并项目子库与全局库；节点按关联度降序截断到 limit。
+        English: Memory knowledge graph: memory nodes plus links.db edges (RAG
+        document chunks are excluded). With a project, that sub-store is merged
+        with the global store; nodes are truncated to `limit` by degree."""
+        limit = max(1, min(int(limit or 200), 500))
+        scopes = []
+        if project and self.scopes.has_project(project):
+            scopes.append(self.scopes.get(project))
+        scopes.append(self.scopes.global_scope)
+        nodes: dict[str, dict] = {}
+        edges: list[dict] = []
+        for scope in scopes:
+            for record in scope.store.iter_all():
+                if record.type != RecordType.MEMORY:
+                    continue
+                nodes[record.id] = {
+                    "id": record.id,
+                    "label": (record.content or "").strip()[:80],
+                    "type": record.type.value,
+                    "project": record.project,
+                    "tags": list(record.tags or []),
+                    "created_at": record.created_at,
+                    "degree": 0,
+                }
+            if scope.links is not None:
+                for edge in scope.links.all_edges():
+                    if edge["from"] in nodes and edge["to"] in nodes:
+                        edges.append(edge)
+        degree: dict[str, int] = {}
+        for edge in edges:
+            degree[edge["from"]] = degree.get(edge["from"], 0) + 1
+            degree[edge["to"]] = degree.get(edge["to"], 0) + 1
+        for node_id, node in nodes.items():
+            node["degree"] = degree.get(node_id, 0)
+        ranked = sorted(nodes.values(),
+                        key=lambda n: (n["degree"], n["created_at"]),
+                        reverse=True)
+        truncated = len(ranked) > limit
+        kept = {n["id"] for n in ranked[:limit]}
+        return {
+            "nodes": ranked[:limit],
+            "edges": [e for e in edges
+                      if e["from"] in kept and e["to"] in kept],
+            "truncated": truncated,
+        }
 
     # ---- 智能路由（auto 模式）----
     def _ask_auto(self, question: str, results: list[dict],
