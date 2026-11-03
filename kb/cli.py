@@ -5,6 +5,7 @@ CLI entry: add / search / info / serve / mcp / forget / dedup / stats / ask / ev
 import json
 import os
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -428,6 +429,44 @@ def add(content: str,
         source=source, namespace=namespace, agent_id=project or "default",
         client=client, project=project)
     console.print(f"已写入 id={r.id} client={client} project={project or '-'}")
+
+
+@app.command("import")
+def import_cmd(paths: list[str] = typer.Argument(..., help="文件或目录，可传多个"),
+               project: str | None = typer.Option(None, "--project",
+                                                  help="项目名；缺省自动取当前目录名"),
+               client: str = typer.Option("CLI", "--client", help="来源客户端")):
+    """批量导入文件/目录：一次编码、一次写库、一次 BM25 重建。
+
+    整本书（几百个章节）场景比逐个上传快数倍；同一 source 重复导入自动替换。
+    """
+    files: list[Path] = []
+    for raw in paths:
+        p = Path(raw)
+        if p.is_dir():
+            files.extend(sorted(
+                x for x in p.rglob("*") if x.is_file()
+                and x.suffix.lower() in {".md", ".txt", ".pdf", ".docx"}))
+        elif p.is_file():
+            files.append(p)
+        else:
+            console.print(f"[red]路径不存在：{raw}[/red]")
+            raise typer.Exit(code=1)
+    if not files:
+        console.print("[yellow]没有可导入的文件[/yellow]")
+        raise typer.Exit(code=1)
+
+    project = project if project is not None else _default_project()
+    t0 = time.time()
+    r = _service().add_documents_bulk(files, project=project, client=client)
+    cost = time.time() - t0
+    console.print(
+        f"已导入 [bold]{r['files']}[/bold] 个文件 / [bold]{r['chunks']}[/bold] 块"
+        f"（替换旧块 {r['replaced']}），耗时 {cost:.1f}s，project={project or '-'}")
+    if r["failed"]:
+        console.print(f"[yellow]跳过 {len(r['failed'])} 个文件：[/yellow]")
+        for item in r["failed"][:10]:
+            console.print(f"  - {item['source']}: {item['error']}")
 
 
 @app.command()

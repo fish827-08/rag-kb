@@ -68,3 +68,7 @@ kb = "kb.cli:app"
 
 [tool.setuptools.packages.find]
 include = ["kb*"]
+
+[tool.setuptools.package-data]
+# Web UI 单文件页面：随 wheel 分发，否则 pip 安装后 /ui 404
+kb = ["static/*"]

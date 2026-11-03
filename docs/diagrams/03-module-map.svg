@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="680" viewBox="0 0 1080 680" role="img"
+     aria-label="kb 模块分层：入口层、编排层、检索层、存储层、基础层">
+  <defs>
+    <style>
+      .title { fill: #1b1f24; font: 600 20px/1.3 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .layer { fill: #fbfcfd; stroke: #d8dee5; stroke-width: 1; stroke-dasharray: 6 4; }
+      .lt    { fill: #5b6572; font: 500 13px/1.3 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .card  { fill: #ffffff; stroke: #dfe4ea; stroke-width: 1; }
+      .card-a{ fill: #e8f6ef; stroke: #0a7d4f; stroke-width: 1.3; }
+      .ct    { fill: #1b1f24; font: 500 14px/1.3 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .cs    { fill: #5b6572; font: 11px/1.4 ui-monospace, "SF Mono", Consolas, monospace; }
+    </style>
+  </defs>
+
+  <text class="title" x="40" y="40">三、模块分层（依赖从上往下，不反向）</text>
+
+  <!-- 入口层 -->
+  <rect class="layer" x="40" y="64" width="1000" height="100" rx="12"/>
+  <text class="lt" x="56" y="86">入口层</text>
+  <rect class="card" x="62" y="98" width="220" height="56" rx="8"/>
+  <text class="ct" x="172" y="120" text-anchor="middle">Web UI</text>
+  <text class="cs" x="172" y="140" text-anchor="middle">/ui · static/index.html</text>
+  <rect class="card" x="306" y="98" width="220" height="56" rx="8"/>
+  <text class="ct" x="416" y="120" text-anchor="middle">REST</text>
+  <text class="cs" x="416" y="140" text-anchor="middle">api.py · create_app</text>
+  <rect class="card" x="550" y="98" width="220" height="56" rx="8"/>
+  <text class="ct" x="660" y="120" text-anchor="middle">MCP</text>
+  <text class="cs" x="660" y="140" text-anchor="middle">mcp.py · 工具注册</text>
+  <rect class="card" x="794" y="98" width="220" height="56" rx="8"/>
+  <text class="ct" x="904" y="120" text-anchor="middle">CLI</text>
+  <text class="cs" x="904" y="140" text-anchor="middle">cli.py · add/search/ask</text>
+
+  <!-- 编排层 -->
+  <rect class="layer" x="40" y="182" width="1000" height="100" rx="12"/>
+  <text class="lt" x="56" y="204">编排层</text>
+  <rect class="card-a" x="62" y="216" width="220" height="56" rx="8"/>
+  <text class="ct" x="172" y="238" text-anchor="middle">KBService</text>
+  <text class="cs" x="172" y="258" text-anchor="middle">service.py · 写锁</text>
+  <rect class="card" x="306" y="216" width="220" height="56" rx="8"/>
+  <text class="ct" x="416" y="238" text-anchor="middle">ScopeManager</text>
+  <text class="cs" x="416" y="258" text-anchor="middle">scopes.py · 子库隔离</text>
+  <rect class="card" x="550" y="216" width="220" height="56" rx="8"/>
+  <text class="ct" x="660" y="238" text-anchor="middle">Audit</text>
+  <text class="cs" x="660" y="258" text-anchor="middle">audit.py · 存取审计</text>
+  <rect class="card" x="794" y="216" width="220" height="56" rx="8"/>
+  <text class="ct" x="904" y="238" text-anchor="middle">Governance</text>
+  <text class="cs" x="904" y="258" text-anchor="middle">governance.py · 衰减去重</text>
+
+  <!-- 检索层 -->
+  <rect class="layer" x="40" y="300" width="1000" height="100" rx="12"/>
+  <text class="lt" x="56" y="322">检索层</text>
+  <rect class="card" x="62" y="334" width="220" height="56" rx="8"/>
+  <text class="ct" x="172" y="356" text-anchor="middle">HybridRetriever</text>
+  <text class="cs" x="172" y="376" text-anchor="middle">retriever.py · 加权融合</text>
+  <rect class="card" x="306" y="334" width="220" height="56" rx="8"/>
+  <text class="ct" x="416" y="356" text-anchor="middle">Reranker</text>
+  <text class="cs" x="416" y="376" text-anchor="middle">reranker.py · 可选</text>
+  <rect class="card" x="550" y="334" width="220" height="56" rx="8"/>
+  <text class="ct" x="660" y="356" text-anchor="middle">Sparse</text>
+  <text class="cs" x="660" y="376" text-anchor="middle">sparse.py · 可选第三路</text>
+  <rect class="card" x="794" y="334" width="220" height="56" rx="8"/>
+  <text class="ct" x="904" y="356" text-anchor="middle">Eval</text>
+  <text class="cs" x="904" y="376" text-anchor="middle">eval.py · Recall@k</text>
+
+  <!-- 存储层 -->
+  <rect class="layer" x="40" y="418" width="1000" height="100" rx="12"/>
+  <text class="lt" x="56" y="440">存储层</text>
+  <rect class="card" x="62" y="452" width="220" height="56" rx="8"/>
+  <text class="ct" x="172" y="474" text-anchor="middle">ChromaStore</text>
+  <text class="cs" x="172" y="494" text-anchor="middle">storage.py · 向量库</text>
+  <rect class="card" x="306" y="452" width="220" height="56" rx="8"/>
+  <text class="ct" x="416" y="474" text-anchor="middle">BM25Index</text>
+  <text class="cs" x="416" y="494" text-anchor="middle">bm25.py · 关键词索引</text>
+  <rect class="card" x="550" y="452" width="220" height="56" rx="8"/>
+  <text class="ct" x="660" y="474" text-anchor="middle">Links</text>
+  <text class="cs" x="660" y="494" text-anchor="middle">links.py · SQLite 关联边</text>
+  <rect class="card" x="794" y="452" width="220" height="56" rx="8"/>
+  <text class="ct" x="904" y="474" text-anchor="middle">Ingest / Watcher</text>
+  <text class="cs" x="904" y="494" text-anchor="middle">ingest.py · watcher.py</text>
+
+  <!-- 基础层 -->
+  <rect class="layer" x="40" y="536" width="1000" height="100" rx="12"/>
+  <text class="lt" x="56" y="558">基础层</text>
+  <rect class="card" x="62" y="570" width="220" height="56" rx="8"/>
+  <text class="ct" x="172" y="592" text-anchor="middle">Config</text>
+  <text class="cs" x="172" y="612" text-anchor="middle">config.py · KB_* 配置</text>
+  <rect class="card" x="306" y="570" width="220" height="56" rx="8"/>
+  <text class="ct" x="416" y="592" text-anchor="middle">Record</text>
+  <text class="cs" x="416" y="612" text-anchor="middle">models.py · 统一数据模型</text>
+  <rect class="card" x="550" y="570" width="220" height="56" rx="8"/>
+  <text class="ct" x="660" y="592" text-anchor="middle">Embedder</text>
+  <text class="cs" x="660" y="612" text-anchor="middle">embedder.py · 懒加载/卸载</text>
+  <rect class="card" x="794" y="570" width="220" height="56" rx="8"/>
+  <text class="ct" x="904" y="592" text-anchor="middle">LLMClient</text>
+  <text class="cs" x="904" y="612" text-anchor="middle">llm.py · off/local/cloud</text>
+</svg>

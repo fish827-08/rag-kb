@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="400" viewBox="0 0 1080 400" role="img"
+     aria-label="kb 文档入库流程：上传文件或网页链接，解析、切块、向量编码后写入 Chroma 与 BM25 双索引">
+  <defs>
+    <style>
+      .title { fill: #1b1f24; font: 600 20px/1.3 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .note  { fill: #5b6572; font: 13px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .node  { fill: #ffffff; stroke: #d8dee5; stroke-width: 1.2; }
+      .node-a{ fill: #e8f6ef; stroke: #0a7d4f; stroke-width: 1.4; }
+      .nt    { fill: #1b1f24; font: 500 15px/1.3 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .ns    { fill: #5b6572; font: 12px/1.4 ui-monospace, "SF Mono", Consolas, monospace; }
+      .nst   { fill: #0a7d4f; font: 12px/1.4 ui-monospace, "SF Mono", Consolas, monospace; }
+      .edge  { fill: none; stroke: #8a95a1; stroke-width: 1.4; stroke-linecap: round; }
+      .dash  { fill: #fafbfc; stroke: #d8dee5; stroke-width: 1; stroke-dasharray: 5 4; }
+      .dt    { fill: #5b6572; font: 12px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    </style>
+    <marker id="ingest-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8"
+            markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M1 1 L7 4 L1 7 Z" fill="#8a95a1"/>
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="46">一、文档入库链路</text>
+  <text class="note" x="40" y="72">同一 source 重复入库时先删旧再写新，避免半旧半新；每一步都写审计日志。</text>
+
+  <g>
+    <rect class="node" x="45" y="112" width="172" height="88" rx="10"/>
+    <text class="nt" x="131" y="146" text-anchor="middle">上传文件 / 网页</text>
+    <text class="ns" x="131" y="172" text-anchor="middle">REST · MCP · UI</text>
+  </g>
+  <g>
+    <rect class="node" x="249" y="112" width="172" height="88" rx="10"/>
+    <text class="nt" x="335" y="146" text-anchor="middle">解析原文</text>
+    <text class="ns" x="335" y="172" text-anchor="middle">parse_file()</text>
+  </g>
+  <g>
+    <rect class="node" x="453" y="112" width="172" height="88" rx="10"/>
+    <text class="nt" x="539" y="146" text-anchor="middle">切块</text>
+    <text class="ns" x="539" y="172" text-anchor="middle">chunk_text(500,100)</text>
+  </g>
+  <g>
+    <rect class="node" x="657" y="112" width="172" height="88" rx="10"/>
+    <text class="nt" x="743" y="146" text-anchor="middle">向量编码</text>
+    <text class="ns" x="743" y="172" text-anchor="middle">embed_batch_size=32</text>
+  </g>
+  <g>
+    <rect class="node-a" x="861" y="112" width="172" height="88" rx="10"/>
+    <text class="nt" x="947" y="146" text-anchor="middle">双索引写入</text>
+    <text class="nst" x="947" y="172" text-anchor="middle">Chroma + BM25</text>
+  </g>
+
+  <path class="edge" d="M217 156 H241" marker-end="url(#ingest-arrow)"/>
+  <path class="edge" d="M421 156 H445" marker-end="url(#ingest-arrow)"/>
+  <path class="edge" d="M625 156 H649" marker-end="url(#ingest-arrow)"/>
+  <path class="edge" d="M829 156 H853" marker-end="url(#ingest-arrow)"/>
+
+  <rect class="dash" x="45" y="250" width="560" height="96" rx="10"/>
+  <text class="dt" x="65" y="276">· parse_file：txt / md / pdf / docx / markitdown 分支，缺依赖抛 UnsupportedFormatError</text>
+  <text class="dt" x="65" y="300">· chunk_text：RecursiveCharacterTextSplitter 递归回退，默认 500 字 / 100 重叠</text>
+  <text class="dt" x="65" y="324">· 失败先报错、后写库：向量算完才删旧记录（_replace_source_locked）</text>
+
+  <rect class="dash" x="640" y="250" width="395" height="96" rx="10"/>
+  <text class="dt" x="660" y="276">· BM25 语料落盘（bm25_corpus.json），启动免全量分词</text>
+  <text class="dt" x="660" y="300">· add_many 批量只重建一次索引</text>
+  <text class="dt" x="660" y="324">· 可选第三路稀疏索引（KB_SPARSE_ENABLED）</text>
+</svg>

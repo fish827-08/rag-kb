@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kb · 知识库与问答</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #f1f3f5;
+  --text: #1b1f24;
+  --muted: #5b6572;
+  --border: #e3e7ec;
+  --brand: #0a7d4f;
+  --brand-soft: #e8f6ef;
+  --danger: #bf3a2b;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 8px 24px rgba(16, 24, 40, .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #111418;
+    --surface: #171b20;
+    --surface-2: #1e242b;
+    --text: #e6e9ec;
+    --muted: #93a0ad;
+    --border: #2a313a;
+    --brand: #3ecf8e;
+    --brand-soft: #123126;
+    --danger: #ff7b6b;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+button:hover { background: var(--surface-2); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+button.primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  font-weight: 500;
+}
+button.primary:hover { filter: brightness(1.06); background: var(--brand); }
+button.primary:disabled { opacity: .55; cursor: default; }
+input, select, textarea {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  width: 100%;
+}
+textarea { resize: vertical; min-height: 96px; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+.sub { color: var(--muted); font-size: 13px; }
+.top-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.project-field { display: flex; align-items: center; gap: 8px; }
+.project-field span { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.project-field input { width: 160px; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.pill::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted);
+}
+.pill.ok { color: var(--brand); }
+.pill.ok::before { background: var(--brand); }
+.pill.bad { color: var(--danger); }
+.pill.bad::before { background: var(--danger); }
+details.settings summary {
+  cursor: pointer; list-style: none; padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 13px; color: var(--muted);
+}
+details.settings summary::-webkit-details-marker { display: none; }
+.settings-body {
+  position: absolute; right: 24px; margin-top: 8px; width: 320px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+}
+.settings-body label { display: block; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
+.settings-body label input { margin-top: 6px; }
+.settings-body .hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 20px;
+  padding: 20px 24px 40px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.card h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
+.card h3 {
+  margin: 22px 0 10px; font-size: 13px; font-weight: 600;
+  color: var(--muted); letter-spacing: .3px;
+  display: flex; align-items: center; gap: 8px;
+}
+.count { font-weight: 400; color: var(--muted); }
+.drop {
+  margin-top: 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  text-align: center;
+  background: var(--surface-2);
+}
+.drop.hot { border-color: var(--brand); background: var(--brand-soft); }
+.drop p { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+.row { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.row > input { flex: 1 1 200px; width: auto; }
+.row label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
+.row label select { width: auto; padding: 6px 8px; }
+.check { user-select: none; }
+.status { margin-top: 12px; font-size: 13px; min-height: 20px; }
+.status.err { color: var(--danger); white-space: pre-wrap; }
+.status.ok { color: var(--brand); }
+.status.busy { color: var(--muted); }
+
+.docs { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow: auto; }
+.doc {
+  display: flex; gap: 10px; align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface-2);
+}
+.doc-main { min-width: 0; flex: 1; }
+.doc-name {
+  font-weight: 500; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis;
+}
+.doc-meta { color: var(--muted); font-size: 12px; }
+.doc button { padding: 4px 10px; font-size: 12px; color: var(--muted); }
+.doc button:hover { color: var(--danger); border-color: var(--danger); }
+.empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
+
+.answer {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  background: var(--surface-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 96px;
+  font-size: 14.5px;
+  line-height: 1.75;
+}
+.answer .placeholder { color: var(--muted); }
+.sources { display: flex; flex-direction: column; gap: 10px; }
+.src {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface);
+}
+.src-head {
+  display: flex; gap: 8px; align-items: center;
+  font-size: 12px; color: var(--muted); margin-bottom: 6px;
+}
+.idx {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--brand-soft); color: var(--brand);
+  font-size: 11px; font-weight: 600;
+}
+.src-source {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1; min-width: 0; color: var(--text);
+}
+.score { color: var(--brand); font-variant-numeric: tabular-nums; }
+.src-text {
+  margin: 0; font-size: 13px; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+footer {
+  text-align: center; color: var(--muted); font-size: 12px;
+  padding: 0 24px 28px;
+}
+footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">kb</span>
+    <span class="sub">本地知识库 · 混合检索 · RAG 问答</span>
+  </div>
+  <div class="top-actions">
+    <div class="project-field">
+      <span>项目库</span>
+      <input id="project" placeholder="留空 = 全局库" list="projectList">
+      <datalist id="projectList"></datalist>
+    </div>
+    <span id="health" class="pill">检测中…</span>
+    <details class="settings" id="settings">
+      <summary>设置</summary>
+      <div class="settings-body">
+        <label>API Key（KB_API_KEY 非空时需要）
+          <input id="apiKey" type="password" autocomplete="off" placeholder="留空表示未启用鉴权">
+        </label>
+        <p class="hint">Key 只保存在本机浏览器 localStorage，不会发送到除本服务以外的地址。</p>
+        <button id="saveKey">保存</button>
+        <button id="clearKey">清除</button>
+      </div>
+    </details>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>知识入库</h2>
+    <div class="drop" id="drop">
+      <input id="file" type="file" multiple hidden>
+      <button id="pick">选择文件</button>
+      <p>支持 txt / md / pdf / docx 等格式，也可把文件拖到这里</p>
+    </div>
+    <div class="row">
+      <input id="url" placeholder="粘贴网页链接，例如 https://example.com/article">
+      <button id="ingestUrl">抓取网页</button>
+    </div>
+    <div class="status" id="ingestStatus" aria-live="polite"></div>
+    <h3>已入库文档 <span class="count" id="docCount"></span></h3>
+    <div class="docs" id="docs"><div class="empty">暂无文档</div></div>
+  </section>
+
+  <section class="card">
+    <h2>问答</h2>
+    <textarea id="question" placeholder="根据已入库的文档提问，例如：宝玉和黛玉第一次见面是在哪一回？"></textarea>
+    <div class="row">
+      <label>召回条数
+        <select id="topk">
+          <option value="5" selected>5</option>
+          <option value="8">8</option>
+          <option value="10">10</option>
+          <option value="15">15</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="searchOnly" style="width:auto"> 仅检索（不调用 LLM）</label>
+      <button id="ask" class="primary">提问</button>
+    </div>
+    <div class="answer" id="answer" aria-live="polite">
+      <span class="placeholder">答案会显示在这里；未配置 LLM 时请勾选「仅检索」。</span>
+    </div>
+    <h3>来源 <span class="count" id="srcCount"></span></h3>
+    <div class="sources" id="sources"></div>
+  </section>
+</main>
+
+<footer>
+  服务地址同源 · <a href="/docs" target="_blank" rel="noopener">REST API 文档</a> ·
+  <a href="/" target="_blank" rel="noopener">导航页</a>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var KEY_STORE = "kb.apiKey";
+  var PROJECT_STORE = "kb.project";
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { apiKey: "", project: "", busy: false };
+
+  /* ---------- 基础工具 ---------- */
+
+  function projectParam() {
+    var v = ($("project").value || "").trim();
+    return v ? v : null;
+  }
+
+  function headers(extra) {
+    var h = extra || {};
+    if (state.apiKey) h["X-API-Key"] = state.apiKey;
+    return h;
+  }
+
+  function setStatus(text, kind) {
+    var el = $("ingestStatus");
+    el.textContent = text;
+    el.className = "status" + (kind ? " " + kind : "");
+  }
+
+  function errorText(err) {
+    var msg = (err && err.message) || String(err);
+    if (msg === "UNAUTHORIZED") {
+      return "需要 API Key：请在右上角「设置」里填写 KB_API_KEY";
+    }
+    return msg;
+  }
+
+  /* 统一请求：返回解析后的 JSON；非 2xx 抛出带人话消息的错误 */
+  function api(path, options) {
+    options = options || {};
+    options.headers = headers(options.headers || {});
+    return fetch(path, options).then(function (resp) {
+      return resp.text().then(function (text) {
+        var data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+        if (!resp.ok) {
+          var detail = (data && (data.detail || data)) || {};
+          var msg = detail.message || detail.error || (data && data.detail) ||
+                    ("HTTP " + resp.status);
+          if (resp.status === 401) msg = "UNAUTHORIZED";
+          var err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
+          err.status = resp.status;
+          throw err;
+        }
+        return data;
+      });
+    });
+  }
+
+  /* ---------- 服务状态 ---------- */
+
+  function checkHealth() {
+    var el = $("health");
+    api("/api/v1/healthz").then(function (data) {
+      el.textContent = "服务在线";
+      el.className = "pill ok";
+      if (data && data.version) el.title = "version " + data.version;
+    }).catch(function (err) {
+      el.textContent = err.status === 401 ? "需要 API Key" : "服务离线";
+      el.className = "pill bad";
+    });
+  }
+
+  /* ---------- 文档列表 ---------- */
+
+  function renderDocs(items) {
+    var box = $("docs");
+    box.textContent = "";
+    $("docCount").textContent = items.length ? "（" + items.length + "）" : "";
+    if (!items.length) {
+      var e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "暂无文档";
+      box.appendChild(e);
+      return;
+    }
+    items.forEach(function (d) {
+      var row = document.createElement("div");
+      row.className = "doc";
+
+      var main = document.createElement("div");
+      main.className = "doc-main";
+      var name = document.createElement("div");
+      name.className = "doc-name";
+      name.textContent = d.source || "(无来源)";
+      name.title = d.source || "";
+      var meta = document.createElement("div");
+      meta.className = "doc-meta";
+      meta.textContent = (d.chunks || 0) + " 块 · " + (d.chars || 0) + " 字" +
+        (d.last_imported ? " · " + d.last_imported.replace("T", " ").slice(0, 16) : "");
+      main.appendChild(name);
+      main.appendChild(meta);
+
+      var del = document.createElement("button");
+      del.type = "button";
+      del.textContent = "删除";
+      del.addEventListener("click", function () { removeDoc(d.source); });
+
+      row.appendChild(main);
+      row.appendChild(del);
+      box.appendChild(row);
+    });
+  }
+
+  function loadDocs() {
+    var p = projectParam();
+    var path = "/api/v1/documents" + (p ? "?project=" + encodeURIComponent(p) : "");
+    return api(path).then(function (data) {
+      renderDocs((data && data.items) || []);
+      var list = $("projectList");
+      list.textContent = "";
+    }).catch(function (err) {
+      setStatus("读取文档列表失败：" + errorText(err), "err");
+    });
+  }
+
+  function removeDoc(source) {
+    if (!source) return;
+    if (!window.confirm("删除「" + source + "」的全部记录？")) return;
+    var p = projectParam();
+    var path = "/api/v1/documents?source=" + encodeURIComponent(source) +
+      (p ? "&project=" + encodeURIComponent(p) : "");
+    api(path, { method: "DELETE" }).then(function (data) {
+      setStatus("已删除 " + ((data && data.deleted) || 0) + " 块", "ok");
+      loadDocs();
+    }).catch(function (err) {
+      setStatus("删除失败：" + errorText(err), "err");
+    });
+  }
+
+  /* ---------- 入库 ---------- */
+
+  function ingestOne(file) {
+    var fd = new FormData();
+    fd.append("file", file, file.name);
+    var p = projectParam();
+    if (p) fd.append("project", p);
+    return api("/api/v1/documents", { method: "POST", body: fd });
+  }
+
+  function uploadFiles(files) {
+    if (!files || !files.length || state.busy) return;
+    state.busy = true;
+    $("pick").disabled = true;
+    var list = Array.prototype.slice.call(files);
+    var done = 0;
+    var failed = [];
+    setStatus("开始处理 " + list.length + " 个文件…", "busy");
+
+    var chain = Promise.resolve();
+    list.forEach(function (f) {
+      chain = chain.then(function () {
+        setStatus("正在处理 " + (done + 1) + "/" + list.length + "：" + f.name, "busy");
+        return ingestOne(f).then(function (r) {
+          done += 1;
+          setStatus("已完成 " + done + "/" + list.length + "：" + f.name +
+                    "（" + (r.chunks || 0) + " 块）", "ok");
+        }).catch(function (err) {
+          failed.push(f.name + "：" + errorText(err));
+          done += 1;
+        });
+      });
+    });
+
+    chain.then(function () {
+      state.busy = false;
+      $("pick").disabled = false;
+      if (failed.length) {
+        setStatus("完成 " + (list.length - failed.length) + "/" + list.length +
+                  " 个\n失败：\n" + failed.join("\n"), "err");
+      } else {
+        setStatus("全部完成：" + list.length + " 个文件", "ok");
+      }
+      loadDocs();
+    });
+  }
+
+  function ingestUrl() {
+    var url = $("url").value.trim();
+    if (!url || state.busy) return;
+    state.busy = true;
+    setStatus("正在抓取网页正文…", "busy");
+    var body = { url: url };
+    var p = projectParam();
+    if (p) body.project = p;
+    api("/api/v1/ingest/web", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      setStatus("已入库：" + (r.source || url) + "（" + (r.chunks || 0) + " 块）", "ok");
+      $("url").value = "";
+      loadDocs();
+    }).catch(function (err) {
+      setStatus("网页入库失败：" + errorText(err), "err");
+    }).then(function () {
+      state.busy = false;
+    });
+  }
+
+  /* ---------- 问答 ---------- */
+
+  function renderSources(items) {
+    var box = $("sources");
+    box.textContent = "";
+    $("srcCount").textContent = items.length ? "（" + items.length + "）" : "";
+    items.forEach(function (s, i) {
+      var card = document.createElement("div");
+      card.className = "src";
+
+      var head = document.createElement("div");
+      head.className = "src-head";
+      var idx = document.createElement("span");
+      idx.className = "idx";
+      idx.textContent = String(i + 1);
+      var src = document.createElement("span");
+      src.className = "src-source";
+      src.textContent = s.source || "（无来源）";
+      src.title = (s.id || "") + " " + (s.source || "");
+      var score = document.createElement("span");
+      score.className = "score";
+      score.textContent = "score " + (typeof s.score === "number" ? s.score.toFixed(2) : "-");
+      head.appendChild(idx);
+      head.appendChild(src);
+      head.appendChild(score);
+
+      var text = document.createElement("p");
+      text.className = "src-text";
+      text.textContent = s.content || "";
+
+      card.appendChild(head);
+      card.appendChild(text);
+      box.appendChild(card);
+    });
+  }
+
+  function ask() {
+    var q = $("question").value.trim();
+    if (!q || state.busy) return;
+    var topK = parseInt($("topk").value, 10) || 5;
+    var p = projectParam();
+    var searchOnly = $("searchOnly").checked;
+    state.busy = true;
+    $("ask").disabled = true;
+    $("answer").innerHTML = '<span class="placeholder">检索中…</span>';
+    $("sources").textContent = "";
+
+    var path = searchOnly ? "/api/v1/search" : "/api/v1/ask";
+    var body = searchOnly
+      ? { query: q, top_k: topK }
+      : { question: q, top_k: topK };
+    if (p) body.project = p;
+
+    api(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }).then(function (data) {
+      var answer = $("answer");
+      answer.textContent = "";
+      if (searchOnly) {
+        var hits = (data && data.results) || [];
+        answer.textContent = "命中 " + hits.length + " 条片段（仅检索模式，未调用 LLM）。";
+        renderSources(hits);
+      } else {
+        var text = (data && data.answer) || "(空回答)";
+        answer.textContent = text;
+        renderSources((data && data.sources) || []);
+      }
+    }).catch(function (err) {
+      var answer = $("answer");
+      answer.textContent = "";
+      var msg = errorText(err);
+      if (err.status === 503) {
+        msg += "\n\n提示：服务未配置 LLM（KB_LLM_MODE=off 是默认值）。" +
+               "可以勾选「仅检索」先验证召回，或在 .env 里配置 local/cloud 模式。";
+      }
+      answer.textContent = msg;
+    }).then(function () {
+      state.busy = false;
+      $("ask").disabled = false;
+    });
+  }
+
+  /* ---------- 设置与事件绑定 ---------- */
+
+  function saveSettings() {
+    state.apiKey = $("apiKey").value.trim();
+    state.project = ($("project").value || "").trim();
+    if (state.apiKey) localStorage.setItem(KEY_STORE, state.apiKey);
+    else localStorage.removeItem(KEY_STORE);
+    if (state.project) localStorage.setItem(PROJECT_STORE, state.project);
+    else localStorage.removeItem(PROJECT_STORE);
+    $("settings").open = false;
+    checkHealth();
+    loadDocs();
+  }
+
+  function clearKey() {
+    $("apiKey").value = "";
+    localStorage.removeItem(KEY_STORE);
+    state.apiKey = "";
+    $("settings").open = false;
+    checkHealth();
+  }
+
+  function bind() {
+    $("pick").addEventListener("click", function () { $("file").click(); });
+    $("file").addEventListener("change", function (e) {
+      uploadFiles(e.target.files);
+      e.target.value = "";
+    });
+    $("ingestUrl").addEventListener("click", ingestUrl);
+    $("url").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); ingestUrl(); }
+    });
+    $("ask").addEventListener("click", ask);
+
+    var drop = $("drop");
+    ["dragenter", "dragover"].forEach(function (ev) {
+      drop.addEventListener(ev, function (e) {
+        e.preventDefault();
+        drop.classList.add("hot");
+      });
+    });
+    ["dragleave", "drop"].forEach(function (ev) {
+      drop.addEventListener(ev, function (e) {
+        e.preventDefault();
+        drop.classList.remove("hot");
+      });
+    });
+    drop.addEventListener("drop", function (e) {
+      var files = e.dataTransfer && e.dataTransfer.files;
+      uploadFiles(files);
+    });
+
+    $("saveKey").addEventListener("click", saveSettings);
+    $("clearKey").addEventListener("click", clearKey);
+    $("project").addEventListener("change", function () {
+      saveSettings();
+    });
+    $("project").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); saveSettings(); }
+    });
+  }
+
+  state.apiKey = localStorage.getItem(KEY_STORE) || "";
+  state.project = localStorage.getItem(PROJECT_STORE) || "";
+  $("apiKey").value = state.apiKey;
+  $("project").value = state.project;
+
+  bind();
+  checkHealth();
+  loadDocs();
+})();
+</script>
+</body>
+</html>

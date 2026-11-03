@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="940" viewBox="0 0 1080 940" role="img"
+     aria-label="kb 问答流程：提问、作用域选择、双路召回、融合排序、上下文截断、护栏提示词、LLM 生成与来源">
+  <defs>
+    <style>
+      .title { fill: #1b1f24; font: 600 20px/1.3 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .note  { fill: #5b6572; font: 13px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .node  { fill: #ffffff; stroke: #d8dee5; stroke-width: 1.2; }
+      .node-a{ fill: #e8f6ef; stroke: #0a7d4f; stroke-width: 1.4; }
+      .node-o{ fill: #fafbfc; stroke: #b8c1cb; stroke-width: 1.2; stroke-dasharray: 5 4; }
+      .nt    { fill: #1b1f24; font: 500 15px/1.3 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .ns    { fill: #5b6572; font: 12px/1.4 ui-monospace, "SF Mono", Consolas, monospace; }
+      .edge  { fill: none; stroke: #8a95a1; stroke-width: 1.4; stroke-linecap: round; }
+      .elbl  { fill: #5b6572; font: 11px/1.4 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .dash  { fill: #fafbfc; stroke: #d8dee5; stroke-width: 1; stroke-dasharray: 5 4; }
+      .dt    { fill: #5b6572; font: 12px/1.7 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    </style>
+    <marker id="ask-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8"
+            markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M1 1 L7 4 L1 7 Z" fill="#8a95a1"/>
+    </marker>
+  </defs>
+
+  <text class="title" x="40" y="40">二、问答链路（/ask 与「仅检索」共用召回部分）</text>
+
+  <!-- 1 提问 -->
+  <g>
+    <rect class="node" x="130" y="60" width="340" height="52" rx="26"/>
+    <text class="nt" x="300" y="91" text-anchor="middle">用户提问 question</text>
+  </g>
+  <path class="edge" d="M300 112 V134" marker-end="url(#ask-arrow)"/>
+
+  <!-- 2 作用域 -->
+  <g>
+    <rect class="node" x="130" y="134" width="340" height="68" rx="10"/>
+    <text class="nt" x="300" y="162" text-anchor="middle">ScopeManager 选作用域</text>
+    <text class="ns" x="300" y="186" text-anchor="middle">全局库 / 项目子库 + 全局合并</text>
+  </g>
+  <path class="edge" d="M300 202 V222" marker-end="url(#ask-arrow)"/>
+
+  <!-- 3 双路召回 -->
+  <g>
+    <rect class="node" x="130" y="238" width="150" height="72" rx="10"/>
+    <text class="nt" x="205" y="266" text-anchor="middle">向量路</text>
+    <text class="ns" x="205" y="290" text-anchor="middle">3*top_k 候选</text>
+  </g>
+  <g>
+    <rect class="node" x="320" y="238" width="150" height="72" rx="10"/>
+    <text class="nt" x="395" y="266" text-anchor="middle">关键词路</text>
+    <text class="ns" x="395" y="290" text-anchor="middle">jieba + BM25</text>
+  </g>
+  <path class="edge" d="M300 222 L230 232" marker-end="url(#ask-arrow)"/>
+  <path class="edge" d="M300 222 L370 232" marker-end="url(#ask-arrow)"/>
+  <path class="edge" d="M205 310 L300 358" marker-end="url(#ask-arrow)"/>
+  <path class="edge" d="M395 310 L300 358" marker-end="url(#ask-arrow)"/>
+
+  <!-- 4 融合 -->
+  <g>
+    <rect class="node" x="130" y="364" width="340" height="68" rx="10"/>
+    <text class="nt" x="300" y="392" text-anchor="middle">归一化加权融合</text>
+    <text class="ns" x="300" y="416" text-anchor="middle">weighted_fuse：每路 min-max</text>
+  </g>
+  <path class="edge" d="M300 432 V462" marker-end="url(#ask-arrow)"/>
+  <text class="elbl" x="310" y="452">hybrid 模式</text>
+
+  <!-- 5 精排 -->
+  <g>
+    <rect class="node-o" x="180" y="468" width="240" height="64" rx="10"/>
+    <text class="nt" x="300" y="494" text-anchor="middle">交叉精排（可选）</text>
+    <text class="ns" x="300" y="516" text-anchor="middle">KB_RERANK_ENABLED</text>
+  </g>
+  <path class="edge" d="M300 532 V562" marker-end="url(#ask-arrow)"/>
+
+  <!-- 6 上下文预算 -->
+  <g>
+    <rect class="node" x="130" y="568" width="340" height="68" rx="10"/>
+    <text class="nt" x="300" y="596" text-anchor="middle">上下文拼装与预算截断</text>
+    <text class="ns" x="300" y="620" text-anchor="middle">context_token_limit × 2 字符</text>
+  </g>
+  <path class="edge" d="M300 636 V666" marker-end="url(#ask-arrow)"/>
+
+  <!-- 7 prompt -->
+  <g>
+    <rect class="node" x="130" y="672" width="340" height="60" rx="10"/>
+    <text class="nt" x="300" y="708" text-anchor="middle">护栏 prompt（标注证据）</text>
+  </g>
+  <path class="edge" d="M300 732 V762" marker-end="url(#ask-arrow)"/>
+
+  <!-- 8 LLM -->
+  <g>
+    <rect class="node" x="130" y="768" width="340" height="60" rx="10"/>
+    <text class="nt" x="300" y="804" text-anchor="middle">LLM 生成（local / cloud）</text>
+  </g>
+  <path class="edge" d="M300 828 V852" marker-end="url(#ask-arrow)"/>
+
+  <!-- 9 结果 -->
+  <g>
+    <rect class="node-a" x="130" y="858" width="340" height="52" rx="10"/>
+    <text class="nt" x="300" y="890" text-anchor="middle">answer + sources</text>
+  </g>
+
+  <!-- 侧栏：auto 路由 -->
+  <rect class="dash" x="640" y="134" width="400" height="470" rx="10"/>
+  <text class="nt" x="660" y="166">llm_mode=auto 的额外分支</text>
+  <text class="dt" x="660" y="200">1. 答案缓存：问题向量余弦 ≥ 0.95 直接返回</text>
+  <text class="dt" x="660" y="226">2. 本地分类：SIMPLE / COMPLEX / SENSITIVE</text>
+  <text class="dt" x="660" y="252">3. 敏感 namespace：强制本地，绝不出网</text>
+  <text class="dt" x="660" y="278">4. COMPLEX 且有云端 Key：本地压缩后走云端</text>
+  <text class="dt" x="660" y="304">5. 云端失败：自动降级本地直答</text>
+  <text class="dt" x="660" y="344">未配置 LLM（默认 off）：</text>
+  <text class="dt" x="660" y="370">/ask 返回 503，前端「仅检索」走 search 分支</text>
+  <text class="dt" x="660" y="396">（Redis 类外部缓存不存在，全部进程内 LRU）</text>
+
+  <text class="note" x="660" y="470">top_k 越大召回越全，但上下文预算按字符硬截断，</text>
+  <text class="note" x="660" y="494">长文档建议 8~10 并同步调高 context_token_limit。</text>
+</svg>
