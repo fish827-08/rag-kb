@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.3.0）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.0）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -38,7 +38,10 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 - **空闲卸载（v2.1）**：`KB_IDLE_UNLOAD_SECONDS` 到期自动卸载嵌入模型并释放显存，后台占用趋零
 - **记忆语言与自定义规则（v2.1）**：`KB_MEMORY_LANG=auto` 跟随操作系统语言存储记忆；`~/.kb/rules.md` 自定义"什么时候该存记忆"
 - **存取审计**：每次写/读/改/删/检索/问答记 JSON 到 `logs/agent-audit/<客户端>__<项目>.log`（按 client+project 分文件）；用户可查：REST `GET /api/v1/audit?client=<客户端>[&project=<项目>]` 或 CLI `kb audit --client <客户端>`
-- **知识入库**：本地文档（txt/md/pdf/docx 等）上传或路径导入，网页正文抓取入库
+- **知识入库**：本地文档（txt/md/pdf/docx 等）上传或路径导入，支持**整文件夹批量导入**并自动过滤不支持的文件；网页正文抓取入库
+- **表格导入与精准问答（v2.4）**：CSV / XLSX 逐行入库（`列名=值` 文本），可直接问「小明的语文成绩」这类单元格问题，**无需 LLM 也能精确作答**；另支持总分/平均等简单聚合
+- **知识图谱可视化（v2.4）**：Web UI 用 SVG 展示记忆节点与关联边，点击节点查看内容；文档/网页/表格不进入图谱
+- **RAG 与记忆分离（v2.4）**：文档/网页/表格属于 RAG 知识库，**不参与遗忘与衰减**，只在显式删除时移除；衰减/新鲜度仅作用于 memory
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
 - **CLI 工具**：`kb add/search/stats/ask/eval/forget/dedup`——终端直接完成写入、检索、统计与 RAG 问答
 - **隐私护栏**：敏感 namespace 强制本地回答不出网；`/ask` 智能路由（本地优先，难题可选云端）
@@ -111,13 +114,16 @@ python -m kb serve
 curl http://127.0.0.1:8000/api/v1/healthz
 ```
 
-**浏览器界面（2026-11-03 新增）**：打开 `http://127.0.0.1:8000/ui`，可直接上传文档、
-抓取网页、查看已入库文档并做 RAG 问答（含来源片段与分数）。未配置 LLM 时勾选
-「仅检索」即可先验证召回；页面同样是纯本地静态文件，离线可用。
+**浏览器界面（2026-11-03 新增）**：打开 `http://127.0.0.1:8000/ui`，可直接上传文档
+（含整个文件夹）、抓取网页、查看已入库文档并做 RAG 问答（含来源片段与分数）；
+页面底部的「记忆图谱」用 SVG 展示记忆节点与关联边，点击节点可查看内容。
+未配置 LLM 时勾选「仅检索」即可先验证召回；CSV / Excel 表格可直接提问。
+页面为纯本地静态文件，离线可用。
 
 **LLM 也可以在页面里配**：右上角「设置」支持 off / local(Ollama) / auto / cloud 四种模式，
-填 Ollama 地址与模型（可一键读取 `ollama list`）或云端 Base URL / 模型 / Key，保存即生效，
-配置落在 `kb_data/llm_config.json`（不入库），重启后沿用。
+填 Ollama 地址与模型（可一键读取 `ollama list`）或云端 Base URL / 模型 / Key，保存即生效
+（成功/失败都有页面提示），配置落在 `kb_data/llm_config.json`（不入库），重启后沿用。
+云端不预填任何服务商，可填任意 OpenAI 兼容端点。
 
 **界面中英双语**：右上角 `EN / 中文` 一键切换（与 README 双语文档一致）；问答有计时与超时提示，
 首次查询若在加载嵌入模型会明确提示，不会看起来像卡死。
@@ -303,12 +309,13 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 | GET | `/api/v1/memories/{id}/links` | 列一跳关联（含内容/方向；`?project=&relation=`） |
 | DELETE | `/api/v1/memories/{id}/links/{to_id}` | 取消关联（任一方向；删除后同步清理） |
 | POST | `/api/v1/search` | 混合检索 `{query, top_k?, mode?, type?, tag?}`，mode: `hybrid/vector/keyword` |
-| POST | `/api/v1/documents` | 文档入库：multipart `file` 字段或 JSON `{"path": "本地路径"}` |
-| GET | `/api/v1/documents` | 已入库文档列表（按 source 聚合） |
+| POST | `/api/v1/documents` | 文档/表格入库：multipart `file` 字段或 JSON `{"path": "本地路径"}`；CSV/XLSX 逐行入库 |
+| GET | `/api/v1/documents` | 已入库文档列表（按 source 聚合，含 `kind=doc/web/table`） |
 | DELETE | `/api/v1/documents/{source}` | 按 source 删除该文档全部记录（本地文件名等简单 source） |
 | DELETE | `/api/v1/documents?source=<urlencoded>` | 按查询参数删除（**URL 等含斜杠的 source 必须用这个**） |
 | POST | `/api/v1/ingest/web` | 网页入库 `{url}`，抓取正文切分入库；同 URL 重复入库自动替换旧记录 |
-| POST | `/api/v1/ask` | RAG 问答 `{question, top_k?}`（`top_k` 默认 5，长文档可调至 8~10）；未配置 LLM 返回 503 |
+| POST | `/api/v1/ask` | RAG 问答 `{question, top_k?}`（`top_k` 默认 5，长文档可调至 8~10）；表格问句优先确定性作答（`llm="table"`），未配置 LLM 且非表格问题返回 503 |
+| GET | `/api/v1/graph` | 记忆知识图谱 `?project=&limit=`（默认 200，上限 500）：memory 节点 + 关联边（v2.4） |
 | GET | `/api/v1/llm` | 当前 LLM 配置与可用性（Key 只回是否已设置） |
 | POST | `/api/v1/llm/config` | 运行时保存云端 / Ollama 配置并热生效 |
 | GET | `/api/v1/llm/ollama/models` | 列出 Ollama 已安装模型（`?base_url=` 可覆盖） |
@@ -397,8 +404,9 @@ python -m kb dedup --threshold 0.92           # 语义去重
 
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
-               service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（487 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
+               service / llm / ingest / tables / watcher / api / mcp / cli +
+               reranker / sparse / eval）
+tests/         kb 验收测试（510 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
 docs/          用户指南、开发者手册与设计文档
 kb_data/       kb 运行数据（gitignore）
 ```

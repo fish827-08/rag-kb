@@ -28,7 +28,8 @@ REST / MCP / CLI 三个接入壳 → 全部委托给唯一的业务中枢 `KBSer
 ┌─ 服务层 ─────────────────────────────────────────────┐
 │  service.py KBService 编排中枢 (910行)  ★精读        │
 │  scopes.py ScopeManager 全局/项目子库路由 + LRU ★     │
-│  ingest.py 文档/网页入库    llm.py LLM 接入路由      │
+│  ingest.py 文档/网页入库    tables.py 表格解析/问答    │
+│  llm.py LLM 接入路由                                │
 └──────────────────────┬───────────────────────────────┘
                        ▼
 ┌─ 检索层 ─────────────────────────────────────────────┐
@@ -272,6 +273,7 @@ GET    /                           服务导航页（API 状态/文档链接）
 | scopes.py | 190 | `Scope`（store/bm25/retriever 三件套）+ `ScopeManager`（全局库 + 项目子库懒打开、LRU、locate、count.txt 计数）+ `validate_scope_name` |
 | discovery.py | 150 | `~/.kb/install.json` 清单 → PATH → importlib.metadata 发现顺序；`autostart_enable/disable/status`（Windows 启动目录 / systemd / launchd） |
 | ingest.py | 105 | `parse_file`（PDF/DOCX/markitdown 兜底，可选依赖缺失给 `[ingest]` 指引）→ `chunk_text`（递归切分）；`fetch_webpage`（httpx + trafilatura） |
+| tables.py | 260 | **v2.4** `parse_table_file`（CSV/XLSX）→ `row_to_text` / `parse_row_text`（逐行 `列名=值`）→ `query_rows`（确定性表格问答与求和/平均） |
 | models.py | 101 | `Record` 统一模型 ↔ Chroma metadata 互转；`RecordType` 类型枚举 |
 | logging_setup.py | 74 | `setup_logging` 控制台+轮转文件双 handler |
 | reranker.py | 61 | `Reranker.rerank` 交叉编码精排（懒加载） |
@@ -293,7 +295,7 @@ GET    /                           服务导航页（API 状态/文档链接）
 | 服务发现/自启 | discovery.py（清单/PATH/metadata、三种平台自启文件） | test_v21_runtime |
 | skill 安装流程 | skills/kb-memory/bootstrap.py（只标准库，`--yes` 才安装） | test_v21_bootstrap |
 | 空闲资源释放 | embedder.py `unload/unload_if_idle` + cli.py `start_idle_watchdog` | test_v21_runtime |
-| 改入库格式支持 | ingest.py `parse_file` 加分支 | ingest 测试 |
+| 改入库格式支持 | ingest.py `parse_file` 加分支；表格走 tables.py | ingest / n37 测试 |
 | 改切分策略 | ingest.py `chunk_text`（chunk_size/overlap 在 config） | ingest 测试 + eval |
 | 治理开关行为 | governance.py（纯函数）+ service.py 调用点 | governance 测试 |
 | 换嵌入/重排模型 | config.py `embed_model`/`rerank_model` + 硬件约束（6GB 显存红线） | 全量测试 |

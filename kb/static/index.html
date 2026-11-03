@@ -223,6 +223,27 @@ footer a { color: var(--muted); }
 .toast.ok { border-color: var(--brand); color: var(--brand); }
 .toast.err { border-color: var(--danger); color: var(--danger); }
 .drop-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.card.wide-card { grid-column: 1 / -1; }
+.graph-wrap {
+  display: grid; grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 14px; margin-top: 10px; align-items: start;
+}
+@media (max-width: 700px) { .graph-wrap { grid-template-columns: 1fr; } }
+.graph-svg {
+  width: 100%; height: 380px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface-2);
+}
+.graph-detail {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); padding: 12px; min-height: 120px;
+  font-size: 13px; color: var(--muted); word-break: break-word;
+}
+.graph-detail .g-title { color: var(--text); font-weight: 600; margin-bottom: 6px; }
+.graph-detail .g-tag {
+  display: inline-block; margin: 2px 4px 2px 0; padding: 1px 8px;
+  border-radius: 999px; background: var(--brand-soft); color: var(--brand);
+  font-size: 11px;
+}
 </style>
 </head>
 <body>
@@ -342,6 +363,22 @@ footer a { color: var(--muted); }
     <h3><span data-i18n="sources.title"></span> <span class="count" id="srcCount"></span></h3>
     <div class="sources" id="sources"></div>
   </section>
+
+  <section class="card wide-card">
+    <h2>
+      <span data-i18n="graph.title"></span>
+      <span class="count" id="graphCount"></span>
+      <button id="refreshGraph" class="ghost" type="button" style="width:auto;margin:0 0 0 auto"
+              data-i18n="graph.refresh"></button>
+    </h2>
+    <p class="hint" data-i18n="graph.hint"></p>
+    <div class="graph-wrap">
+      <svg id="graphSvg" class="graph-svg" viewBox="0 0 800 420" role="img"></svg>
+      <div class="graph-detail" id="graphDetail">
+        <span data-i18n="graph.empty"></span>
+      </div>
+    </div>
+  </section>
 </main>
 
 <footer>
@@ -405,11 +442,18 @@ footer a { color: var(--muted); }
       "ingest.title": "知识入库",
       "ingest.pick": "选择文件",
       "ingest.pickFolder": "选择文件夹",
-      "ingest.dropHint": "支持 txt / md / pdf / docx 等格式；可选整个文件夹，会自动过滤不支持的文件",
+      "ingest.dropHint": "支持 txt / md / pdf / docx / csv / xlsx 等格式；CSV 与 Excel 会逐行入库，可直接按表格数据提问；可选整个文件夹并自动过滤不支持的文件",
       "ingest.urlPh": "粘贴网页链接，例如 https://example.com/article",
       "ingest.urlBtn": "抓取网页",
+      "graph.title": "记忆图谱",
+      "graph.refresh": "刷新",
+      "graph.hint": "仅展示记忆节点与关联边；文档 / 网页 / 表格属于 RAG 知识库，不参与遗忘，也不进入图谱。",
+      "graph.empty": "暂无记忆或关联数据。写入记忆并建立关联后，这里会显示关系图。",
+      "graph.nodeTip": "点击圆点查看记忆内容",
       "docs.title": "已入库文档",
       "docs.empty": "暂无文档，先上传一个文件试试",
+      "docs.kindTable": "表格",
+      "docs.kindWeb": "网页",
       "docs.delete": "删除",
       "docs.confirm": "删除「{name}」的全部记录？",
       "docs.deleted": "已删除 {n} 块",
@@ -490,11 +534,18 @@ footer a { color: var(--muted); }
       "ingest.title": "Ingest",
       "ingest.pick": "Choose files",
       "ingest.pickFolder": "Choose folder",
-      "ingest.dropHint": "txt / md / pdf / docx supported; pick a whole folder and unsupported files are filtered out",
+      "ingest.dropHint": "txt / md / pdf / docx / csv / xlsx supported; CSV and Excel are ingested row by row and can be queried directly; pick a whole folder and unsupported files are filtered out",
       "ingest.urlPh": "Paste a web page URL, e.g. https://example.com/article",
       "ingest.urlBtn": "Fetch page",
+      "graph.title": "Memory graph",
+      "graph.refresh": "Refresh",
+      "graph.hint": "Memories and their links only. Documents, web pages and tables belong to the RAG knowledge base: they never decay and never appear here.",
+      "graph.empty": "No memories or links yet. Once you write memories and link them, the graph will appear here.",
+      "graph.nodeTip": "Click a dot to view the memory",
       "docs.title": "Documents",
       "docs.empty": "No documents yet — upload one to start",
+      "docs.kindTable": "table",
+      "docs.kindWeb": "web",
       "docs.delete": "Delete",
       "docs.confirm": "Delete all records of \"{name}\"?",
       "docs.deleted": "Deleted {n} chunks",
@@ -777,7 +828,9 @@ footer a { color: var(--muted); }
       name.title = d.source || "";
       var meta = document.createElement("div");
       meta.className = "doc-meta";
-      meta.textContent = (d.chunks || 0) + " · " + (d.chars || 0);
+      var kind = d.kind === "table" ? T("docs.kindTable")
+        : (d.kind === "web" ? T("docs.kindWeb") : "");
+      meta.textContent = (kind ? kind + " · " : "") + (d.chunks || 0) + " · " + (d.chars || 0);
       main.appendChild(name);
       main.appendChild(meta);
 
@@ -996,6 +1049,110 @@ footer a { color: var(--muted); }
     });
   }
 
+  /* ---------- 记忆图谱 ---------- */
+
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var RELATION_COLORS = {
+    related: "#3ecf8e", supersedes: "#f0b429", depends_on: "#5b8def",
+    part_of: "#b07cf0", contradicts: "#ff7b6b"
+  };
+
+  function svgEl(tag, attrs) {
+    var el = document.createElementNS(SVG_NS, tag);
+    Object.keys(attrs || {}).forEach(function (k) { el.setAttribute(k, attrs[k]); });
+    return el;
+  }
+
+  function showGraphNode(node) {
+    var box = $("graphDetail");
+    box.textContent = "";
+    var title = document.createElement("div");
+    title.className = "g-title";
+    title.textContent = node.label || "(empty)";
+    box.appendChild(title);
+    var meta = document.createElement("div");
+    meta.textContent = (node.project ? "project: " + node.project + " · " : "global · ") +
+      "degree " + (node.degree || 0);
+    box.appendChild(meta);
+    (node.tags || []).forEach(function (tag) {
+      var span = document.createElement("span");
+      span.className = "g-tag";
+      span.textContent = tag;
+      box.appendChild(span);
+    });
+  }
+
+  function renderGraph(data) {
+    var svg = $("graphSvg");
+    svg.textContent = "";
+    var nodes = (data && data.nodes) || [];
+    var edges = (data && data.edges) || [];
+    $("graphCount").textContent = nodes.length
+      ? "（" + nodes.length + " / " + edges.length + "）" : "";
+    if (!nodes.length) {
+      var tip = svgEl("text", { x: 400, y: 210, "text-anchor": "middle",
+                                fill: "#8b949e", "font-size": 14 });
+      tip.textContent = T("graph.empty");
+      svg.appendChild(tip);
+      return;
+    }
+    var W = 800, H = 420, cx = W / 2, cy = H / 2;
+    var sorted = nodes.slice().sort(function (a, b) {
+      return (b.degree || 0) - (a.degree || 0);
+    });
+    var inner = sorted.length <= 12 ? sorted.length : Math.ceil(Math.sqrt(sorted.length));
+    var pos = {};
+    sorted.forEach(function (n, i) {
+      var ring = i < inner ? 0 : 1;
+      var idx = ring === 0 ? i : i - inner;
+      var count = ring === 0 ? inner : sorted.length - inner;
+      var radius = ring === 0 ? (count <= 6 ? 90 : 120) : 190;
+      var angle = (2 * Math.PI * idx / Math.max(1, count)) - Math.PI / 2;
+      pos[n.id] = { x: cx + radius * Math.cos(angle),
+                    y: cy + radius * Math.sin(angle) };
+    });
+    edges.forEach(function (e) {
+      var a = pos[e.from], b = pos[e.to];
+      if (!a || !b) return;
+      svg.appendChild(svgEl("line", {
+        x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+        stroke: RELATION_COLORS[e.relation] || "#555",
+        "stroke-width": 1.5, opacity: 0.75
+      }));
+    });
+    nodes.forEach(function (n) {
+      var p = pos[n.id];
+      if (!p) return;
+      var r = 6 + Math.min(n.degree || 0, 6);
+      var circle = svgEl("circle", {
+        cx: p.x, cy: p.y, r: r,
+        fill: "var(--brand)", stroke: "var(--surface)", "stroke-width": 2,
+        style: "cursor:pointer"
+      });
+      var title = svgEl("title", {});
+      title.textContent = (n.label || "") + "\n" + T("graph.nodeTip");
+      circle.appendChild(title);
+      circle.addEventListener("click", function () { showGraphNode(n); });
+      svg.appendChild(circle);
+      var label = svgEl("text", {
+        x: p.x, y: p.y + r + 13, "text-anchor": "middle",
+        fill: "#8b949e", "font-size": 10
+      });
+      label.textContent = (n.label || "").slice(0, 12);
+      svg.appendChild(label);
+    });
+  }
+
+  function loadGraph() {
+    var p = projectParam();
+    api("/api/v1/graph" + (p ? "?project=" + encodeURIComponent(p) : ""))
+      .then(renderGraph)
+      .catch(function (err) {
+        $("graphCount").textContent = "";
+        $("graphDetail").textContent = errorText(err);
+      });
+  }
+
   /* ---------- 设置与事件绑定 ---------- */
 
   function saveSettings() {
@@ -1009,6 +1166,7 @@ footer a { color: var(--muted); }
     checkHealth();
     loadDocs();
     loadLlm();
+    loadGraph();
   }
 
   function clearKey() {
@@ -1062,6 +1220,7 @@ footer a { color: var(--muted); }
     $("llmMode").addEventListener("change", toggleLlmBlocks);
     $("refreshModels").addEventListener("click", refreshModels);
     $("saveLlm").addEventListener("click", saveLlm);
+    $("refreshGraph").addEventListener("click", loadGraph);
     $("project").addEventListener("change", function () { saveSettings(); });
     $("project").addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); saveSettings(); }
@@ -1079,6 +1238,7 @@ footer a { color: var(--muted); }
   applyLang(state.lang);
   checkHealth();
   loadLlm();
+  loadGraph();
 })();
 </script>
 </body>

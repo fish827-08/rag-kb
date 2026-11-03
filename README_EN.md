@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.3.0).
+service (v2.4.0).
 
 ## Why kb
 
@@ -55,6 +55,16 @@ service (v2.3.0).
   releases GPU memory when idle, so background footprint drops to near zero.
 - **Memory language & custom rules (v2.1)** — `KB_MEMORY_LANG=auto` follows the OS
   language; `~/.kb/rules.md` customizes when the agent should store memories.
+- **Ingestion** — upload or import local documents (txt/md/pdf/docx) and fetch web
+  pages; pick a whole folder for batch import with unsupported files filtered out.
+- **Table import & precise Q&A (v2.4)** — CSV/XLSX is ingested row by row
+  (`column=value` text), so questions like "Xiaoming's Chinese score" are answered
+  exactly, **even without an LLM**; simple sum/average aggregation is supported.
+- **Knowledge-graph view (v2.4)** — the Web UI renders memory nodes and links as SVG;
+  click a node to read it. Documents, web pages and tables stay out of the graph.
+- **RAG/memory separation (v2.4)** — documents, web pages and tables live in the RAG
+  knowledge base and **never decay or get forgotten**; decay/freshness apply to
+  `memory` records only.
 - **Access audit** — every write/read/update/delete/search/ask emits a JSON line
   under `logs/agent-audit/`; query it through `GET /api/v1/audit?client=<client>`
   or `kb audit --client <client>`.
@@ -142,15 +152,19 @@ Health check:
 curl.exe http://127.0.0.1:8000/api/v1/healthz
 ```
 
-**Browser UI (2026-11-03)**: open `http://127.0.0.1:8000/ui` to upload documents,
-fetch web pages, list/delete ingested docs and run RAG Q&A with source snippets and
-scores. Without an LLM, tick "Retrieval only". The page is a single static file and
-works fully offline.
+**Browser UI (2026-11-03)**: open `http://127.0.0.1:8000/ui` to upload documents
+(including a whole folder), fetch web pages, list/delete ingested docs and run RAG
+Q&A with source snippets and scores. The "Memory graph" panel at the bottom renders
+memory nodes and links as SVG; click a node to inspect it. Without an LLM, tick
+"Retrieval only"; CSV/Excel tables can be queried directly. The page is a single
+static file and works fully offline.
 
 **Configure the LLM in the UI**: Settings → LLM config supports
 `off / local(Ollama) / auto / cloud`; fill the Ollama endpoint and model (one click
-lists `ollama list`) or cloud base URL / model / key. Saving applies immediately and
-persists to `kb_data/llm_config.json` (not committed), surviving restarts.
+lists `ollama list`) or cloud base URL / model / key. Saving applies immediately
+with clear success/failure toasts and persists to `kb_data/llm_config.json`
+(not committed), surviving restarts. No provider is pre-filled: any
+OpenAI-compatible endpoint works.
 
 **Bilingual UI**: toggle `EN / 中文` in the top-right corner; Q&A shows elapsed time
 and a clear timeout message, including a hint while the embedding model is loading.
@@ -321,12 +335,13 @@ with the global store. Record IDs are generated server-side.
 | GET | `/api/v1/memories/{id}/links` | List one-hop links (content/direction; `?project=&relation=`) |
 | DELETE | `/api/v1/memories/{id}/links/{to_id}` | Remove links in either direction |
 | POST | `/api/v1/search` | Hybrid search `{query, top_k?, mode?, type?, tag?}` — mode: `hybrid/vector/keyword`; blank query → 422 |
-| POST | `/api/v1/documents` | Ingest a document: multipart `file` or JSON `{"path": "..."}`; re-ingesting the same source replaces old chunks |
+| POST | `/api/v1/documents` | Ingest a document or table: multipart `file` or JSON `{"path": "..."}`; CSV/XLSX is stored row by row; re-ingesting the same source replaces old chunks |
 | GET | `/api/v1/documents` | List ingested documents (grouped by source) |
 | DELETE | `/api/v1/documents/{source}` | Delete all records of a document (simple sources such as file names) |
 | DELETE | `/api/v1/documents?source=<urlencoded>` | Delete by query parameter (required for URLs containing slashes) |
 | POST | `/api/v1/ingest/web` | Ingest a webpage `{url}` — fetch, extract, chunk, store |
-| POST | `/api/v1/ask` | RAG answering `{question}`; 503 if no LLM configured |
+| POST | `/api/v1/ask` | RAG answering `{question}`; table questions are answered deterministically first (`llm="table"`), otherwise 503 when no LLM is configured |
+| GET | `/api/v1/graph` | Memory knowledge graph `?project=&limit=` (default 200, max 500): memory nodes + links (v2.4) |
 | GET | `/api/v1/audit` | Access audit `?client=<client>&project?&days?&limit?` |
 | GET | `/api/v1/healthz` | Health check & service stats (includes `embedder.state`) |
 
@@ -403,8 +418,8 @@ python -m kb dedup --threshold 0.92
 
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
-               retriever / service / llm / ingest / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (487 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
+               retriever / service / llm / ingest / tables / watcher / api / mcp / cli)
+tests/         kb acceptance & regression tests (510 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
 docs/          design specs, developer handbook, user guides
