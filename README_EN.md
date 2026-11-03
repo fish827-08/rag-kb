@@ -142,6 +142,19 @@ Health check:
 curl.exe http://127.0.0.1:8000/api/v1/healthz
 ```
 
+**Browser UI (2026-11-03)**: open `http://127.0.0.1:8000/ui` to upload documents,
+fetch web pages, list/delete ingested docs and run RAG Q&A with source snippets and
+scores. Without an LLM, tick "Retrieval only". The page is a single static file and
+works fully offline.
+
+**Configure the LLM in the UI**: Settings → LLM config supports
+`off / local(Ollama) / auto / cloud`; fill the Ollama endpoint and model (one click
+lists `ollama list`) or cloud base URL / model / key. Saving applies immediately and
+persists to `kb_data/llm_config.json` (not committed), surviving restarts.
+
+**Bilingual UI**: toggle `EN / 中文` in the top-right corner; Q&A shows elapsed time
+and a clear timeout message, including a hint while the embedding model is loading.
+
 > The model is lazy-loaded: an idle service uses almost no memory. The first write
 > or search loads and caches the model. `/healthz` reports
 > `embedder.state` as `unloaded | loading | ok | error`; if the model cannot be
@@ -391,7 +404,7 @@ python -m kb dedup --threshold 0.92
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (483 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
+tests/         kb acceptance & regression tests (485 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
 docs/          design specs, developer handbook, user guides

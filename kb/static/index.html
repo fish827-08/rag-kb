@@ -62,7 +62,7 @@ button.primary {
   font-weight: 500;
 }
 button.primary:hover { filter: brightness(1.06); background: var(--brand); }
-button.primary:disabled { opacity: .55; cursor: default; }
+button.primary:disabled, button:disabled { opacity: .55; cursor: default; }
 input, select, textarea {
   border: 1px solid var(--border);
   background: var(--surface);
@@ -73,29 +73,19 @@ input, select, textarea {
 textarea { resize: vertical; min-height: 96px; }
 
 .topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
   padding: 16px 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  position: sticky; top: 0; z-index: 10;
 }
 .brand { display: flex; align-items: center; gap: 12px; }
 .logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px; height: 34px;
-  border-radius: 9px;
-  background: var(--brand-soft);
-  color: var(--brand);
-  font-weight: 700;
-  letter-spacing: .5px;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 9px;
+  background: var(--brand-soft); color: var(--brand);
+  font-weight: 700; letter-spacing: .5px;
 }
 .sub { color: var(--muted); font-size: 13px; }
 .top-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -104,21 +94,16 @@ textarea { resize: vertical; min-height: 96px; }
 .project-field input { width: 160px; }
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--surface-2); color: var(--muted);
+  font-size: 12px; white-space: nowrap;
 }
-.pill::before {
-  content: ""; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--muted);
-}
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .pill.ok { color: var(--brand); }
 .pill.ok::before { background: var(--brand); }
 .pill.bad { color: var(--danger); }
 .pill.bad::before { background: var(--danger); }
+.lang-btn { padding: 4px 10px; font-size: 13px; color: var(--muted); }
 details.settings summary {
   cursor: pointer; list-style: none; padding: 4px 10px;
   border: 1px solid var(--border); border-radius: var(--radius);
@@ -126,18 +111,15 @@ details.settings summary {
 }
 details.settings summary::-webkit-details-marker { display: none; }
 .settings-body {
-  position: absolute; right: 24px; margin-top: 8px; width: 320px;
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow);
+  position: absolute; right: 24px; margin-top: 8px; width: 440px; max-height: 72vh;
+  overflow: auto; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px; box-shadow: var(--shadow);
 }
 .settings-body label { display: block; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
-.settings-body label input { margin-top: 6px; }
+.settings-body label input, .settings-body label select { margin-top: 6px; }
 .settings-body .hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
-.settings-body { width: 440px; max-height: 72vh; overflow: auto; }
-.set-group + .set-group {
-  border-top: 1px solid var(--border);
-  margin-top: 14px; padding-top: 14px;
-}
+.set-group + .set-group { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 14px; }
 .set-group h4 {
   margin: 0 0 10px; font-size: 13px; font-weight: 600;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -145,28 +127,20 @@ details.settings summary::-webkit-details-marker { display: none; }
 .mini { font-size: 11px; font-weight: 400; color: var(--muted); }
 .llm-block { margin: 8px 0 4px; }
 .llm-block label + label { margin-top: 8px; }
-button.ghost {
-  width: 100%; margin-top: 8px; font-size: 12px; color: var(--muted);
-}
+button.ghost { width: 100%; margin-top: 8px; font-size: 12px; color: var(--muted); }
 button.primary.wide { width: 100%; margin-top: 10px; }
 .set-actions { display: flex; gap: 8px; margin-top: 14px; }
 
 main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: 20px;
-  padding: 20px 24px 40px;
-  max-width: 1280px;
-  margin: 0 auto;
+  gap: 20px; padding: 20px 24px 40px;
+  max-width: 1280px; margin: 0 auto;
 }
 @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
 .card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 20px;
-  box-shadow: var(--shadow);
-  min-width: 0;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px; box-shadow: var(--shadow); min-width: 0;
 }
 .card h2 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
 .card h3 {
@@ -176,12 +150,9 @@ main {
 }
 .count { font-weight: 400; color: var(--muted); }
 .drop {
-  margin-top: 14px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  text-align: center;
-  background: var(--surface-2);
+  margin-top: 14px; border: 1px dashed var(--border);
+  border-radius: var(--radius); padding: 20px;
+  text-align: center; background: var(--surface-2);
 }
 .drop.hot { border-color: var(--brand); background: var(--brand-soft); }
 .drop p { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
@@ -198,40 +169,29 @@ main {
 .docs { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow: auto; }
 .doc {
   display: flex; gap: 10px; align-items: flex-start;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px; background: var(--surface-2);
 }
 .doc-main { min-width: 0; flex: 1; }
-.doc-name {
-  font-weight: 500; white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis;
-}
+.doc-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .doc-meta { color: var(--muted); font-size: 12px; }
 .doc button { padding: 4px 10px; font-size: 12px; color: var(--muted); }
 .doc button:hover { color: var(--danger); border-color: var(--danger); }
 .empty { color: var(--muted); font-size: 13px; padding: 8px 0; }
 
 .answer {
-  margin-top: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  background: var(--surface-2);
-  white-space: pre-wrap;
-  word-break: break-word;
-  min-height: 96px;
-  font-size: 14.5px;
-  line-height: 1.75;
+  margin-top: 14px; border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+  background: var(--surface-2); white-space: pre-wrap;
+  word-break: break-word; min-height: 96px;
+  font-size: 14.5px; line-height: 1.75;
 }
 .answer .placeholder { color: var(--muted); }
+.busy-line { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
 .sources { display: flex; flex-direction: column; gap: 10px; }
 .src {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px; background: var(--surface);
 }
 .src-head {
   display: flex; gap: 8px; align-items: center;
@@ -243,20 +203,13 @@ main {
   background: var(--brand-soft); color: var(--brand);
   font-size: 11px; font-weight: 600;
 }
-.src-source {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  flex: 1; min-width: 0; color: var(--text);
-}
+.src-source { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; color: var(--text); }
 .score { color: var(--brand); font-variant-numeric: tabular-nums; }
 .src-text {
   margin: 0; font-size: 13px; color: var(--muted);
-  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
 }
-footer {
-  text-align: center; color: var(--muted); font-size: 12px;
-  padding: 0 24px 28px;
-}
+footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 24px 28px; }
 footer a { color: var(--muted); }
 </style>
 </head>
@@ -265,69 +218,70 @@ footer a { color: var(--muted); }
 <header class="topbar">
   <div class="brand">
     <span class="logo">kb</span>
-    <span class="sub">本地知识库 · 混合检索 · RAG 问答</span>
+    <span class="sub" data-i18n="header.sub"></span>
   </div>
   <div class="top-actions">
     <div class="project-field">
-      <span>项目库</span>
-      <input id="project" placeholder="留空 = 全局库" list="projectList">
+      <span data-i18n="project.label"></span>
+      <input id="project" list="projectList" data-i18n-ph="project.ph">
       <datalist id="projectList"></datalist>
     </div>
-    <span id="health" class="pill">检测中…</span>
+    <span id="health" class="pill" data-i18n="health.checking"></span>
+    <button id="langToggle" class="lang-btn" type="button">EN</button>
     <details class="settings" id="settings">
-      <summary>设置</summary>
+      <summary data-i18n="settings.title"></summary>
       <div class="settings-body">
         <div class="set-group">
-          <h4>访问鉴权</h4>
-          <label>API Key（KB_API_KEY 非空时需要）
-            <input id="apiKey" type="password" autocomplete="off" placeholder="留空表示未启用鉴权">
+          <h4 data-i18n="auth.title"></h4>
+          <label><span data-i18n="auth.label"></span>
+            <input id="apiKey" type="password" autocomplete="off" data-i18n-ph="auth.ph">
           </label>
-          <p class="hint">Key 只保存在本机浏览器 localStorage，不会发送到除本服务以外的地址。</p>
+          <p class="hint" data-i18n="auth.hint"></p>
         </div>
 
         <div class="set-group">
-          <h4>LLM 配置 <span class="mini" id="llmBadge">读取中…</span></h4>
-          <label>模式
+          <h4><span data-i18n="llm.title"></span> <span class="mini" id="llmBadge">…</span></h4>
+          <label data-i18n="llm.modeLabel">模式
             <select id="llmMode">
-              <option value="off">off · 不调用 LLM（仅检索也能用）</option>
-              <option value="local">local · 只用本地 Ollama</option>
-              <option value="auto">auto · 本地优先，云端兜底</option>
-              <option value="cloud">cloud · 只用云端</option>
+              <option value="off" data-i18n="llm.modeOff"></option>
+              <option value="local" data-i18n="llm.modeLocal"></option>
+              <option value="auto" data-i18n="llm.modeAuto"></option>
+              <option value="cloud" data-i18n="llm.modeCloud"></option>
             </select>
           </label>
 
           <div class="llm-block" id="localBlock">
-            <label>Ollama 地址
+            <label><span data-i18n="llm.ollamaUrl"></span>
               <input id="ollamaUrl" placeholder="http://localhost:11434">
             </label>
-            <label>本地模型
+            <label><span data-i18n="llm.localModel"></span>
               <input id="localModel" list="ollamaModels" placeholder="qwen3:1.7b">
               <datalist id="ollamaModels"></datalist>
             </label>
-            <button id="refreshModels" class="ghost" type="button">读取 Ollama 模型列表</button>
+            <button id="refreshModels" class="ghost" type="button" data-i18n="llm.refresh"></button>
             <p class="hint" id="localHint"></p>
           </div>
 
           <div class="llm-block" id="cloudBlock">
-            <label>云端 Base URL
+            <label><span data-i18n="llm.cloudUrl"></span>
               <input id="cloudUrl" placeholder="https://api.deepseek.com">
             </label>
-            <label>云端模型
+            <label><span data-i18n="llm.cloudModel"></span>
               <input id="cloudModel" placeholder="deepseek-chat">
             </label>
-            <label>云端 API Key
-              <input id="cloudKey" type="password" autocomplete="off" placeholder="留空=沿用已保存的值">
+            <label><span data-i18n="llm.cloudKey"></span>
+              <input id="cloudKey" type="password" autocomplete="off" data-i18n-ph="llm.cloudKeyPh">
             </label>
             <p class="hint" id="cloudHint"></p>
           </div>
 
-          <button id="saveLlm" class="primary wide" type="button">保存 LLM 配置（立即生效）</button>
-          <p class="hint" id="llmHint">配置写入 kb_data/llm_config.json，重启服务后仍生效。</p>
+          <button id="saveLlm" class="primary wide" type="button" data-i18n="llm.save"></button>
+          <p class="hint" id="llmHint" data-i18n="llm.hint"></p>
         </div>
 
         <div class="set-actions">
-          <button id="saveKey">保存鉴权 Key</button>
-          <button id="clearKey">清除 Key</button>
+          <button id="saveKey" data-i18n="auth.save"></button>
+          <button id="clearKey" data-i18n="auth.clear"></button>
         </div>
       </div>
     </details>
@@ -336,26 +290,26 @@ footer a { color: var(--muted); }
 
 <main>
   <section class="card">
-    <h2>知识入库</h2>
+    <h2 data-i18n="ingest.title"></h2>
     <div class="drop" id="drop">
       <input id="file" type="file" multiple hidden>
-      <button id="pick">选择文件</button>
-      <p>支持 txt / md / pdf / docx 等格式，也可把文件拖到这里</p>
+      <button id="pick" data-i18n="ingest.pick"></button>
+      <p data-i18n="ingest.dropHint"></p>
     </div>
     <div class="row">
-      <input id="url" placeholder="粘贴网页链接，例如 https://example.com/article">
-      <button id="ingestUrl">抓取网页</button>
+      <input id="url" data-i18n-ph="ingest.urlPh">
+      <button id="ingestUrl" data-i18n="ingest.urlBtn"></button>
     </div>
     <div class="status" id="ingestStatus" aria-live="polite"></div>
-    <h3>已入库文档 <span class="count" id="docCount"></span></h3>
-    <div class="docs" id="docs"><div class="empty">暂无文档</div></div>
+    <h3><span data-i18n="docs.title"></span> <span class="count" id="docCount"></span></h3>
+    <div class="docs" id="docs"></div>
   </section>
 
   <section class="card">
-    <h2>问答</h2>
-    <textarea id="question" placeholder="根据已入库的文档提问，例如：宝玉和黛玉第一次见面是在哪一回？"></textarea>
+    <h2 data-i18n="ask.title"></h2>
+    <textarea id="question" data-i18n-ph="ask.ph"></textarea>
     <div class="row">
-      <label>召回条数
+      <label><span data-i18n="ask.topk"></span>
         <select id="topk">
           <option value="5" selected>5</option>
           <option value="8">8</option>
@@ -363,20 +317,22 @@ footer a { color: var(--muted); }
           <option value="15">15</option>
         </select>
       </label>
-      <label class="check"><input type="checkbox" id="searchOnly" style="width:auto"> 仅检索（不调用 LLM）</label>
-      <button id="ask" class="primary">提问</button>
+      <label class="check"><input type="checkbox" id="searchOnly" style="width:auto"> <span data-i18n="ask.searchOnly"></span></label>
+      <button id="ask" class="primary" data-i18n="ask.btn"></button>
     </div>
     <div class="answer" id="answer" aria-live="polite">
-      <span class="placeholder">答案会显示在这里；未配置 LLM 时请勾选「仅检索」。</span>
+      <span class="placeholder" data-i18n="ask.placeholder"></span>
     </div>
-    <h3>来源 <span class="count" id="srcCount"></span></h3>
+    <div class="busy-line" id="busyLine"></div>
+    <h3><span data-i18n="sources.title"></span> <span class="count" id="srcCount"></span></h3>
     <div class="sources" id="sources"></div>
   </section>
 </main>
 
 <footer>
-  服务地址同源 · <a href="/docs" target="_blank" rel="noopener">REST API 文档</a> ·
-  <a href="/" target="_blank" rel="noopener">导航页</a>
+  <span data-i18n="footer.note"></span>
+  <a href="/docs" target="_blank" rel="noopener" data-i18n="footer.api"></a> ·
+  <a href="/" target="_blank" rel="noopener" data-i18n="footer.nav"></a>
 </footer>
 
 <script>
@@ -385,8 +341,199 @@ footer a { color: var(--muted); }
 
   var KEY_STORE = "kb.apiKey";
   var PROJECT_STORE = "kb.project";
+  var LANG_STORE = "kb.lang";
+
+  var I18N = {
+    zh: {
+      "header.sub": "本地知识库 · 混合检索 · RAG 问答",
+      "project.label": "项目库",
+      "project.ph": "留空 = 全局库",
+      "health.checking": "检测中…",
+      "health.online": "服务在线",
+      "health.offline": "服务离线",
+      "health.needKey": "需要 API Key",
+      "settings.title": "设置",
+      "lang.btn": "EN",
+      "auth.title": "访问鉴权",
+      "auth.label": "API Key（KB_API_KEY 非空时需要）",
+      "auth.ph": "留空表示未启用鉴权",
+      "auth.hint": "Key 只保存在本机浏览器 localStorage，不会发送到除本服务以外的地址。",
+      "auth.save": "保存鉴权 Key",
+      "auth.clear": "清除 Key",
+      "llm.title": "LLM 配置",
+      "llm.modeLabel": "模式",
+      "llm.modeOff": "off · 不调用 LLM（仅检索也能用）",
+      "llm.modeLocal": "local · 只用本地 Ollama",
+      "llm.modeAuto": "auto · 本地优先，云端兜底",
+      "llm.modeCloud": "cloud · 只用云端",
+      "llm.ollamaUrl": "Ollama 地址",
+      "llm.localModel": "本地模型",
+      "llm.refresh": "读取 Ollama 模型列表",
+      "llm.cloudUrl": "云端 Base URL",
+      "llm.cloudModel": "云端模型",
+      "llm.cloudKey": "云端 API Key",
+      "llm.cloudKeyPh": "留空 = 沿用已保存的值",
+      "llm.save": "保存 LLM 配置（立即生效）",
+      "llm.hint": "配置写入 kb_data/llm_config.json，重启后仍生效；本地模式需先运行 ollama serve。",
+      "llm.reading": "读取中…",
+      "llm.readFail": "读取失败",
+      "llm.keySet": "已保存 Key（留空保持不变）",
+      "llm.keyMissing": "尚未保存 Key",
+      "llm.ollamaOnline": "Ollama 在线",
+      "llm.ollamaOffline": "Ollama 未响应（启动后点上方按钮重试）",
+      "llm.modelsFound": "发现 {n} 个模型，可直接选择",
+      "llm.saving": "保存中…",
+      "llm.saved": "已保存并生效：{mode} / {status}",
+      "llm.saveFail": "保存失败：{msg}",
+      "llm.status.disabled": "不可用",
+      "ingest.title": "知识入库",
+      "ingest.pick": "选择文件",
+      "ingest.dropHint": "支持 txt / md / pdf / docx 等格式，也可把文件拖到这里",
+      "ingest.urlPh": "粘贴网页链接，例如 https://example.com/article",
+      "ingest.urlBtn": "抓取网页",
+      "docs.title": "已入库文档",
+      "docs.empty": "暂无文档，先上传一个文件试试",
+      "docs.delete": "删除",
+      "docs.confirm": "删除「{name}」的全部记录？",
+      "docs.deleted": "已删除 {n} 块",
+      "ask.title": "问答",
+      "ask.ph": "根据已入库的文档提问，例如：文档里提到的部署步骤有哪些？",
+      "ask.topk": "召回条数",
+      "ask.searchOnly": "仅检索（不调用 LLM）",
+      "ask.btn": "提问",
+      "ask.btnBusy": "提问中…",
+      "ask.placeholder": "答案会显示在这里。未配置 LLM？打开右上角「设置」→ LLM 配置，选本地 Ollama 或云端；也可以勾选「仅检索」。",
+      "sources.title": "来源",
+      "ask.emptyHits": "命中 {n} 条片段（仅检索模式，未调用 LLM）。",
+      "busy.searching": "检索中… 已等待 {s}s",
+      "busy.modelHint": "首次查询需要加载嵌入模型，可能需要几十秒。",
+      "err.llmOff": "LLM 未启用（默认 off）。打开右上角「设置」→ LLM 配置，选择本地 Ollama 或云端；也可以勾选「仅检索」。",
+      "err.timeout": "请求超过 {s}s 未返回，已取消。首次查询可能在加载嵌入模型；可稍后重试，或在 .env 换用更小的 bge-small-zh 模型。",
+      "err.needKey": "需要 API Key：请在右上角「设置」里填写 KB_API_KEY。",
+      "upload.start": "开始处理 {n} 个文件…",
+      "upload.doing": "正在处理 {i}/{n}：{name}",
+      "upload.done": "已完成 {i}/{n}：{name}（{c} 块）",
+      "upload.allDone": "全部完成：{n} 个文件",
+      "upload.someFailed": "完成 {ok}/{n} 个，失败 {bad} 个",
+      "url.fetching": "正在抓取网页正文…",
+      "url.done": "已入库：{source}（{c} 块）",
+      "url.fail": "网页入库失败：{msg}",
+      "docs.readFail": "读取文档列表失败：{msg}",
+      "delete.fail": "删除失败：{msg}",
+      "footer.note": "服务地址同源 ·",
+      "footer.api": "REST API 文档",
+      "footer.nav": "导航页"
+    },
+    en: {
+      "header.sub": "Local knowledge base · hybrid retrieval · RAG Q&A",
+      "project.label": "Project",
+      "project.ph": "blank = global store",
+      "health.checking": "checking…",
+      "health.online": "service online",
+      "health.offline": "service offline",
+      "health.needKey": "API key required",
+      "settings.title": "Settings",
+      "lang.btn": "中文",
+      "auth.title": "Access control",
+      "auth.label": "API Key (required when KB_API_KEY is set)",
+      "auth.ph": "blank = auth disabled",
+      "auth.hint": "Stored in this browser's localStorage only, never sent anywhere else.",
+      "auth.save": "Save key",
+      "auth.clear": "Clear key",
+      "llm.title": "LLM config",
+      "llm.modeLabel": "Mode",
+      "llm.modeOff": "off · no LLM (retrieval still works)",
+      "llm.modeLocal": "local · Ollama only",
+      "llm.modeAuto": "auto · local first, cloud fallback",
+      "llm.modeCloud": "cloud · cloud only",
+      "llm.ollamaUrl": "Ollama endpoint",
+      "llm.localModel": "Local model",
+      "llm.refresh": "Load Ollama model list",
+      "llm.cloudUrl": "Cloud base URL",
+      "llm.cloudModel": "Cloud model",
+      "llm.cloudKey": "Cloud API key",
+      "llm.cloudKeyPh": "blank = keep saved value",
+      "llm.save": "Save LLM config (apply now)",
+      "llm.hint": "Saved to kb_data/llm_config.json and kept after restart; local mode needs ollama serve running.",
+      "llm.reading": "loading…",
+      "llm.readFail": "read failed",
+      "llm.keySet": "key saved (leave blank to keep)",
+      "llm.keyMissing": "no key saved yet",
+      "llm.ollamaOnline": "Ollama online",
+      "llm.ollamaOffline": "Ollama not responding (start it and retry)",
+      "llm.modelsFound": "{n} models found, pick one",
+      "llm.saving": "saving…",
+      "llm.saved": "Saved and applied: {mode} / {status}",
+      "llm.saveFail": "Save failed: {msg}",
+      "llm.status.disabled": "unavailable",
+      "ingest.title": "Ingest",
+      "ingest.pick": "Choose files",
+      "ingest.dropHint": "txt / md / pdf / docx supported; drag files here too",
+      "ingest.urlPh": "Paste a web page URL, e.g. https://example.com/article",
+      "ingest.urlBtn": "Fetch page",
+      "docs.title": "Documents",
+      "docs.empty": "No documents yet — upload one to start",
+      "docs.delete": "Delete",
+      "docs.confirm": "Delete all records of \"{name}\"?",
+      "docs.deleted": "Deleted {n} chunks",
+      "ask.title": "Ask",
+      "ask.ph": "Ask about your documents, e.g. what deployment steps are mentioned?",
+      "ask.topk": "Top-k",
+      "ask.searchOnly": "Retrieval only (no LLM)",
+      "ask.btn": "Ask",
+      "ask.btnBusy": "Asking…",
+      "ask.placeholder": "Answers appear here. No LLM configured? Open Settings → LLM config and pick local Ollama or cloud; or tick \"Retrieval only\".",
+      "sources.title": "Sources",
+      "ask.emptyHits": "{n} chunks matched (retrieval only, no LLM).",
+      "busy.searching": "Retrieving… {s}s elapsed",
+      "busy.modelHint": "The first query may load the embedding model and take a while.",
+      "err.llmOff": "LLM is off (default). Open Settings → LLM config and choose local Ollama or cloud; or tick \"Retrieval only\".",
+      "err.timeout": "Request timed out after {s}s and was cancelled. The first query may be loading the embedding model; retry later or switch to the smaller bge-small-zh model.",
+      "err.needKey": "API key required: fill KB_API_KEY in Settings.",
+      "upload.start": "Processing {n} file(s)…",
+      "upload.doing": "Processing {i}/{n}: {name}",
+      "upload.done": "Done {i}/{n}: {name} ({c} chunks)",
+      "upload.allDone": "All done: {n} file(s)",
+      "upload.someFailed": "Finished {ok}/{n}, {bad} failed",
+      "url.fetching": "Fetching page content…",
+      "url.done": "Ingested: {source} ({c} chunks)",
+      "url.fail": "Web ingest failed: {msg}",
+      "docs.readFail": "Failed to load documents: {msg}",
+      "delete.fail": "Delete failed: {msg}",
+      "footer.note": "Same-origin service ·",
+      "footer.api": "REST API docs",
+      "footer.nav": "Home"
+    }
+  };
+
   var $ = function (id) { return document.getElementById(id); };
-  var state = { apiKey: "", project: "", busy: false };
+  var state = { apiKey: "", project: "", lang: "zh", llm: null, busy: false, docCount: 0 };
+
+  function T(key, vars) {
+    var dict = I18N[state.lang] || I18N.zh;
+    var text = dict[key] || I18N.zh[key] || key;
+    if (vars) {
+      Object.keys(vars).forEach(function (k) {
+        text = text.replace(new RegExp("\\{" + k + "\\}", "g"), String(vars[k]));
+      });
+    }
+    return text;
+  }
+
+  function applyLang(lang) {
+    state.lang = lang === "en" ? "en" : "zh";
+    localStorage.setItem(LANG_STORE, state.lang);
+    document.documentElement.lang = state.lang === "en" ? "en" : "zh-CN";
+    $("langToggle").textContent = T("lang.btn");
+    document.querySelectorAll("[data-i18n]").forEach(function (el) {
+      el.textContent = T(el.getAttribute("data-i18n"));
+    });
+    document.querySelectorAll("[data-i18n-ph]").forEach(function (el) {
+      el.placeholder = T(el.getAttribute("data-i18n-ph"));
+    });
+    if (state.llm) { updateLlmBadge(state.llm); applyLlm(state.llm, false); }
+    loadDocs();
+  }
 
   /* ---------- 基础工具 ---------- */
 
@@ -409,24 +556,25 @@ footer a { color: var(--muted); }
 
   function errorText(err) {
     var msg = (err && err.message) || String(err);
-    if (msg === "UNAUTHORIZED") {
-      return "需要 API Key：请在右上角「设置」里填写 KB_API_KEY";
-    }
+    if (msg === "UNAUTHORIZED") return T("err.needKey");
     return msg;
   }
 
-  /* 统一请求：返回解析后的 JSON；非 2xx 抛出带人话消息的错误 */
-  function api(path, options) {
+  /* 统一请求：超时可控（首次检索可能要加载嵌入模型） */
+  function api(path, options, timeoutMs) {
     options = options || {};
     options.headers = headers(options.headers || {});
+    var limit = timeoutMs || 30000;
+    var ctrl = new AbortController();
+    var timer = setTimeout(function () { ctrl.abort(); }, limit);
+    options.signal = ctrl.signal;
     return fetch(path, options).then(function (resp) {
       return resp.text().then(function (text) {
         var data = null;
         try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
         if (!resp.ok) {
           var detail = (data && (data.detail || data)) || {};
-          var msg = detail.message || detail.error || (data && data.detail) ||
-                    ("HTTP " + resp.status);
+          var msg = detail.message || detail.error || ("HTTP " + resp.status);
           if (resp.status === 401) msg = "UNAUTHORIZED";
           var err = new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
           err.status = resp.status;
@@ -434,7 +582,14 @@ footer a { color: var(--muted); }
         }
         return data;
       });
-    });
+    }).catch(function (err) {
+      if (err && err.name === "AbortError") {
+        var te = new Error(T("err.timeout", { s: Math.round(limit / 1000) }));
+        te.timeout = true;
+        throw te;
+      }
+      throw err;
+    }).finally(function () { clearTimeout(timer); });
   }
 
   /* ---------- 服务状态 ---------- */
@@ -442,21 +597,22 @@ footer a { color: var(--muted); }
   function checkHealth() {
     var el = $("health");
     api("/api/v1/healthz").then(function (data) {
-      el.textContent = "服务在线";
+      el.textContent = T("health.online");
       el.className = "pill ok";
       if (data && data.version) el.title = "version " + data.version;
+      state.embedder = data && data.embedder && data.embedder.state;
     }).catch(function (err) {
-      el.textContent = err.status === 401 ? "需要 API Key" : "服务离线";
+      el.textContent = err.status === 401 ? T("health.needKey") : T("health.offline");
       el.className = "pill bad";
     });
   }
 
-  /* ---------- LLM 配置（云端 / 本地 Ollama） ---------- */
+  /* ---------- LLM 配置 ---------- */
 
   function updateLlmBadge(data) {
     var el = $("llmBadge");
-    if (!data) { el.textContent = "读取失败"; return; }
-    var status = data.status === "disabled" ? "不可用" : data.status;
+    if (!data) { el.textContent = T("llm.readFail"); return; }
+    var status = data.status === "disabled" ? T("llm.status.disabled") : data.status;
     el.textContent = data.mode + " · " + status;
     el.style.color = data.status === "disabled" ? "var(--danger)" : "var(--brand)";
   }
@@ -467,7 +623,7 @@ footer a { color: var(--muted); }
     $("cloudBlock").style.display = (mode === "off" || mode === "local") ? "none" : "block";
   }
 
-  function applyLlm(data) {
+  function applyLlm(data, keepHints) {
     if (!data) return;
     state.llm = data;
     $("llmMode").value = data.mode || "off";
@@ -475,24 +631,27 @@ footer a { color: var(--muted); }
     $("localModel").value = (data.local && data.local.model) || "";
     $("cloudUrl").value = (data.cloud && data.cloud.base_url) || "";
     $("cloudModel").value = (data.cloud && data.cloud.model) || "";
-    $("cloudHint").textContent = data.cloud && data.cloud.api_key_set
-      ? "已保存 Key（留空保持不变）" : "尚未保存 Key";
-    $("localHint").textContent = data.local && data.local.available
-      ? "Ollama 在线" : "Ollama 未响应（配置后点上方按钮重试）";
+    if (!keepHints) {
+      $("cloudHint").textContent = data.cloud && data.cloud.api_key_set
+        ? T("llm.keySet") : T("llm.keyMissing");
+      $("localHint").textContent = data.local && data.local.available
+        ? T("llm.ollamaOnline") : T("llm.ollamaOffline");
+    }
     updateLlmBadge(data);
     toggleLlmBlocks();
   }
 
   function loadLlm() {
+    $("llmBadge").textContent = T("llm.reading");
     api("/api/v1/llm").then(applyLlm).catch(function (err) {
-      $("llmBadge").textContent = "读取失败";
+      $("llmBadge").textContent = T("llm.readFail");
       $("llmHint").textContent = errorText(err);
     });
   }
 
   function refreshModels() {
     var base = ($("ollamaUrl").value || "").trim();
-    $("localHint").textContent = "正在读取…";
+    $("localHint").textContent = T("llm.reading");
     api("/api/v1/llm/ollama/models" + (base ? "?base_url=" + encodeURIComponent(base) : ""))
       .then(function (data) {
         var list = $("ollamaModels");
@@ -503,8 +662,8 @@ footer a { color: var(--muted); }
           list.appendChild(opt);
         });
         $("localHint").textContent = data.ok
-          ? ("发现 " + data.models.length + " 个模型，可直接选择")
-          : (data.message || "Ollama 不可用");
+          ? T("llm.modelsFound", { n: data.models.length })
+          : (data.message || T("llm.ollamaOffline"));
       }).catch(function (err) {
         $("localHint").textContent = errorText(err);
       });
@@ -525,22 +684,19 @@ footer a { color: var(--muted); }
       var cloudKey = ($("cloudKey").value || "").trim();
       if (cloudUrl) payload.cloud_base_url = cloudUrl;
       if (cloudModel) payload.cloud_model = cloudModel;
-      if (cloudKey) {
-        payload.cloud_api_key = cloudKey;
-        $("cloudKey").value = "";
-      }
+      if (cloudKey) { payload.cloud_api_key = cloudKey; $("cloudKey").value = ""; }
     }
-    $("llmHint").textContent = "保存中…";
+    $("llmHint").textContent = T("llm.saving");
     api("/api/v1/llm/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
-    }).then(function (data) {
-      applyLlm(data);
-      $("llmHint").textContent = "已保存并生效：" + data.mode + " / " + data.status;
+    }, 20000).then(function (data) {
+      applyLlm(data, true);
+      $("llmHint").textContent = T("llm.saved", { mode: data.mode, status: data.status });
       checkHealth();
     }).catch(function (err) {
-      $("llmHint").textContent = "保存失败：" + errorText(err);
+      $("llmHint").textContent = T("llm.saveFail", { msg: errorText(err) });
     });
   }
 
@@ -549,11 +705,12 @@ footer a { color: var(--muted); }
   function renderDocs(items) {
     var box = $("docs");
     box.textContent = "";
+    state.docCount = items.length;
     $("docCount").textContent = items.length ? "（" + items.length + "）" : "";
     if (!items.length) {
       var e = document.createElement("div");
       e.className = "empty";
-      e.textContent = "暂无文档";
+      e.textContent = T("docs.empty");
       box.appendChild(e);
       return;
     }
@@ -565,18 +722,17 @@ footer a { color: var(--muted); }
       main.className = "doc-main";
       var name = document.createElement("div");
       name.className = "doc-name";
-      name.textContent = d.source || "(无来源)";
+      name.textContent = d.source || "(no source)";
       name.title = d.source || "";
       var meta = document.createElement("div");
       meta.className = "doc-meta";
-      meta.textContent = (d.chunks || 0) + " 块 · " + (d.chars || 0) + " 字" +
-        (d.last_imported ? " · " + d.last_imported.replace("T", " ").slice(0, 16) : "");
+      meta.textContent = (d.chunks || 0) + " · " + (d.chars || 0);
       main.appendChild(name);
       main.appendChild(meta);
 
       var del = document.createElement("button");
       del.type = "button";
-      del.textContent = "删除";
+      del.textContent = T("docs.delete");
       del.addEventListener("click", function () { removeDoc(d.source); });
 
       row.appendChild(main);
@@ -590,24 +746,22 @@ footer a { color: var(--muted); }
     var path = "/api/v1/documents" + (p ? "?project=" + encodeURIComponent(p) : "");
     return api(path).then(function (data) {
       renderDocs((data && data.items) || []);
-      var list = $("projectList");
-      list.textContent = "";
     }).catch(function (err) {
-      setStatus("读取文档列表失败：" + errorText(err), "err");
+      setStatus(T("docs.readFail", { msg: errorText(err) }), "err");
     });
   }
 
   function removeDoc(source) {
     if (!source) return;
-    if (!window.confirm("删除「" + source + "」的全部记录？")) return;
+    if (!window.confirm(T("docs.confirm", { name: source }))) return;
     var p = projectParam();
     var path = "/api/v1/documents?source=" + encodeURIComponent(source) +
       (p ? "&project=" + encodeURIComponent(p) : "");
     api(path, { method: "DELETE" }).then(function (data) {
-      setStatus("已删除 " + ((data && data.deleted) || 0) + " 块", "ok");
+      setStatus(T("docs.deleted", { n: (data && data.deleted) || 0 }), "ok");
       loadDocs();
     }).catch(function (err) {
-      setStatus("删除失败：" + errorText(err), "err");
+      setStatus(T("delete.fail", { msg: errorText(err) }), "err");
     });
   }
 
@@ -618,7 +772,7 @@ footer a { color: var(--muted); }
     fd.append("file", file, file.name);
     var p = projectParam();
     if (p) fd.append("project", p);
-    return api("/api/v1/documents", { method: "POST", body: fd });
+    return api("/api/v1/documents", { method: "POST", body: fd }, 180000);
   }
 
   function uploadFiles(files) {
@@ -628,16 +782,17 @@ footer a { color: var(--muted); }
     var list = Array.prototype.slice.call(files);
     var done = 0;
     var failed = [];
-    setStatus("开始处理 " + list.length + " 个文件…", "busy");
+    setStatus(T("upload.start", { n: list.length }), "busy");
 
     var chain = Promise.resolve();
     list.forEach(function (f) {
       chain = chain.then(function () {
-        setStatus("正在处理 " + (done + 1) + "/" + list.length + "：" + f.name, "busy");
+        setStatus(T("upload.doing", { i: done + 1, n: list.length, name: f.name }), "busy");
         return ingestOne(f).then(function (r) {
           done += 1;
-          setStatus("已完成 " + done + "/" + list.length + "：" + f.name +
-                    "（" + (r.chunks || 0) + " 块）", "ok");
+          setStatus(T("upload.done", {
+            i: done, n: list.length, name: f.name, c: r.chunks || 0
+          }), "ok");
         }).catch(function (err) {
           failed.push(f.name + "：" + errorText(err));
           done += 1;
@@ -649,10 +804,11 @@ footer a { color: var(--muted); }
       state.busy = false;
       $("pick").disabled = false;
       if (failed.length) {
-        setStatus("完成 " + (list.length - failed.length) + "/" + list.length +
-                  " 个\n失败：\n" + failed.join("\n"), "err");
+        setStatus(T("upload.someFailed", {
+          ok: list.length - failed.length, n: list.length, bad: failed.length
+        }) + "\n" + failed.join("\n"), "err");
       } else {
-        setStatus("全部完成：" + list.length + " 个文件", "ok");
+        setStatus(T("upload.allDone", { n: list.length }), "ok");
       }
       loadDocs();
     });
@@ -662,7 +818,8 @@ footer a { color: var(--muted); }
     var url = $("url").value.trim();
     if (!url || state.busy) return;
     state.busy = true;
-    setStatus("正在抓取网页正文…", "busy");
+    $("ingestUrl").disabled = true;
+    setStatus(T("url.fetching"), "busy");
     var body = { url: url };
     var p = projectParam();
     if (p) body.project = p;
@@ -670,14 +827,15 @@ footer a { color: var(--muted); }
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
-    }).then(function (r) {
-      setStatus("已入库：" + (r.source || url) + "（" + (r.chunks || 0) + " 块）", "ok");
+    }, 60000).then(function (r) {
+      setStatus(T("url.done", { source: r.source || url, c: r.chunks || 0 }), "ok");
       $("url").value = "";
       loadDocs();
     }).catch(function (err) {
-      setStatus("网页入库失败：" + errorText(err), "err");
-    }).then(function () {
+      setStatus(T("url.fail", { msg: errorText(err) }), "err");
+    }).finally(function () {
       state.busy = false;
+      $("ingestUrl").disabled = false;
     });
   }
 
@@ -698,7 +856,7 @@ footer a { color: var(--muted); }
       idx.textContent = String(i + 1);
       var src = document.createElement("span");
       src.className = "src-source";
-      src.textContent = s.source || "（无来源）";
+      src.textContent = s.source || "-";
       src.title = (s.id || "") + " " + (s.source || "");
       var score = document.createElement("span");
       score.className = "score";
@@ -723,45 +881,55 @@ footer a { color: var(--muted); }
     var topK = parseInt($("topk").value, 10) || 5;
     var p = projectParam();
     var searchOnly = $("searchOnly").checked;
+    var timeoutMs = searchOnly ? 120000 : 180000;
     state.busy = true;
     $("ask").disabled = true;
-    $("answer").innerHTML = '<span class="placeholder">检索中…</span>';
+    $("ask").textContent = T("ask.btnBusy");
+    $("answer").innerHTML = "";
     $("sources").textContent = "";
+    $("srcCount").textContent = "";
+
+    var started = Date.now();
+    function tick() {
+      var sec = Math.round((Date.now() - started) / 1000);
+      var line = T("busy.searching", { s: sec });
+      if (sec >= 5) line += "  " + T("busy.modelHint");
+      $("busyLine").textContent = line;
+    }
+    tick();
+    var timer = setInterval(tick, 1000);
 
     var path = searchOnly ? "/api/v1/search" : "/api/v1/ask";
-    var body = searchOnly
-      ? { query: q, top_k: topK }
-      : { question: q, top_k: topK };
+    var body = searchOnly ? { query: q, top_k: topK } : { question: q, top_k: topK };
     if (p) body.project = p;
 
     api(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
-    }).then(function (data) {
+    }, timeoutMs).then(function (data) {
       var answer = $("answer");
       answer.textContent = "";
       if (searchOnly) {
         var hits = (data && data.results) || [];
-        answer.textContent = "命中 " + hits.length + " 条片段（仅检索模式，未调用 LLM）。";
+        answer.textContent = T("ask.emptyHits", { n: hits.length });
         renderSources(hits);
       } else {
-        var text = (data && data.answer) || "(空回答)";
-        answer.textContent = text;
+        answer.textContent = (data && data.answer) || "—";
         renderSources((data && data.sources) || []);
       }
     }).catch(function (err) {
       var answer = $("answer");
       answer.textContent = "";
-      var msg = errorText(err);
-      if (err.status === 503) {
-        msg += "\n\n提示：服务未配置 LLM（KB_LLM_MODE=off 是默认值）。" +
-               "可以勾选「仅检索」先验证召回，或在 .env 里配置 local/cloud 模式。";
-      }
+      var msg = err && err.timeout ? err.message : errorText(err);
+      if (err && err.status === 503) msg = T("err.llmOff");
       answer.textContent = msg;
-    }).then(function () {
+    }).finally(function () {
+      clearInterval(timer);
+      $("busyLine").textContent = "";
       state.busy = false;
       $("ask").disabled = false;
+      $("ask").textContent = T("ask.btn");
     });
   }
 
@@ -777,6 +945,7 @@ footer a { color: var(--muted); }
     $("settings").open = false;
     checkHealth();
     loadDocs();
+    loadLlm();
   }
 
   function clearKey() {
@@ -798,6 +967,9 @@ footer a { color: var(--muted); }
       if (e.key === "Enter") { e.preventDefault(); ingestUrl(); }
     });
     $("ask").addEventListener("click", ask);
+    $("langToggle").addEventListener("click", function () {
+      applyLang(state.lang === "zh" ? "en" : "zh");
+    });
 
     var drop = $("drop");
     ["dragenter", "dragover"].forEach(function (ev) {
@@ -822,9 +994,7 @@ footer a { color: var(--muted); }
     $("llmMode").addEventListener("change", toggleLlmBlocks);
     $("refreshModels").addEventListener("click", refreshModels);
     $("saveLlm").addEventListener("click", saveLlm);
-    $("project").addEventListener("change", function () {
-      saveSettings();
-    });
+    $("project").addEventListener("change", function () { saveSettings(); });
     $("project").addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); saveSettings(); }
     });
@@ -832,12 +1002,14 @@ footer a { color: var(--muted); }
 
   state.apiKey = localStorage.getItem(KEY_STORE) || "";
   state.project = localStorage.getItem(PROJECT_STORE) || "";
+  var savedLang = localStorage.getItem(LANG_STORE);
+  state.lang = savedLang === "en" ? "en" : "zh";
   $("apiKey").value = state.apiKey;
   $("project").value = state.project;
 
   bind();
+  applyLang(state.lang);
   checkHealth();
-  loadDocs();
   loadLlm();
 })();
 </script>

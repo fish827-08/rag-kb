@@ -58,3 +58,5 @@ jieba.cache
 _tmp/
 /tmp*/
 */.pytest-of-*/
+# 本地实验产物（语料、压测脚本、可视化页等，仅本机使用）
+_local/

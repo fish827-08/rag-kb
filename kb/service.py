@@ -310,6 +310,19 @@ class KBService:
         for _field, _value in self._llm_overrides.items():
             setattr(self.settings, _field, _value)
         self.device = self.settings.device or "cpu"
+        # 设备兜底（2026-11-03）：runtime.json 可能残留 cuda 选择，而当前 torch 是 CPU 版；
+        # 若不做兜底，sentence-transformers 会在 cuda 上失败后退回在线加载，
+        # 触发 HuggingFace 网络重试，一次查询卡住数分钟。
+        if str(self.device).lower().startswith("cuda"):
+            try:
+                import torch
+                if not torch.cuda.is_available():
+                    import logging
+                    logging.getLogger("kb.service").warning(
+                        "配置要求 CUDA，但当前 torch 不支持 CUDA，已自动回退 cpu")
+                    self.device = "cpu"
+            except ImportError:
+                self.device = "cpu"
         # 并发写入锁（改进项 2）：ChromaDB / BM25 / 稀疏索引均非线程安全，
         # 所有作用域的写路径统一串行化；读路径不加锁。
         self._write_lock = threading.RLock()
@@ -1159,7 +1172,8 @@ class KBService:
         sources = [{"id": r["id"], "content": r["content"],
                     "score": r["score"], "source": r["source"]} for r in results]
         if self.settings.llm_mode == "auto":
-            result = self._ask_auto(question, results, sources)
+            result = self._ask_auto(question, results, sources,
+                                    project=project, top_k=top_k)
         else:
             context = self._build_context(results)
             answer = self.llm.chat(self._build_messages(context, question))
@@ -1171,7 +1185,8 @@ class KBService:
 
     # ---- 智能路由（auto 模式）----
     def _ask_auto(self, question: str, results: list[dict],
-                  sources: list[dict]) -> dict:
+                  sources: list[dict], project: str | None = None,
+                  top_k: int = 5) -> dict:
         """auto 模式智能路由：缓存检查 → 本地分类 → 敏感覆盖 → 分支路由 → 写缓存。
 
         分支：SENSITIVE / SIMPLE / COMPLEX 无云 → 本地直答（N10 消息拼装）；
@@ -1184,7 +1199,7 @@ class KBService:
         entry ≥ threshold) return directly without calling the LLM."""
         # 1) 缓存检查（问题向量与缓存条目 question_vec 余弦最大值 ≥ 阈值 → 直接返回）
         qvec = self.embedder.embed_texts([question])[0]
-        hit = self._cache_lookup(qvec)
+        hit = self._cache_lookup(qvec, project=project, top_k=top_k)
         if hit is not None:
             return {"answer": hit["answer"], "sources": hit["sources"],
                     "llm": hit["llm"]}
@@ -1197,7 +1212,8 @@ class KBService:
             context = self._build_context(results)
             answer = self.llm.chat(self._build_messages(context, question))
             llm_used = self.llm.status.value
-            self._cache_put(question, qvec, answer, sources, llm_used)
+            self._cache_put(question, qvec, answer, sources, llm_used,
+                            project=project, top_k=top_k)
             return {"answer": answer, "sources": sources, "llm": llm_used}
         # 3) 敏感覆盖：检索结果 tag 含 sensitive 或 namespace 命中敏感名单 → SENSITIVE
         if self._is_sensitive(results):
@@ -1211,7 +1227,8 @@ class KBService:
                                    prefer="local")
             llm_used = "local"
         # 5) 未命中缓存走完整流程后写入缓存
-        self._cache_put(question, qvec, answer, sources, llm_used)
+        self._cache_put(question, qvec, answer, sources, llm_used,
+                        project=project, top_k=top_k)
         return {"answer": answer, "sources": sources, "llm": llm_used}
 
     def _classify(self, question: str) -> str:
@@ -1276,14 +1293,18 @@ class KBService:
                                    prefer="local")
             return answer, "local"
 
-    def _cache_lookup(self, qvec: list[float]) -> dict | None:
-        """缓存查找：与各条目问题向量余弦最大值 ≥ cache_sim_threshold 即命中；
-        命中提升 LRU 新鲜度并返回该条目。
-        English: Cache lookup: a hit occurs when the max cosine between the question vector and a cached
-        entry ≥ cache_sim_threshold; on a hit refresh LRU recency and return that entry."""
+    def _cache_lookup(self, qvec: list[float], project: str | None = None,
+                      top_k: int = 5) -> dict | None:
+        """缓存查找：仅在同一作用域 + 同一 top_k 的条目里比较问题向量余弦。
+
+        缺少这两个维度会导致「A 项目的问题命中 B 项目的答案」，是曾经的隐患。
+        English: Cache lookup restricted to the same scope and top_k; without these
+        dimensions an answer from project A could be served for project B."""
         best_key: str | None = None
         best_sim = -1.0
         for key, entry in self._cache.items():
+            if entry.get("project") != project or entry.get("top_k") != top_k:
+                continue
             sim = _cosine(qvec, entry["question_vec"])
             if sim > best_sim:
                 best_key, best_sim = key, sim
@@ -1293,11 +1314,14 @@ class KBService:
         return None
 
     def _cache_put(self, question: str, qvec: list[float], answer: str,
-                   sources: list[dict], llm_used: str) -> None:
-        """写入缓存条目（问题向量/答案/来源/后端）；超容量淘汰最旧（LRU）。
-        English: Write a cache entry (question vector / answer / sources / backend); evict the oldest on overflow (LRU)."""
+                   sources: list[dict], llm_used: str,
+                   project: str | None = None, top_k: int = 5) -> None:
+        """写入缓存条目（问题向量/答案/来源/后端/作用域/top_k）；超容量淘汰最旧（LRU）。
+        English: Write a cache entry (question vector / answer / sources / backend / scope / top_k);
+        evict the oldest on overflow (LRU)."""
         self._cache[question] = {"question_vec": qvec, "answer": answer,
-                                 "sources": sources, "llm": llm_used}
+                                 "sources": sources, "llm": llm_used,
+                                 "project": project, "top_k": top_k}
         self._cache.move_to_end(question)
         while len(self._cache) > self.settings.cache_size:
             self._cache.popitem(last=False)

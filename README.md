@@ -119,6 +119,9 @@ curl http://127.0.0.1:8000/api/v1/healthz
 填 Ollama 地址与模型（可一键读取 `ollama list`）或云端 Base URL / 模型 / Key，保存即生效，
 配置落在 `kb_data/llm_config.json`（不入库），重启后沿用。
 
+**界面中英双语**：右上角 `EN / 中文` 一键切换（与 README 双语文档一致）；问答有计时与超时提示，
+首次查询若在加载嵌入模型会明确提示，不会看起来像卡死。
+
 > 嵌入模型采用懒加载：启动后空闲时几乎不占内存，**首次写入或检索**才加载
 > `BAAI/bge-small-zh-v1.5`（约 92 MB，自动下载并缓存，之后断网可用）；
 > 未配置 LLM 时服务照常启动，`/ask` 返回 503 与配置指引。
@@ -395,7 +398,7 @@ python -m kb dedup --threshold 0.92           # 语义去重
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（483 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
+tests/         kb 验收测试（485 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
 docs/          用户指南、开发者手册与设计文档
 kb_data/       kb 运行数据（gitignore）
 ```

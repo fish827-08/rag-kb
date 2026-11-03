@@ -146,7 +146,8 @@ class LLMClient:
                 "未安装 openai SDK，无法调用云端 LLM："
                 "请运行 pip install \"kb-memory[llm]\"") from exc
         client = OpenAI(api_key=self._settings.cloud_api_key,
-                        base_url=self._settings.cloud_base_url)
+                        base_url=self._settings.cloud_base_url,
+                        timeout=60.0, max_retries=0)
         try:
             resp = client.chat.completions.create(
                 model=self._settings.cloud_model,

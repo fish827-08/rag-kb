@@ -182,7 +182,11 @@ class Embedder:
                     self._model = SentenceTransformer(
                         self.model_name, device=self.device, local_files_only=True)
                 except Exception:
-                    # 缓存未命中（首次部署新模型），走在线下载；HF_ENDPOINT 镜像由环境变量提供
+                    # 缓存未命中（首次部署新模型），走在线下载；HF_ENDPOINT 镜像由环境变量提供。
+                    # 收紧默认超时，避免 HuggingFace 不可达时按默认重试把一次查询卡住几分钟。
+                    import os
+                    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "10")
+                    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
                     self._model = SentenceTransformer(self.model_name, device=self.device)
                 if self.device == "cuda":
                     self._model.half()
