@@ -58,6 +58,10 @@ class LLMClient:
         self._cloud_ok = bool(self._settings.cloud_api_key)
         return {"local": self._local_ok, "cloud": self._cloud_ok}
 
+    def availability(self) -> dict:
+        """返回上次探测结果（不重新探测，供状态接口用）。"""
+        return {"local": self._local_ok, "cloud": self._cloud_ok}
+
     @property
     def status(self) -> LLMStatus:
         """off：恒 DISABLED；

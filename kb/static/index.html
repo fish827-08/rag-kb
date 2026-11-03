@@ -133,6 +133,23 @@ details.settings summary::-webkit-details-marker { display: none; }
 .settings-body label { display: block; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
 .settings-body label input { margin-top: 6px; }
 .settings-body .hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+.settings-body { width: 440px; max-height: 72vh; overflow: auto; }
+.set-group + .set-group {
+  border-top: 1px solid var(--border);
+  margin-top: 14px; padding-top: 14px;
+}
+.set-group h4 {
+  margin: 0 0 10px; font-size: 13px; font-weight: 600;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.mini { font-size: 11px; font-weight: 400; color: var(--muted); }
+.llm-block { margin: 8px 0 4px; }
+.llm-block label + label { margin-top: 8px; }
+button.ghost {
+  width: 100%; margin-top: 8px; font-size: 12px; color: var(--muted);
+}
+button.primary.wide { width: 100%; margin-top: 10px; }
+.set-actions { display: flex; gap: 8px; margin-top: 14px; }
 
 main {
   display: grid;
@@ -260,12 +277,58 @@ footer a { color: var(--muted); }
     <details class="settings" id="settings">
       <summary>设置</summary>
       <div class="settings-body">
-        <label>API Key（KB_API_KEY 非空时需要）
-          <input id="apiKey" type="password" autocomplete="off" placeholder="留空表示未启用鉴权">
-        </label>
-        <p class="hint">Key 只保存在本机浏览器 localStorage，不会发送到除本服务以外的地址。</p>
-        <button id="saveKey">保存</button>
-        <button id="clearKey">清除</button>
+        <div class="set-group">
+          <h4>访问鉴权</h4>
+          <label>API Key（KB_API_KEY 非空时需要）
+            <input id="apiKey" type="password" autocomplete="off" placeholder="留空表示未启用鉴权">
+          </label>
+          <p class="hint">Key 只保存在本机浏览器 localStorage，不会发送到除本服务以外的地址。</p>
+        </div>
+
+        <div class="set-group">
+          <h4>LLM 配置 <span class="mini" id="llmBadge">读取中…</span></h4>
+          <label>模式
+            <select id="llmMode">
+              <option value="off">off · 不调用 LLM（仅检索也能用）</option>
+              <option value="local">local · 只用本地 Ollama</option>
+              <option value="auto">auto · 本地优先，云端兜底</option>
+              <option value="cloud">cloud · 只用云端</option>
+            </select>
+          </label>
+
+          <div class="llm-block" id="localBlock">
+            <label>Ollama 地址
+              <input id="ollamaUrl" placeholder="http://localhost:11434">
+            </label>
+            <label>本地模型
+              <input id="localModel" list="ollamaModels" placeholder="qwen3:1.7b">
+              <datalist id="ollamaModels"></datalist>
+            </label>
+            <button id="refreshModels" class="ghost" type="button">读取 Ollama 模型列表</button>
+            <p class="hint" id="localHint"></p>
+          </div>
+
+          <div class="llm-block" id="cloudBlock">
+            <label>云端 Base URL
+              <input id="cloudUrl" placeholder="https://api.deepseek.com">
+            </label>
+            <label>云端模型
+              <input id="cloudModel" placeholder="deepseek-chat">
+            </label>
+            <label>云端 API Key
+              <input id="cloudKey" type="password" autocomplete="off" placeholder="留空=沿用已保存的值">
+            </label>
+            <p class="hint" id="cloudHint"></p>
+          </div>
+
+          <button id="saveLlm" class="primary wide" type="button">保存 LLM 配置（立即生效）</button>
+          <p class="hint" id="llmHint">配置写入 kb_data/llm_config.json，重启服务后仍生效。</p>
+        </div>
+
+        <div class="set-actions">
+          <button id="saveKey">保存鉴权 Key</button>
+          <button id="clearKey">清除 Key</button>
+        </div>
       </div>
     </details>
   </div>
@@ -385,6 +448,99 @@ footer a { color: var(--muted); }
     }).catch(function (err) {
       el.textContent = err.status === 401 ? "需要 API Key" : "服务离线";
       el.className = "pill bad";
+    });
+  }
+
+  /* ---------- LLM 配置（云端 / 本地 Ollama） ---------- */
+
+  function updateLlmBadge(data) {
+    var el = $("llmBadge");
+    if (!data) { el.textContent = "读取失败"; return; }
+    var status = data.status === "disabled" ? "不可用" : data.status;
+    el.textContent = data.mode + " · " + status;
+    el.style.color = data.status === "disabled" ? "var(--danger)" : "var(--brand)";
+  }
+
+  function toggleLlmBlocks() {
+    var mode = $("llmMode").value;
+    $("localBlock").style.display = (mode === "off" || mode === "cloud") ? "none" : "block";
+    $("cloudBlock").style.display = (mode === "off" || mode === "local") ? "none" : "block";
+  }
+
+  function applyLlm(data) {
+    if (!data) return;
+    state.llm = data;
+    $("llmMode").value = data.mode || "off";
+    $("ollamaUrl").value = (data.local && data.local.base_url) || "";
+    $("localModel").value = (data.local && data.local.model) || "";
+    $("cloudUrl").value = (data.cloud && data.cloud.base_url) || "";
+    $("cloudModel").value = (data.cloud && data.cloud.model) || "";
+    $("cloudHint").textContent = data.cloud && data.cloud.api_key_set
+      ? "已保存 Key（留空保持不变）" : "尚未保存 Key";
+    $("localHint").textContent = data.local && data.local.available
+      ? "Ollama 在线" : "Ollama 未响应（配置后点上方按钮重试）";
+    updateLlmBadge(data);
+    toggleLlmBlocks();
+  }
+
+  function loadLlm() {
+    api("/api/v1/llm").then(applyLlm).catch(function (err) {
+      $("llmBadge").textContent = "读取失败";
+      $("llmHint").textContent = errorText(err);
+    });
+  }
+
+  function refreshModels() {
+    var base = ($("ollamaUrl").value || "").trim();
+    $("localHint").textContent = "正在读取…";
+    api("/api/v1/llm/ollama/models" + (base ? "?base_url=" + encodeURIComponent(base) : ""))
+      .then(function (data) {
+        var list = $("ollamaModels");
+        list.textContent = "";
+        (data.models || []).forEach(function (name) {
+          var opt = document.createElement("option");
+          opt.value = name;
+          list.appendChild(opt);
+        });
+        $("localHint").textContent = data.ok
+          ? ("发现 " + data.models.length + " 个模型，可直接选择")
+          : (data.message || "Ollama 不可用");
+      }).catch(function (err) {
+        $("localHint").textContent = errorText(err);
+      });
+  }
+
+  function saveLlm() {
+    var mode = $("llmMode").value;
+    var payload = { mode: mode };
+    if (mode !== "off" && mode !== "cloud") {
+      var ollama = ($("ollamaUrl").value || "").trim();
+      var localModel = ($("localModel").value || "").trim();
+      if (ollama) payload.ollama_base_url = ollama;
+      if (localModel) payload.local_model = localModel;
+    }
+    if (mode !== "off" && mode !== "local") {
+      var cloudUrl = ($("cloudUrl").value || "").trim();
+      var cloudModel = ($("cloudModel").value || "").trim();
+      var cloudKey = ($("cloudKey").value || "").trim();
+      if (cloudUrl) payload.cloud_base_url = cloudUrl;
+      if (cloudModel) payload.cloud_model = cloudModel;
+      if (cloudKey) {
+        payload.cloud_api_key = cloudKey;
+        $("cloudKey").value = "";
+      }
+    }
+    $("llmHint").textContent = "保存中…";
+    api("/api/v1/llm/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function (data) {
+      applyLlm(data);
+      $("llmHint").textContent = "已保存并生效：" + data.mode + " / " + data.status;
+      checkHealth();
+    }).catch(function (err) {
+      $("llmHint").textContent = "保存失败：" + errorText(err);
     });
   }
 
@@ -663,6 +819,9 @@ footer a { color: var(--muted); }
 
     $("saveKey").addEventListener("click", saveSettings);
     $("clearKey").addEventListener("click", clearKey);
+    $("llmMode").addEventListener("change", toggleLlmBlocks);
+    $("refreshModels").addEventListener("click", refreshModels);
+    $("saveLlm").addEventListener("click", saveLlm);
     $("project").addEventListener("change", function () {
       saveSettings();
     });
@@ -679,6 +838,7 @@ footer a { color: var(--muted); }
   bind();
   checkHealth();
   loadDocs();
+  loadLlm();
 })();
 </script>
 </body>

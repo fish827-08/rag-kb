@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.requests import Request
@@ -320,6 +321,32 @@ class WebIngestRequest(BaseModel):
         if err:
             raise ValueError(err)
         return v
+
+
+class LLMConfigRequest(BaseModel):
+    """运行时 LLM 配置（Web UI 保存）；空串/None 表示不修改该字段。
+    English: Runtime LLM config from the Web UI; blank/None leaves the field unchanged."""
+    mode: Literal["off", "local", "auto", "cloud"] | None = None
+    ollama_base_url: str | None = None
+    local_model: str | None = None
+    cloud_base_url: str | None = None
+    cloud_model: str | None = None
+    cloud_api_key: str | None = None
+
+
+def _require_llm_write(request: Request, settings: Settings) -> None:
+    """改 LLM 配置的本机限制：配置了 KB_API_KEY 时由中间件校验；
+    未配置时只允许回环地址，避免局域网内被随意改写出站端点。
+    English: Restrict LLM config writes to loopback unless KB_API_KEY is set
+    (then the auth middleware has already verified the caller)."""
+    if (settings.api_key or "").strip():
+        return
+    host = (request.client.host if request.client else "") or ""
+    if host in ("127.0.0.1", "::1", "localhost", "testclient"):
+        return
+    raise HTTPException(status_code=403, detail={
+        "error": "FORBIDDEN",
+        "message": "仅允许本机修改 LLM 配置（或先配置 KB_API_KEY）"})
 
 
 def _wrap_sse_charset(app):
@@ -892,6 +919,47 @@ def create_app(settings: Settings | None = None,
         except LLMDisabledError as exc:
             raise HTTPException(status_code=503, detail={
                 "error": "LLM_DISABLED", "message": str(exc)})
+
+    @app.get("/api/v1/llm")
+    def get_llm() -> dict:
+        """当前 LLM 配置与可用性（API Key 只回是否已设置，不回明文）。
+        English: Current LLM config and availability; the API key is only reported as set/unset."""
+        return kb.llm_info()
+
+    @app.post("/api/v1/llm/config")
+    def set_llm(body: LLMConfigRequest, request: Request) -> dict:
+        """保存运行时 LLM 配置（云端 / Ollama 本地），保存后立即热重建客户端。
+
+        空串/未传字段不修改；非法值 422；未配置 KB_API_KEY 时仅允许本机调用。
+        English: Persist runtime LLM config and rebuild the client immediately.
+        Blank fields are left unchanged; invalid values → 422; loopback-only unless KB_API_KEY is set."""
+        _require_llm_write(request, kb.settings)
+        try:
+            return kb.reconfigure_llm(body.model_dump(exclude_none=True))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": str(exc)})
+
+    @app.get("/api/v1/llm/ollama/models")
+    def ollama_models(base_url: str | None = None) -> dict:
+        """列出 Ollama 已安装模型（GET {base_url}/api/tags）。
+
+        连不上时返回 {"ok": false, "models": []}，由前端提示，不当作 500。
+        English: List installed Ollama models; unreachable Ollama returns ok=false instead of an error."""
+        url = (base_url or kb.settings.ollama_base_url).rstrip("/")
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT",
+                "message": "base_url 必须是 http(s) 地址"})
+        try:
+            resp = httpx.get(url + "/api/tags", timeout=5.0)
+            resp.raise_for_status()
+            data = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            return {"ok": False, "models": [],
+                    "message": f"Ollama 不可用：{exc}"}
+        models = [m.get("name") for m in data.get("models", []) if m.get("name")]
+        return {"ok": True, "models": models}
 
     @app.get("/api/v1/audit")
     def audit(client: str | None = None, project: str | None = None,
