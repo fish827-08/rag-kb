@@ -115,6 +115,10 @@ curl http://127.0.0.1:8000/api/v1/healthz
 抓取网页、查看已入库文档并做 RAG 问答（含来源片段与分数）。未配置 LLM 时勾选
 「仅检索」即可先验证召回；页面同样是纯本地静态文件，离线可用。
 
+**LLM 也可以在页面里配**：右上角「设置」支持 off / local(Ollama) / auto / cloud 四种模式，
+填 Ollama 地址与模型（可一键读取 `ollama list`）或云端 Base URL / 模型 / Key，保存即生效，
+配置落在 `kb_data/llm_config.json`（不入库），重启后沿用。
+
 > 嵌入模型采用懒加载：启动后空闲时几乎不占内存，**首次写入或检索**才加载
 > `BAAI/bge-small-zh-v1.5`（约 92 MB，自动下载并缓存，之后断网可用）；
 > 未配置 LLM 时服务照常启动，`/ask` 返回 503 与配置指引。
@@ -302,6 +306,9 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 | DELETE | `/api/v1/documents?source=<urlencoded>` | 按查询参数删除（**URL 等含斜杠的 source 必须用这个**） |
 | POST | `/api/v1/ingest/web` | 网页入库 `{url}`，抓取正文切分入库；同 URL 重复入库自动替换旧记录 |
 | POST | `/api/v1/ask` | RAG 问答 `{question, top_k?}`（`top_k` 默认 5，长文档可调至 8~10）；未配置 LLM 返回 503 |
+| GET | `/api/v1/llm` | 当前 LLM 配置与可用性（Key 只回是否已设置） |
+| POST | `/api/v1/llm/config` | 运行时保存云端 / Ollama 配置并热生效 |
+| GET | `/api/v1/llm/ollama/models` | 列出 Ollama 已安装模型（`?base_url=` 可覆盖） |
 | GET | `/api/v1/healthz` | 健康检查与服务统计（含 `embedder` 状态） |
 | GET | `/api/v1/governance/stats` | 记忆治理统计：`total_count`/`avg_access_count`/`stale_90d_count`（只读） |
 | GET | `/api/v1/governance/config` | 治理配置：衰减+新鲜度开关与参数（只读） |
@@ -388,7 +395,7 @@ python -m kb dedup --threshold 0.92           # 语义去重
 ```
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / watcher / api / mcp / cli + reranker / sparse / eval）
-tests/         kb 验收测试（476 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
+tests/         kb 验收测试（483 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
 docs/          用户指南、开发者手册与设计文档
 kb_data/       kb 运行数据（gitignore）
 ```
@@ -399,3 +406,4 @@ kb_data/       kb 运行数据（gitignore）
 - 设计文档（需求、架构、API、里程碑）：`docs/superpowers/specs/2026-08-23-kb-memory-service-design.md`
 - **v2.1 设计（当前）**：`docs/superpowers/specs/2026-10-20-kb-v2.1-design.md`
 - 开发者维护手册：`docs/DEV_HANDBOOK.md`
+

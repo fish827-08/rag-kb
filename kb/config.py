@@ -112,6 +112,11 @@ class Settings(BaseSettings):
         return self.data_dir / "runtime.json"
 
     @property
+    def llm_config_file(self) -> Path:
+        """运行时 LLM 配置（Web UI 保存，覆盖环境变量；本地文件不入库）。"""
+        return self.data_dir / "llm_config.json"
+
+    @property
     def sensitive_ns_list(self) -> list[str]:
         """把敏感 namespace 拆分为列表，空串→[]。"""
         return [s.strip() for s in self.sensitive_namespaces.split(",") if s.strip()]

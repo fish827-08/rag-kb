@@ -1,5 +1,6 @@
 """KBService：统一业务编排，组装 store / embedder / bm25 / retriever / llm。
 English: Unified business orchestration that assembles store / embedder / bm25 / retriever / llm."""
+import json
 import math
 import threading
 import time
@@ -220,6 +221,79 @@ def resolve_embed_model(settings: Settings, has_data: bool) -> str:
     return LEGACY_DEFAULT_EMBED_MODEL
 
 
+# ---- 运行时 LLM 配置（2026-11-03，Web UI 保存到 kb_data/llm_config.json）----
+LLM_MODES = ("off", "local", "auto", "cloud")
+LLM_CONFIG_FIELDS = ("llm_mode", "ollama_base_url", "llm_model",
+                     "llm_base_url", "llm_cloud_model", "llm_api_key")
+_LLM_PATCH_MAP = {
+    "mode": "llm_mode",
+    "ollama_base_url": "ollama_base_url",
+    "local_model": "llm_model",
+    # 注意：cloud_* 是 Settings 的只读 property，实际落盘字段用 llm_* 原名
+    "cloud_base_url": "llm_base_url",
+    "cloud_model": "llm_cloud_model",
+    "cloud_api_key": "llm_api_key",
+}
+
+
+def _check_llm_url(value: str, name: str) -> None:
+    """LLM 端点只接受 http(s)；长度上限防御异常输入。"""
+    if not value.startswith(("http://", "https://")):
+        raise ValueError(f"{name} 必须是 http(s) 地址")
+    if len(value) > 200:
+        raise ValueError(f"{name} 过长（≤200 字符）")
+
+
+def normalize_llm_patch(patch: dict) -> dict:
+    """把 Web UI 的补丁字段校验并映射为 Settings 字段；空串表示「不修改」。
+
+    返回 {"llm_mode": ..., "llm_model": ...} 之类的 Settings 字段字典；
+    非法值抛 ValueError（API 层转 422），避免把坏配置写进持久化文件。
+    English: Validate UI patch fields and map them to Settings names; blank means
+    "leave unchanged". Invalid values raise ValueError (mapped to 422).
+    """
+    clean: dict = {}
+    for key, value in (patch or {}).items():
+        field = _LLM_PATCH_MAP.get(key)
+        if field is None or value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"{key} 必须是字符串")
+        v = value.strip()
+        if not v:
+            continue  # 空串=不修改，防止误清已保存的 API Key
+        if field == "llm_mode":
+            if v not in LLM_MODES:
+                raise ValueError("mode 只能是 off / local / auto / cloud")
+        elif field in ("ollama_base_url", "llm_base_url"):
+            _check_llm_url(v, key)
+        elif len(v) > 200:
+            raise ValueError(f"{key} 过长（≤200 字符）")
+        clean[field] = v
+    return clean
+
+
+def load_llm_overrides(path: Path) -> dict:
+    """读取运行时 LLM 配置；文件不存在/损坏返回 {}（不阻断服务启动）。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items()
+            if k in LLM_CONFIG_FIELDS and isinstance(v, str)}
+
+
+def save_llm_overrides(path: Path, data: dict) -> None:
+    """原子写入运行时 LLM 配置（先写 .tmp 再 replace，避免半截文件）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    tmp.replace(path)
+
+
 class KBService:
     """记忆服务核心；REST / MCP / CLI 共用。
     English: Core memory service; shared by REST / MCP / CLI."""
@@ -231,6 +305,10 @@ class KBService:
         are lazy-loaded. When llm is not injected, build an LLMClient(settings); when
         injected, use it directly (test double)."""
         self.settings = settings or get_settings()
+        # 运行时 LLM 配置（Web UI 保存）：覆盖环境变量，重启后依然生效
+        self._llm_overrides = load_llm_overrides(self.settings.llm_config_file)
+        for _field, _value in self._llm_overrides.items():
+            setattr(self.settings, _field, _value)
         self.device = self.settings.device or "cpu"
         # 并发写入锁（改进项 2）：ChromaDB / BM25 / 稀疏索引均非线程安全，
         # 所有作用域的写路径统一串行化；读路径不加锁。
@@ -264,6 +342,42 @@ class KBService:
         # /ask 答案缓存（LRU）：key=问题原文，条目含问题向量/答案/来源/后端
         self._cache: OrderedDict[str, dict] = OrderedDict()
         self._stats_cache: tuple[float, int] = (0.0, 0)
+
+    # ---- 运行时 LLM 配置（Web UI：云端 / Ollama 本地）----
+    def llm_info(self) -> dict:
+        """当前 LLM 配置与可用性（API Key 只回是否已设置，不回明文）。"""
+        s = self.settings
+        avail = self.llm.availability() if hasattr(self.llm, "availability") else {}
+        return {
+            "mode": s.llm_mode,
+            "status": self.llm.status.value,
+            "local": {"base_url": s.ollama_base_url, "model": s.llm_model,
+                      "available": bool(avail.get("local"))},
+            "cloud": {"base_url": s.cloud_base_url, "model": s.cloud_model,
+                      "api_key_set": bool(s.cloud_api_key),
+                      "available": bool(avail.get("cloud"))},
+            "config_file": str(s.llm_config_file),
+        }
+
+    def reconfigure_llm(self, patch: dict) -> dict:
+        """保存运行时 LLM 配置并热重建客户端，返回最新状态。
+
+        只改 LLM 相关字段；持久化到 kb_data/llm_config.json，重启后仍生效。
+        重建会清空 /ask 答案缓存（模型/模式变了，旧答案不再可信）。
+        English: Persist runtime LLM config and rebuild the client in place; clears
+        the ask cache because cached answers are no longer trustworthy.
+        """
+        clean = normalize_llm_patch(patch)
+        with self._write_lock:
+            merged = dict(self._llm_overrides)
+            merged.update(clean)
+            save_llm_overrides(self.settings.llm_config_file, merged)
+            self._llm_overrides = merged
+            for field, value in merged.items():
+                setattr(self.settings, field, value)
+            self.llm = LLMClient(self.settings)
+            self._cache.clear()
+        return self.llm_info()
 
     def _persist_bm25(self, scope=None) -> None:
         """BM25 语料落盘；失败记 WARNING 不阻塞主流程（N27）。

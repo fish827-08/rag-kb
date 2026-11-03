@@ -92,3 +92,27 @@ kb = ["static/*"]
 - 多文件上传逐个串行提交，避免 Chroma 写锁竞争。
 - `/ask` 单轮：页面不做会话历史，问题需自带上下文。
 - 未配置 LLM（默认 `KB_LLM_MODE=off`）时 `/ask` 返回 503，页面提示改用「仅检索」。
+
+## 6. 运行时 LLM 配置（2026-11-03 追加）
+
+目标：不改 `.env`、不重启服务，浏览器里就能切换云端 / 本地 Ollama。
+
+| 主题 | 决策 |
+|---|---|
+| 存储 | `kb_data/llm_config.json`（gitignore，含 Key 时仅本机可读） |
+| 优先级 | 运行时文件 > 环境变量 / `.env`（文件存在即覆盖对应字段） |
+| 热生效 | 保存后重建 `LLMClient` 并清空 `/ask` 答案缓存，无需重启 |
+| 空值语义 | 请求中空串 / 缺省字段 = 不修改；API Key 留空不会被清除 |
+| 鉴权 | 配置了 `KB_API_KEY` 时由中间件校验；未配置时仅允许回环地址写 |
+| 字段映射 | UI 的 `cloud_base_url/cloud_model/cloud_api_key` → Settings 的可写字段 `llm_base_url/llm_cloud_model/llm_api_key`（`cloud_*` 是只读 property） |
+
+接口：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/llm` | 当前模式、状态、本地/云端端点、Key 是否已设置（不回明文） |
+| POST | `/api/v1/llm/config` | 保存并热生效；非法 mode/URL → 422 |
+| GET | `/api/v1/llm/ollama/models?base_url=` | 代理 `{base}/api/tags`，Ollama 不在线返回 `ok=false` |
+
+验收：`tests/test_n35_llm_config.py`（7 项）覆盖默认值、落盘、非法值、Key 不回显、重启沿用、Ollama 不可达。
+

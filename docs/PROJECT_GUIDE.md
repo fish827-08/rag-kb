@@ -144,6 +144,10 @@ REST、MCP 和浏览器界面，负责记忆存取、文档/网页入库、混�
   后续请求自动带 `X-API-Key`。
 - 打包：`pyproject.toml` 增加了 `[tool.setuptools.package-data] kb = ["static/*"]`，否则 pip 安装后 `/ui` 404。
 - 问答新增 `top_k`（1~50，默认 5），从 `AskRequest` → 端点 → `KBService.ask` → `retriever` 全链路透传。
+- **LLM 配置也能在页面里改**：右上角「设置」→ 模式 `off / local / auto / cloud`，
+  本地填 Ollama 地址与模型（可一键读取模型列表），云端填 Base URL / 模型 / Key；
+  保存后 `KBService.reconfigure_llm` 热重建客户端并清空答案缓存，配置落 `kb_data/llm_config.json`，
+  优先级高于 `.env`，重启后沿用。Key 只回显「是否已设置」，改配置接口默认仅本机可调。
 
 本地验证：
 
@@ -220,12 +224,12 @@ python -m kb eval --file tests/eval_hongloumeng.jsonl --top-k 10 --rerank   # �
 ## 7. 测试与验证
 
 ```powershell
-pytest tests/ -q          # 全量：476 passed, 1 skipped（2026-11-03 实测，约 3 分钟）
+pytest tests/ -q          # 全量：483 passed, 1 skipped（2026-11-03 实测，约 3 分钟）
 pytest tests/test_n33_web_ui.py -q   # Web UI 的 6 项验收
 pytest tests/test_n34_bulk_ingest.py -q  # 批量导入的 3 项验收
 ```
 
-计数口径：`pytest tests/ --collect-only -q | Select-Object -Last 1` 会打印「477 tests collected」。
+计数口径：`pytest tests/ --collect-only -q | Select-Object -Last 1` 会打印「484 tests collected」。
 如果你的环境跑出别的数字，先看收集数——差异通常来自依赖缺失或不在同一 commit，而不是测试本身少跑。
 
 唯一的 1 项跳过是 `tests/test_v21_runtime.py` 的「Linux 开机自启」用例（Windows 下启动项用 `.cmd` 实现），
@@ -260,3 +264,4 @@ pytest tests/test_n34_bulk_ingest.py -q  # 批量导入的 3 项验收
 - **改嵌入模型后检索变差**：库里已有数据时会沿用建库模型，想真正切换必须重建库。
 - **导入整本书后重启报 `Error loading hnsw index`**：单集合超过约 800 块会触发，见 6.1，改用分项目子库。
 - **`kb import` 比逐个上传快得多**：226 个文件 2337 块从 367s 降到批量的一次重建；视觉上就是少了一堆「重建 BM25」。
+
