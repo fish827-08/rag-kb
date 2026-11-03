@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.4.0).
+service (v2.4.1).
 
 ## Why kb
 
@@ -59,7 +59,9 @@ service (v2.4.0).
   pages; pick a whole folder for batch import with unsupported files filtered out.
 - **Table import & precise Q&A (v2.4)** — CSV/XLSX is ingested row by row
   (`column=value` text), so questions like "Xiaoming's Chinese score" are answered
-  exactly, **even without an LLM**; simple sum/average aggregation is supported.
+  exactly, **even without an LLM**; multi-sheet workbooks are disambiguated by sheet
+  name ("Class 5 Zhang Fang" answers only Class 5), with simple sum/average
+  aggregation.
 - **Knowledge-graph view (v2.4)** — the Web UI renders memory nodes and links as SVG;
   click a node to read it. Documents, web pages and tables stay out of the graph.
 - **RAG/memory separation (v2.4)** — documents, web pages and tables live in the RAG
@@ -419,7 +421,7 @@ python -m kb dedup --threshold 0.92
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / tables / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (510 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
+tests/         kb acceptance & regression tests (515 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
 docs/          design specs, developer handbook, user guides

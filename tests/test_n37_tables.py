@@ -34,6 +34,13 @@ class TestTableParsing:
         parsed = parse_row_text(text)
         assert parsed == {"姓名": "小明", "语文": "95"}
 
+    def test_GBK编码CSV(self, tmp_path):
+        p = tmp_path / "gbk.csv"
+        p.write_bytes("姓名,语文\n小明,95\n".encode("gbk"))
+        tables = parse_table_file(p)
+        assert tables[0]["headers"] == ["姓名", "语文"]
+        assert tables[0]["rows"] == [["小明", "95"]]
+
     def test_XLSX解析多sheet(self, tmp_path):
         openpyxl = pytest.importorskip("openpyxl")
         wb = openpyxl.Workbook()
@@ -78,6 +85,34 @@ class TestDeterministicQuery:
         rows = [{"姓名": "小明", "语文": "95", "数学": "88"}]
         answer = query_rows(rows, "小明的平均分")
         assert answer == "小明：平均=91.50"
+
+    def test_平均排除学号与总分列(self):
+        row = {"__sheet": "一班", "学号": "01001", "姓名": "小明",
+               "语文": "95", "数学": "88", "总分": "183"}
+        assert query_rows([row], "小明的平均分") == "一班 小明：平均=91.50"
+
+    def test_短数字分数不误命中问题里的长数字(self):
+        """分数 50 不能因子串出现在「1500」里而被当成定位键。"""
+        rows = [{"学号": "01500", "姓名": "张三", "数学": "50"}]
+        assert query_rows(rows, "1500号学生的数学成绩") is None
+
+    def test_多sheet按表名消歧(self):
+        rows = [
+            {"__sheet": "五班", "姓名": "张芳", "数学": "99"},
+            {"__sheet": "十五班", "姓名": "张芳", "数学": "61"},
+        ]
+        assert query_rows(rows, "五班张芳的数学成绩") == "五班 张芳：数学=99"
+        # 「五班」⊂「十五班」：最长匹配优先，避免问十五班命中五班
+        assert query_rows(rows, "十五班张芳的数学成绩") == "十五班 张芳：数学=61"
+
+    def test_多sheet未指定表名时标注表名(self):
+        rows = [
+            {"__sheet": "一班", "姓名": "王艳", "语文": "51"},
+            {"__sheet": "二班", "姓名": "王艳", "语文": "80"},
+        ]
+        answer = query_rows(rows, "王艳的语文成绩")
+        assert "一班 王艳：语文=51" in answer
+        assert "二班 王艳：语文=80" in answer
 
 
 @pytest.mark.integration

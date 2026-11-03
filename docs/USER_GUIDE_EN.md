@@ -194,9 +194,19 @@ Returns `items` (file order; each with time/level/logger/message/line) plus `tot
 | Delete | local file: `DELETE /api/v1/documents/{source}`; webpage: `DELETE /api/v1/documents?source=<urlencoded>` (URLs contain slashes, so use the query parameter) |
 | Dir watcher | set `KB_WATCH_DIR` (default `data`); new files auto-ingested, deletions auto-cleaned |
 
-Supported formats: txt / md / pdf / docx.
+Supported formats: txt / md / pdf / docx / csv / xlsx.
 Re-ingesting the same source **replaces** its old chunks (the response reports
 `replaced`), so retrieval never returns duplicate chunks.
+
+**Tables (v2.4)**: CSV/Excel is ingested row by row as `column=value` text, so you
+can ask data questions such as "Xiaoming's Chinese score" or "Class 5 Zhang Fang's
+math score". Multi-sheet workbooks are disambiguated by sheet name; no LLM is
+required, and sum/average aggregation is supported. RAG content (documents, web
+pages, tables) **never decays or gets forgotten**; only explicit deletion removes it.
+
+**Browser UI (v2.4)**: open `http://127.0.0.1:8000/ui` to ingest a whole folder,
+query tables, and view the memory graph at the bottom (SVG nodes/links; click a
+node for details). Documents, web pages and tables stay out of the graph.
 
 ### 3.5 Memory governance (A3: dedup / decay / freshness)
 

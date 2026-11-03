@@ -22,7 +22,11 @@ _KV_SEP = "="
 # 聚合关键词：总分/合计/求和 与 平均/均值
 _SUM_WORDS = ("总分", "合计", "求和", "总和", "sum")
 _AVG_WORDS = ("平均", "均值", "average", "avg")
-_SHEET_RE = re.compile(r"^\[[^\]]{1,60}\]\s")
+_SHEET_RE = re.compile(r"^\[([^\]]{1,60})\]\s")
+# 非指标列：求和/平均时排除（学号、序号等标识列，以及已有的汇总列）
+_NON_VALUE_KEYS = {"__sheet", "学号", "编号", "序号", "工号", "id", "ID",
+                   "总分", "合计", "平均", "均值"}
+_SHEET_KEY = "__sheet"
 
 
 def parse_table_file(path: Path | str) -> list[dict]:
@@ -123,8 +127,17 @@ def row_to_text(headers: list[str], row: list[str]) -> str:
 
 
 def parse_row_text(text: str) -> dict | None:
-    """解析一行 `列名=值 | ...`；无有效键值返回 None（兼容 [sheet] 前缀）。"""
-    line = _SHEET_RE.sub("", (text or "").strip())
+    """解析一行 `列名=值 | ...`；无有效键值返回 None。
+
+    多 sheet 表格的行首带 `[表名] ` 前缀：解析时保留到 `__sheet` 字段，
+    供问答按班级/表名消歧，同时不污染列名。
+    English: Parse one `column=value | ...` line. Multi-sheet tables prefix the line
+    with `[sheet] `; the sheet name is kept in `__sheet` so Q&A can disambiguate
+    without polluting column names."""
+    raw = (text or "").strip()
+    match = _SHEET_RE.match(raw)
+    sheet = match.group(1).strip() if match else ""
+    line = _SHEET_RE.sub("", raw)
     if not line:
         return None
     row: dict[str, str] = {}
@@ -135,7 +148,11 @@ def parse_row_text(text: str) -> dict | None:
         key, value = key.strip(), value.strip()
         if key and value:
             row[key] = value
-    return row or None
+    if not row:
+        return None
+    if sheet:
+        row[_SHEET_KEY] = sheet
+    return row
 
 
 def rows_from_content(content: str) -> list[dict]:
@@ -167,6 +184,22 @@ def _fmt_number(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else f"{value:.2f}"
 
 
+def _is_selector(value: str) -> bool:
+    """单元格值是否可作为「定位键」：非数字值直接可用；纯数字需 ≥4 位。
+
+    防止分数 `50` 这类短数字误命中问题里的 `1500`（子串匹配陷阱）；
+    学号/编号通常 4 位以上，仍可用于定位。
+    English: Whether a cell value can act as a row selector. Non-numeric values
+    qualify; numeric values need at least 4 digits so short scores like `50` do
+    not falsely match `1500` inside a question. IDs of 4+ digits still work."""
+    v = (value or "").strip()
+    if len(v) < 2:
+        return False
+    if _as_number(v) is None:
+        return True
+    return len(v) >= 4
+
+
 def query_rows(rows: list[dict], question: str) -> str | None:
     """确定性表格查询：按单元格值定位行、按列名筛选列，支持求和/平均。
 
@@ -183,16 +216,24 @@ def query_rows(rows: list[dict], question: str) -> str | None:
     q = (question or "").strip().lower()
     if not q or not rows:
         return None
+    # 多 sheet 消歧：问题里出现表名（如「五班」）时，只保留该 sheet 的行。
+    # 多个表名互为子串（「五班」⊂「十五班」）时取最长匹配，避免误选。
+    sheet_names = {r.get(_SHEET_KEY) for r in rows if r.get(_SHEET_KEY)}
+    matched_sheets = sorted((s for s in sheet_names if s and s.lower() in q),
+                            key=len, reverse=True)
+    if matched_sheets:
+        rows = [r for r in rows if r.get(_SHEET_KEY) == matched_sheets[0]]
     headers: list[str] = []
     for row in rows:
         for key in row:
-            if key not in headers:
+            if key != _SHEET_KEY and key not in headers:
                 headers.append(key)
-    header_hits = [h for h in headers if h.lower() in q and len(h) >= 1]
+    header_hits = [h for h in headers if h.lower() in q]
     matched = []
     matched_values = []
     for row in rows:
-        hits = [v for v in row.values() if len(v) >= 2 and v.lower() in q]
+        hits = [v for k, v in row.items()
+                if k != _SHEET_KEY and _is_selector(v) and v.lower() in q]
         if hits:
             matched.append(row)
             matched_values.extend(hits)
@@ -202,21 +243,46 @@ def query_rows(rows: list[dict], question: str) -> str | None:
     want_avg = any(w in q for w in _AVG_WORDS)
 
     def _label(row: dict) -> str:
-        """行标识：优先命中值，其次首个非数字值，最后首列值。"""
+        """行标识：优先非数字命中值（姓名/编号），其次数字；多 sheet 时前置表名。"""
+        base = ""
         for v in row.values():
-            if v in matched_values:
-                return v
-        for k, v in row.items():
-            if _as_number(v) is None:
-                return v
-        return next(iter(row.values()))
+            if v in matched_values and _as_number(v) is None:
+                base = v
+                break
+        if not base:
+            for v in row.values():
+                if v in matched_values:
+                    base = v
+                    break
+        if not base:
+            for k, v in row.items():
+                if k != _SHEET_KEY and _as_number(v) is None:
+                    base = v
+                    break
+        if not base:
+            base = next((v for k, v in row.items() if k != _SHEET_KEY), "")
+        sheet = row.get(_SHEET_KEY)
+        return f"{sheet} {base}".strip() if sheet else base
+
+    def _value_cols(row: dict, explicit: list[str]) -> list[str]:
+        """参与聚合的数值列：显式列优先，否则排除学号/总分等非指标列。"""
+        cols = [c for c in explicit
+                if c != _SHEET_KEY and _as_number(row.get(c)) is not None]
+        if cols:
+            return cols
+        return [c for c in row
+                if c not in _NON_VALUE_KEYS and _as_number(row.get(c)) is not None]
 
     lines = []
     for row in matched:
         label = _label(row)
-        numeric_cols = [k for k, v in row.items() if _as_number(v) is not None]
+        explicit = [h for h in header_hits if h in row]
         if want_sum or want_avg:
-            cols = [h for h in header_hits if h in numeric_cols] or numeric_cols
+            # 问题明确问「总分」且表里已有总分类：直接读该列，不重复求和
+            if want_sum and "总分" in explicit and row.get("总分"):
+                lines.append(f"{label}：总分={row['总分']}")
+                continue
+            cols = _value_cols(row, explicit)
             nums = [_as_number(row[c]) for c in cols]
             nums = [n for n in nums if n is not None]
             if nums:
@@ -226,7 +292,7 @@ def query_rows(rows: list[dict], question: str) -> str | None:
                 else:
                     lines.append(f"{label}：总分={_fmt_number(total)}")
                 continue
-        cols = [h for h in header_hits if h in row] or list(row.keys())
+        cols = explicit or [k for k in row if k != _SHEET_KEY]
         parts = [f"{c}={row[c]}" for c in cols if row.get(c)]
         if parts:
             lines.append(f"{label}：" + "，".join(parts))
