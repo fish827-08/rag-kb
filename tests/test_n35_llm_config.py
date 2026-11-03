@@ -97,6 +97,14 @@ def test_重启后沿用配置(env_isolated):
     assert second.llm_info()["mode"] == "local"
 
 
+def test_云端基址拒绝私有地址(client):
+    """云端 Base URL 指向回环/私有 IP 视为 SSRF 风险，直接 422。"""
+    r = client.post("/api/v1/llm/config",
+                    json={"mode": "cloud", "cloud_base_url": "http://127.0.0.1:9999"})
+    assert r.status_code == 422
+    assert "私有" in r.json()["message"] or "本机" in r.json()["message"]
+
+
 def test_ollama不可达返回okfalse(client):
     r = client.get("/api/v1/llm/ollama/models",
                    params={"base_url": "http://127.0.0.1:9"})
