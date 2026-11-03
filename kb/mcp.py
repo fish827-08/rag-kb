@@ -320,6 +320,40 @@ def add_webpage(url: str,
         return _embedding_error(exc)
 
 
+def list_documents(project: str | None = None,
+                   client: str | None = None,
+                   ctx: Context | None = None) -> list[dict] | dict:
+    """列出已入库的 RAG 内容（按 source 聚合，kind=doc/web/table），
+    project 指定项目子库（空=全局库）；client 仅用于审计归类。
+    返回 [{"source", "chunks", "chars", "last_imported", "kind"}]。
+    English: List ingested RAG content grouped by source (kind=doc/web/table);
+    project selects the sub-store (empty = global); client is audit-only.
+    Returns [{"source", "chunks", "chars", "last_imported", "kind"}]."""
+    err = _check_identity(ctx, client, project)
+    if err:
+        return {"error": "INVALID_ARGUMENT", "message": err}
+    return _svc().list_documents(project=project)
+
+
+def delete_document(source: str,
+                    project: str | None = None,
+                    client: str | None = None,
+                    ctx: Context | None = None) -> dict:
+    """按 source 删除一份 RAG 文档/网页/表格的全部记录，返回 {"source", "deleted"}；
+    删除会级联清理 BM25 与向量索引；source 为空时返回 INVALID_ARGUMENT。
+    project 指定项目子库（空=全局库）；client 仅用于审计归类。
+    English: Delete all records of one RAG document/webpage/table by source, returning
+    {"source", "deleted"}; cascades to BM25 and vector indexes; empty source returns
+    INVALID_ARGUMENT. project selects the sub-store (empty = global); client is audit-only."""
+    if not source or not source.strip():
+        return {"error": "INVALID_ARGUMENT", "message": "source 不能为空或纯空白"}
+    err = _check_identity(ctx, client, project)
+    if err:
+        return {"error": "INVALID_ARGUMENT", "message": err}
+    return {"source": source,
+            "deleted": _svc().delete_document(source, project=project)}
+
+
 def ask_kb(question: str,
            project: str | None = None,
            client: str | None = None,
@@ -346,10 +380,10 @@ def ask_kb(question: str,
 
 
 def create_mcp_server(service: KBService) -> MCPServer:
-    """创建 MCP 服务器并注册全部 11 个工具（工具名即函数名）。
+    """创建 MCP 服务器并注册全部 13 个工具（工具名即函数名）。
 
     注入 service 同时覆盖模块级单例，保证 MCP 工具直连调用与 REST 共享同一 KBService。
-    English: Create the MCP server and register all 11 tools (tool names are the function names).
+    English: Create the MCP server and register all 13 tools (tool names are the function names).
     Injecting the service also overrides the module-level singleton, so MCP tools and REST share the same KBService."""
     global _service
     _service = service
@@ -360,6 +394,6 @@ def create_mcp_server(service: KBService) -> MCPServer:
                     instructions=mcp_instructions())
     for fn in (write_memory, search_memory, read_memory, update_memory,
                delete_memory, link_memory, unlink_memory, list_links,
-               add_document, add_webpage, ask_kb):
+               add_document, add_webpage, list_documents, delete_document, ask_kb):
         mcp.tool()(fn)
     return mcp

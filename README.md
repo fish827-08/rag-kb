@@ -10,7 +10,7 @@
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.3）。
+**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.4）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
@@ -22,6 +22,51 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 
 **无 LLM 时存取与检索完整可用**——记忆写入、文档入库、混合检索不依赖任何大模型；
 配置本地 Ollama 或云端 API 后，`/ask` 问答能力自动启用。
+
+## 两个真实场景
+
+### 1. 测试/实施：把一堆 CSV、Excel 变成可提问的本地资料
+
+测试和交付现场经常是几十个用例表、导出报表、配置清单，散在不同目录。Excel 手动筛选慢，
+跨文件查一个值要在十几个表里翻；数据又不能传到在线文档。
+
+kb 的做法是：**整文件夹导入，逐行入库，离线提问，不需要 LLM。**
+
+```powershell
+pip install "kb-memory[ingest]"
+python -m kb serve
+# 打开 http://127.0.0.1:8000/ui，把整个文件夹拖进去（自动过滤不支持的格式）
+
+python -m kb import "D:\用例数据" --project smoke   # 也可以命令行批量导入
+python -m kb ask "用户550的分数是多少" --project smoke
+# → 用户550：分数=30     （表格确定性匹配，未配置 LLM 也能答）
+```
+
+CSV 用标准库解析，XLSX 用 `openpyxl` 逐 sheet 读取；每行变成 `列名=值 | ...` 文本，
+既能精确命中单元格，也能走向量 + BM25 混合检索。多 sheet 会按表名消歧（问「五班张芳」
+只答五班）。它不替代 SQL/BI，适合“快速在一堆表里找一个值/一行记录”的场景。
+
+### 2. Agent / 脚本：REST 与 MCP 都能读写记忆和知识库
+
+同一份服务同时暴露 REST 和 MCP，13 个 MCP 工具覆盖记忆与 RAG 的增删查：
+
+| 能力 | REST | MCP |
+|---|---|---|
+| 写/查/删记忆 | `POST/GET/DELETE /api/v1/memories` | `write_memory` / `search_memory` / `delete_memory` |
+| 文档入库 | `POST /api/v1/documents` | `add_document` / `add_webpage` |
+| 展示/删除知识库 | `GET /api/v1/documents`、`DELETE /api/v1/documents/{source}` | `list_documents` / `delete_document` |
+
+```powershell
+# 写入一条记忆
+Invoke-RestMethod -Uri http://127.0.0.1:8000/api/v1/memories -Method Post `
+  -ContentType 'application/json' -Body '{"content":"冒烟用例必须先登录"}'
+
+# 展示已入库资料
+Invoke-RestMethod -Uri http://127.0.0.1:8000/api/v1/documents
+
+# 删除某份资料的全部 chunk（source 含斜杠时用 ?source= 查询参数）
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/documents/用例.csv" -Method Delete
+```
 
 ## 核心特性
 
@@ -44,6 +89,7 @@ Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、�
 - **RAG 与记忆分离（v2.4）**：文档/网页/表格属于 RAG 知识库，**不参与遗忘与衰减**，只在显式删除时移除；衰减/新鲜度仅作用于 memory
 - **审计加固（v2.4.2）**：检索相关性下限 `KB_MIN_VECTOR_SCORE`（默认 0.30）、`type/tag` 过滤提前、网页入库 SSRF 防护与 5MB 响应上限、单文件上传上限 `KB_MAX_UPLOAD_BYTES`（默认 100MB）、统一错误 JSON、非 ASCII API Key 兼容、项目计数重启不丢
 - **大库读取分页（v2.4.3）**：`iter_all` 改为每批 500 条分页读取，降低大库打开/重建 BM25 时的峰值内存；新增 680 条库 5 次进程重启的回归用例
+- **MCP 文档管理（v2.4.4）**：新增 `list_documents` / `delete_document`，MCP 侧也能展示与删除 RAG 知识库（共 13 个工具）
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
 - **CLI 工具**：`kb add/search/stats/ask/eval/forget/dedup`——终端直接完成写入、检索、统计与 RAG 问答
 - **隐私护栏**：敏感 namespace 强制本地回答不出网；`/ask` 智能路由（本地优先，难题可选云端）
@@ -300,9 +346,9 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 }
 ```
 
-挂载后可用的 MCP 工具（11 个）：`write_memory` / `search_memory` / `read_memory` /
+挂载后可用的 MCP 工具（13 个）：`write_memory` / `search_memory` / `read_memory` /
 `update_memory` / `delete_memory` / `link_memory` / `unlink_memory` / `list_links` /
-`add_document` / `add_webpage` / `ask_kb`。
+`add_document` / `add_webpage` / `list_documents` / `delete_document` / `ask_kb`。
 
 > 启用 `KB_API_KEY` 鉴权后，MCP 客户端需在连接配置加 `headers`（`Authorization: Bearer <key>`）；
 > 仓库内 `.mcp.json` 模板不含真实 key（JSON 不支持注释），配法见 [USER_GUIDE §5.2](docs/USER_GUIDE.md#52-客户端适配n20启用鉴权后各客户端如何带-key)。
@@ -417,7 +463,7 @@ python -m kb dedup --threshold 0.92           # 语义去重
 kb/            kb 服务源码（config / models / embedder / storage / bm25 / retriever /
                service / llm / ingest / tables / watcher / api / mcp / cli +
                reranker / sparse / eval）
-tests/         kb 验收测试（536 项通过 / 1 跳过，2026-11-03 实测；含 eval_zh_50.jsonl 检索评测数据集）
+tests/         kb 验收测试（543 项通过 / 1 跳过，2026-11-04 实测；含 eval_zh_50.jsonl 检索评测数据集）
 docs/          用户指南、开发者手册与设计文档
 kb_data/       kb 运行数据（gitignore）
 ```

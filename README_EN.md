@@ -25,7 +25,7 @@ API to unlock `/ask` (RAG question answering).
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.4.3).
+service (v2.4.4).
 
 ## Why kb
 
@@ -74,6 +74,8 @@ service (v2.4.3).
 - **Paged reads for large stores (v2.4.3)** — `iter_all` now reads in batches of 500
   instead of one unbounded `get`, lowering peak memory when opening large libraries
   and rebuilding BM25; includes a 680-record / 5-restart regression test.
+- **MCP document management (v2.4.4)** — new `list_documents` / `delete_document`
+  tools, so MCP clients can list and delete RAG content as well (13 tools total).
 - **Access audit** — every write/read/update/delete/search/ask emits a JSON line
   under `logs/agent-audit/`; query it through `GET /api/v1/audit?client=<client>`
   or `kb audit --client <client>`.
@@ -319,9 +321,9 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 }
 ```
 
-Available MCP tools (11): `write_memory` / `search_memory` / `read_memory` /
+Available MCP tools (13): `write_memory` / `search_memory` / `read_memory` /
 `update_memory` / `delete_memory` / `link_memory` / `unlink_memory` / `list_links` /
-`add_document` / `add_webpage` / `ask_kb`.
+`add_document` / `add_webpage` / `list_documents` / `delete_document` / `ask_kb`.
 
 > With `KB_API_KEY` auth enabled, clients must send `Authorization: Bearer <key>`
 > or `X-API-Key` headers — see [USER_GUIDE §5.2](docs/USER_GUIDE.md) (Chinese).
@@ -428,7 +430,7 @@ python -m kb dedup --threshold 0.92
 ```
 kb/            service source (config / models / embedder / storage / bm25 /
                retriever / service / llm / ingest / tables / watcher / api / mcp / cli)
-tests/         kb acceptance & regression tests (536 passed / 1 skipped, 2026-11-03; incl. eval_zh_50.jsonl)
+tests/         kb acceptance & regression tests (544 passed / 1 skipped, 2026-11-04; incl. eval_zh_50.jsonl)
 skills/        standalone kb-memory skill package (Agensi deliverable)
 scripts/       build/start/stop scripts (Windows one-click launchers)
 docs/          design specs, developer handbook, user guides
