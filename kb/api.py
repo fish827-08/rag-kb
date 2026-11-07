@@ -26,7 +26,8 @@ from kb.logging_setup import setup_logging
 from kb.monitor import MonitorAgent, run_once_summary
 from kb.mcp import create_mcp_server
 from kb.service import (EmbeddingUnavailableError, KBService, LLMDisabledError,
-                        UnsupportedFormatError, WebFetchError, validate_project)
+                        MigrationBusyError, UnsupportedFormatError, WebFetchError,
+                        validate_project)
 
 
 # ---- 日志查看端点常量（N18）----
@@ -259,6 +260,7 @@ class SearchRequest(BaseModel):
     client: str = "HTTP"
     project: str | None = None  # 项目名（可选，选择项目子库；空=全局库）
     table: bool = False          # 先尝试确定性表格问答（无需 LLM）
+    group_by_file: bool = False  # 按来源文件聚合（额外返回 files 数组）
 
     @field_validator("query")
     @classmethod
@@ -353,6 +355,36 @@ class LLMConfigRequest(BaseModel):
     cloud_base_url: str | None = None
     cloud_model: str | None = None
     cloud_api_key: str | None = None
+
+
+class EmbedConfigRequest(BaseModel):
+    """运行时嵌入模型选择；空串会被拒绝（至少保留一个模型）。
+
+    English: Runtime embedding-model selection; a blank value is rejected because at
+    least one model must remain available for retrieval.
+    """
+    model: str = ""
+
+
+class MigrateRequest(BaseModel):
+    """把现有数据迁移到目标嵌入模型（后台执行，迁移期间只读）。"""
+    model: str = ""
+
+
+class DeleteModelRequest(BaseModel):
+    """删除某个非活跃模型的数据；confirm 必须等于模型名。"""
+    model: str = ""
+    confirm: str = ""
+
+
+class ResetRequest(BaseModel):
+    """清空数据请求；confirm 必须与目标名称一致，避免误操作。
+
+    English: Reset request; `confirm` must match the target name to avoid accidents.
+    """
+    project: str | None = None
+    all: bool = False
+    confirm: str = ""
 
 
 def _keys_equal(provided: str, configured: str) -> bool:
@@ -680,6 +712,16 @@ def create_app(settings: Settings | None = None,
                     "HF_ENDPOINT=https://hf-mirror.com 后重试，缓存成功后断网可用。",
         })
 
+    @app.exception_handler(MigrationBusyError)
+    def migration_exc_handler(request: Request, exc: MigrationBusyError):
+        """迁移只读窗口内的写操作 → 409，并附带当前迁移进度。
+        English: Writes during the read-only migration window → 409 with progress."""
+        return JSONResponse(status_code=409, content={
+            "error": "MIGRATION_IN_PROGRESS",
+            "message": str(exc),
+            "migration": kb.migration_info(),
+        })
+
     @app.exception_handler(HTTPException)
     def http_exc_handler(request: Request, exc: HTTPException):
         """统一错误 JSON：detail 为 dict 时直接扁平返回（不包 detail 层）。
@@ -848,6 +890,14 @@ def create_app(settings: Settings | None = None,
                 return {"results": [], "table": True,
                         "answer": answer["answer"],
                         "sources": answer["sources"]}
+        if body.group_by_file:
+            # 一次多取候选，再按文件聚合：避免同一文件的命中被 top_k 提前截断
+            expanded = kb.search(body.query, top_k=max(body.top_k * 4, 20),
+                                 mode=body.mode, type=body.type, tag=body.tag,
+                                 agent_id=body.agent_id, client=body.client,
+                                 project=body.project)
+            return {"results": expanded[:body.top_k],
+                    "files": kb.group_by_file(expanded, top_k=body.top_k)}
         results = kb.search(body.query, top_k=body.top_k, mode=body.mode,
                             type=body.type, tag=body.tag,
                             agent_id=body.agent_id, client=body.client,
@@ -968,6 +1018,33 @@ def create_app(settings: Settings | None = None,
                 "error": "INVALID_ARGUMENT", "message": err})
         return {"deleted": kb.delete_document(source, project=project)}
 
+    @app.post("/api/v1/admin/reset")
+    def reset_data(body: ResetRequest) -> dict:
+        """清空指定项目或全部数据；必须提供确认文本。
+
+        示例：{"project": "demo", "confirm": "demo"}
+              {"all": true, "confirm": "清空全部"}
+        """
+        if body.all:
+            if body.confirm.strip() != "清空全部":
+                raise HTTPException(status_code=400, detail={
+                    "error": "CONFIRM_REQUIRED",
+                    "message": "请输入“清空全部”以确认"})
+            result = kb.reset_all()
+            return {"deleted": result, "total": sum(result.values())}
+
+        err = validate_project(body.project)
+        if err:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": err})
+        expected = body.project or "全局库"
+        if body.confirm.strip() != expected:
+            raise HTTPException(status_code=400, detail={
+                "error": "CONFIRM_REQUIRED",
+                "message": f"请输入“{expected}”以确认"})
+        n = kb.reset(body.project)
+        return {"deleted": {expected: n}, "total": n}
+
     @app.post("/api/v1/ingest/web")
     def ingest_web(body: WebIngestRequest) -> dict:
         """抓取网页正文切分入库；抓取/正文提取失败返回 400 与原因。
@@ -1028,6 +1105,64 @@ def create_app(settings: Settings | None = None,
         except ValueError as exc:
             raise HTTPException(status_code=422, detail={
                 "error": "INVALID_ARGUMENT", "message": str(exc)})
+
+    @app.get("/api/v1/embed")
+    def get_embed() -> dict:
+        """当前嵌入模型、可选列表、迁移状态与各模型数据量。"""
+        return kb.embed_info()
+
+    @app.post("/api/v1/embed/config")
+    def set_embed(body: EmbedConfigRequest, request: Request) -> dict:
+        """切换嵌入模型：空模型名 → 422；库非空 → 422（需改用迁移端点）。"""
+        _require_llm_write(request, kb.settings)
+        try:
+            return kb.reconfigure_embed({"model": body.model})
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": str(exc)})
+
+    @app.post("/api/v1/embed/migrate")
+    def migrate_embed(body: MigrateRequest, request: Request) -> dict:
+        """把现有数据迁移到新嵌入模型（后台执行，迁移期间写入返回 409）。
+
+        库为空时等价于立即切换；已有迁移在跑时返回 409。
+        English: Migrate existing data to a new embedding model in the background
+        (writes return 409 while it runs). An empty library switches instantly;
+        a concurrent migration returns 409.
+        """
+        _require_llm_write(request, kb.settings)
+        try:
+            return kb.start_migration(body.model)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": str(exc)})
+
+    @app.get("/api/v1/embed/migrate")
+    def migrate_status() -> dict:
+        """查询迁移状态与进度（供 Web UI 轮询）。"""
+        return kb.migration_info()
+
+    @app.post("/api/v1/embed/models/delete")
+    def delete_model(body: DeleteModelRequest, request: Request) -> dict:
+        """删除某个非活跃模型的数据；confirm 必须等于模型名。
+
+        English: Delete a non-active model's data; `confirm` must equal the model name.
+        """
+        _require_llm_write(request, kb.settings)
+        model = (body.model or "").strip()
+        if not model:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": "模型名不能为空"})
+        if body.confirm.strip() != model:
+            raise HTTPException(status_code=400, detail={
+                "error": "CONFIRM_REQUIRED",
+                "message": f"请输入模型名“{model}”以确认删除"})
+        try:
+            deleted = kb.delete_model_data(model)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={
+                "error": "INVALID_ARGUMENT", "message": str(exc)})
+        return {"deleted": deleted, "model": model, "embed": kb.embed_info()}
 
     @app.get("/api/v1/llm/ollama/models")
     def ollama_models(base_url: str | None = None) -> dict:

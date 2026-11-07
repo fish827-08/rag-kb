@@ -11,6 +11,19 @@ import threading
 import time
 from pathlib import Path
 
+# 已知嵌入模型的向量维度：表格行入库时用它生成常量向量，避免为拿维度而
+# 加载模型。新增模型时在这里补一行即可；未知模型会自动回退到加载一次。
+_KNOWN_DIMS = {
+    "bge-small-zh-v1.5": 512,
+    "bge-base-zh-v1.5": 768,
+    "bge-large-zh-v1.5": 1024,
+    "bge-m3": 1024,
+    "all-minilm-l6-v2": 384,
+    "multilingual-e5-small": 384,
+    "multilingual-e5-base": 768,
+    "multilingual-e5-large": 1024,
+}
+
 
 def _cgroup_cpu_limit() -> int | None:
     """读取 cgroup v2/v1 的 CPU 配额并向上取整；无限制或不可读返回 None。
@@ -149,6 +162,26 @@ class Embedder:
                 "torch_threads": self.torch_threads,
                 "embed_batch_size": self.embed_batch_size}
 
+    @property
+    def dimension(self) -> int:
+        """向量维度：优先查已知模型映射（不加载模型），未知模型才加载一次。
+
+        表格行用常量向量入库时需要提前知道维度；如果每次都为了拿维度加载
+        92MB 模型，就失去了“跳过嵌入”的意义。
+        English: Vector dimension. Known models are resolved from a static map so no
+        model load is needed; only unknown models fall back to loading once.
+        """
+        key = (self.model_name or "").lower()
+        for name, dim in _KNOWN_DIMS.items():
+            if name in key:
+                return dim
+        with self._lock:
+            self._ensure_loaded()
+            getter = getattr(self._model, "get_sentence_embedding_dimension", None)
+            if getter is not None:
+                return int(getter())
+            return len(self._model.encode([""], normalize_embeddings=True)[0])
+
     def _mark_error(self, exc: Exception) -> EmbeddingUnavailableError:
         """记录失败状态并包装成统一异常。
         English: Record the failure state and wrap it in the unified exception."""
@@ -194,7 +227,15 @@ class Embedder:
                 self._error = ""
                 self._last_used = time.monotonic()
             except Exception as exc:  # noqa: BLE001 - 统一转换为可读错误
-                raise self._mark_error(exc) from exc
+                raw = str(exc)
+                lowered = raw.lower()
+                if any(k in lowered for k in (
+                        "connection", "connect", "timeout", "timed out",
+                        "resolve", "download", "network", "proxy", "ssl",
+                        "certificate", "huggingface", "offline")):
+                    raw = ("首次运行需要下载嵌入模型（默认约 92MB）；国内网络可设置 "
+                           "HF_ENDPOINT=https://hf-mirror.com 后重试。原始错误：" + raw)
+                raise self._mark_error(RuntimeError(raw)) from exc
 
     def _configure_cpu_threads(self) -> None:
         """加载前固定 CPU 线程数，避免容器按宿主机核数开线程。

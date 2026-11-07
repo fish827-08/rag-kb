@@ -22,10 +22,25 @@ giving Claude Code / Cursor / TraeWork / custom agents persistent memory, docume
 retrieval never call a language model. Optionally configure local Ollama or a cloud
 API to unlock `/ask` (RAG question answering).
 
+### Boundary: the LLM is optional
+
+| Capability | No LLM | With LLM | As an agent skill |
+|---|---|---|---|
+| Memory write / update / delete | ✅ | ✅ | ✅ |
+| Document & table ingestion | ✅ | ✅ | ✅ |
+| Hybrid retrieval & source tracing | ✅ | ✅ | ✅ |
+| Table cell lookup & filters | ✅ deterministic | ✅ still deterministic | ✅ |
+| Document Q&A (RAG) | ❌ | ✅ | ✅ the agent generates |
+| Aggregations (count / average) | ❌ | ✅ | ✅ |
+| Fuzzy / conceptual questions | ❌ | ✅ | ✅ |
+
+> What is optional is the **LLM**; retrieval still needs a small embedding model
+> (92MB default, CPU-friendly). Table Q&A never touches the embedding model.
+
 > Chinese documentation: [README.md](README.md) (primary).
 
 **kb** is the shippable product: a local, offline-capable memory & knowledge
-service (v2.4.5).
+service (v2.5.0).
 
 ## Why kb
 
@@ -81,6 +96,26 @@ service (v2.4.5).
   supports `.xls`; same entity across sheets returns only rows that actually have
   the requested column; formula cells are reported as formulas; sources render as
   field/value pairs; `/search` accepts `table=true` for retrieval-only table answers.
+- **Single instance, model choice & faster ingest (v2.4.6)** — one long-lived process
+  per `KB_DATA_DIR` (data-directory lock; changing the port does not bypass it);
+  `kb serve --port 8001`; `kb table query <file> <question>`; `/search` supports
+  `group_by_file`; MCP `search_memory` supports `table=true`; the Web UI lets you pick
+  an embedding model (locked once the library has data) and always keeps at least one;
+  table rows skip vector embedding (800 rows: ~24s → ~2s); multi-entity questions no
+  longer drop shorter names.
+- **Embedding-model migration (v2.5.0)** — each model owns a separate collection, so
+  switching no longer requires clearing data. Migration runs in the background with a
+  **read-only window** (writes return 409, reads and keyword search keep working);
+  the model switches only after every scope is mirrored; failures keep the old library
+  and can be retried; non-active model data can be deleted separately.
+
+> **Measured on CPU** (embedding model stays `unloaded`): 20,000 rows / 40 sheets
+> (5 columns) parse in 3.26s and ingest in 15.53s (1288 rows/s); the real 14-column
+> business workbook upscaled to 20,000 rows parses in 7.97s and ingests in 31.80s
+> (629 rows/s). First query builds the table cache in ~1.2–1.6s; steady-state queries
+> are ~7.5ms when the question names a sheet, ~326ms when it must scan all 20k rows.
+> Reproduce with `python scripts/bench_table_query.py --ingest --sheets 40 --rows 500`.
+
 - **Access audit** — every write/read/update/delete/search/ask emits a JSON line
   under `logs/agent-audit/`; query it through `GET /api/v1/audit?client=<client>`
   or `kb audit --client <client>`.
@@ -211,8 +246,25 @@ The lightweight default keeps the first-run cost low. You can switch at any time
 Two models with different dimensions cannot share one ChromaDB collection. kb
 records the model used to build the database in `kb_data/runtime.json` and
 **keeps using it automatically**, so changing the default never corrupts existing
-data. To deliberately migrate, back up the data and re-ingest after clearing
-`kb_data/chroma`.
+data. To deliberately switch, use the Web UI or `POST /api/v1/embed/migrate`.
+
+**Model migration (v2.5.0, read-only window)** — each model owns a separate
+collection per scope, so existing data is never overwritten:
+
+- runs in the background: **writes are paused (HTTP 409), reads keep working**,
+  and semantic search temporarily falls back to BM25 keyword search;
+- the model only switches after every scope is fully mirrored; on failure the old
+  library and model stay active and the migration can be retried (the target
+  collection is incrementally corrected);
+- old model data stays on disk after a migration; delete it from the settings
+  panel or with `POST /api/v1/embed/models/delete` (`confirm` must equal the model name);
+- the old model is unloaded before migration so low-memory machines never hold
+  both models at once.
+
+```powershell
+curl -X POST http://127.0.0.1:8000/api/v1/embed/migrate -H "Content-Type: application/json" -d '{"model":"BAAI/bge-m3"}'
+curl http://127.0.0.1:8000/api/v1/embed/migrate
+```
 
 ### Configure an LLM (optional; only needed for `/ask` Q&A)
 

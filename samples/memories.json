@@ -1,0 +1,17 @@
+[
+  {
+    "content": "项目约定：发布新版本前必须先跑全量测试，并确认迁移失败时旧库仍可用。",
+    "tags": ["发布流程", "验收"],
+    "agent_id": "TASK-VERIFY"
+  },
+  {
+    "content": "运维偏好：服务默认监听 127.0.0.1:8000，只允许本机访问，不对外暴露。",
+    "tags": ["运维", "端口"],
+    "agent_id": "TASK-VERIFY"
+  },
+  {
+    "content": "迁移经验：bge-small 是 512 维，bge-m3 是 1024 维，两者必须使用不同 collection。",
+    "tags": ["迁移", "向量维度"],
+    "agent_id": "TASK-VERIFY"
+  }
+]

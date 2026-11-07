@@ -4,6 +4,17 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# 可选嵌入模型目录（Web UI 展示用）：默认最轻，允许换成更强的模型。
+# 注意：库中已有数据时不允许切换——不同模型的向量不可比。
+EMBED_MODEL_OPTIONS = (
+    {"id": "BAAI/bge-small-zh-v1.5", "label": "轻量（默认）", "size": "约 92MB",
+     "dim": 512, "note": "CPU 可跑，2C2G 友好；语义能力较弱"},
+    {"id": "BAAI/bge-base-zh-v1.5", "label": "均衡", "size": "约 400MB",
+     "dim": 768, "note": "召回更好，内存占用增加"},
+    {"id": "BAAI/bge-m3", "label": "最强（多语言）", "size": "约 2.2GB",
+     "dim": 1024, "note": "显存/内存占用高，建议 16GB 以上"},
+)
+
 
 class Settings(BaseSettings):
     """全部配置；环境变量前缀 KB_，支持 .env 文件。"""
@@ -117,6 +128,11 @@ class Settings(BaseSettings):
     def llm_config_file(self) -> Path:
         """运行时 LLM 配置（Web UI 保存，覆盖环境变量；本地文件不入库）。"""
         return self.data_dir / "llm_config.json"
+
+    @property
+    def embed_config_file(self) -> Path:
+        """运行时嵌入模型选择（Web UI 保存，覆盖环境变量；本地文件不入库）。"""
+        return self.data_dir / "embed_config.json"
 
     @property
     def sensitive_ns_list(self) -> list[str]:

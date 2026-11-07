@@ -8,6 +8,14 @@ from pathlib import Path
 from kb.models import Record
 
 ITER_BATCH = 500   # iter_all 分页批大小：避免单次全量 get 把整库结果集压进内存
+# Chroma 单次 add/delete 有批量上限（实测 5461，与向量维度相关）；取 2000 留余量。
+WRITE_BATCH = 2000
+
+
+def _batched(items: list, size: int = WRITE_BATCH):
+    """把列表切成固定大小的批次。"""
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
 
 
 class VectorStore(ABC):
@@ -67,6 +75,7 @@ class ChromaStore(VectorStore):
         English: PersistentClient plus get_or_create_collection(metadata={"hnsw:space": "cosine"})."""
         import chromadb
         self._persist_dir = persist_dir
+        self._collection_name = collection_name
         persist_dir.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(persist_dir))
         self._col = self._client.get_or_create_collection(
@@ -74,14 +83,20 @@ class ChromaStore(VectorStore):
         )
 
     def add(self, records: list[Record], embeddings: list[list[float]]) -> None:
-        """批量写入：document=content，metadata 过滤 None 值。
-        English: Batch write: document=content, metadata filtered for None values."""
-        self._col.add(
-            ids=[r.id for r in records],
-            documents=[r.content for r in records],
-            embeddings=embeddings,
-            metadatas=[_clean_metadata(r) for r in records],
-        )
+        """分批批量写入：Chroma 单次 add 有上限（约 5461），2 万行必须切开。
+
+        English: Batched write. Chroma caps a single add (around 5461 records), so
+        large imports must be split into chunks.
+        """
+        for start in range(0, len(records), WRITE_BATCH):
+            chunk = records[start:start + WRITE_BATCH]
+            vecs = embeddings[start:start + WRITE_BATCH]
+            self._col.add(
+                ids=[r.id for r in chunk],
+                documents=[r.content for r in chunk],
+                embeddings=vecs,
+                metadatas=[_clean_metadata(r) for r in chunk],
+            )
 
     def get(self, record_id: str) -> Record | None:
         """按 id 读取单条；不存在返回 None。
@@ -108,9 +123,36 @@ class ChromaStore(VectorStore):
         }
 
     def delete(self, ids: list[str]) -> None:
-        """按 id 列表删除。
-        English: Delete by an id list."""
-        self._col.delete(ids=ids)
+        """按 id 列表删除（分批，避免超过 Chroma 单次上限）。"""
+        for chunk in _batched(ids):
+            self._col.delete(ids=chunk)
+
+    def upsert(self, records: list[Record], embeddings: list[list[float]]) -> None:
+        """按 id 写入或覆盖（迁移到新模型时复用原 id）。"""
+        for start in range(0, len(records), WRITE_BATCH):
+            chunk = records[start:start + WRITE_BATCH]
+            vecs = embeddings[start:start + WRITE_BATCH]
+            self._col.upsert(
+                ids=[r.id for r in chunk],
+                documents=[r.content for r in chunk],
+                embeddings=vecs,
+                metadatas=[_clean_metadata(r) for r in chunk],
+            )
+
+    def list_ids(self) -> list[str]:
+        """返回全部记录 id（迁移时做镜像差集，不读正文）。"""
+        res = self._col.get(include=[])
+        return list(res["ids"])
+
+    def delete_collection(self) -> None:
+        """删除整个 collection（仅用于删除某个非活跃模型的数据）。
+
+        失败向上抛：调用方据此保留模型映射，避免出现"映射已删、数据还在"的孤儿。
+        English: Delete the whole collection (only for removing a non-active model's
+        data). Failures propagate so the caller keeps the model mapping instead of
+        leaving orphaned data behind.
+        """
+        self._client.delete_collection(self._collection_name)
 
     def count(self) -> int:
         """记录总数（Chroma 原生计数，不加载文档）。
@@ -123,7 +165,8 @@ class ChromaStore(VectorStore):
         res = self._col.get(where={"source": source}, include=[])
         ids = res["ids"]
         if ids:
-            self._col.delete(ids=ids)
+            for chunk in _batched(ids):
+                self._col.delete(ids=chunk)
         return len(ids)
 
     def iter_all(self) -> Iterator[Record]:

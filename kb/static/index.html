@@ -322,6 +322,30 @@ footer a { color: var(--muted); }
           <button id="saveLlm" class="primary wide" type="button" data-i18n="llm.save"></button>
           <p class="hint" id="llmHint" data-i18n="llm.hint"></p>
         </div>
+
+        <div class="set-group">
+          <h4><span data-i18n="embed.title"></span> <span class="mini" id="embedBadge">…</span></h4>
+          <label><span data-i18n="embed.modelLabel"></span>
+            <select id="embedModel"></select>
+          </label>
+          <p class="hint" id="embedHint"></p>
+          <div id="migrateBox" hidden style="margin:8px 0">
+            <div style="height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden">
+              <div id="migrateBar" style="height:100%;width:0;background:#2563eb;transition:width .3s"></div>
+            </div>
+            <p class="hint" id="migrateText"></p>
+          </div>
+          <button id="saveEmbed" class="primary wide" type="button" data-i18n="embed.save"></button>
+          <div id="modelList"></div>
+        </div>
+        <div class="set-group">
+          <h4><span data-i18n="data.title"></span></h4>
+          <p class="hint" data-i18n="data.hint"></p>
+          <button id="clearProject" class="wide" type="button" data-i18n="data.clearProject"
+                  style="color:#b42318;border-color:#b42318"></button>
+          <button id="clearAll" class="wide" type="button" data-i18n="data.clearAll"
+                  style="color:#b42318;border-color:#b42318"></button>
+        </div>
         <div class="set-actions">
           <button id="saveKey" data-i18n="auth.save"></button>
           <button id="clearKey" data-i18n="auth.clear"></button>
@@ -494,6 +518,39 @@ footer a { color: var(--muted); }
       "delete.fail": "删除失败：{msg}",
       "toast.llmSaved": "LLM 配置已保存并生效",
       "toast.llmSaveFail": "LLM 配置保存失败：{msg}",
+      "embed.title": "嵌入模型",
+      "embed.modelLabel": "选择模型",
+      "embed.save": "保存模型",
+      "embed.reading": "读取中",
+      "embed.locked": "已锁定",
+      "embed.saving": "保存中…",
+      "embed.saved": "已切换为 {model}（{dim} 维）",
+      "embed.saveFail": "保存失败：{msg}",
+      "embed.needOne": "至少要保留一个模型；清空后服务将无法检索",
+      "embed.hint": "没有 LLM 也能检索，但必须有一个嵌入模型。默认最轻；换更强的模型会占更多内存。",
+      "embed.migrateHint": "库中已有数据：保存后会先把现有数据迁移到新模型。迁移期间只读（写入暂停），语义检索降级为关键词检索。",
+      "embed.migrate": "迁移并切换",
+      "embed.migrating": "正在迁移 {percent}%（{done}/{total}）…",
+      "embed.migrateStarted": "迁移已开始，期间写入将暂停",
+      "embed.migrated": "已迁移并切换为 {model}（{dim} 维，{done} 条）",
+      "embed.migrateFail": "迁移失败：{msg}",
+      "embed.models": "各模型数据量",
+      "embed.modelRow": "{n} 条 · {scopes} 个库",
+      "embed.active": "当前",
+      "embed.delete": "删除数据",
+      "embed.deleteConfirm": "将删除模型“{model}”的全部数据（{n} 条），不可恢复。请输入模型名确认：",
+      "embed.deleteFail": "删除失败：{msg}",
+      "embed.deleted": "已删除 {n} 条（{model}）",
+      "toast.embedSaved": "嵌入模型已切换",
+      "data.title": "数据管理",
+      "data.hint": "清空不可恢复。只清当前项目不影响其他项目；清空全部会删除所有项目与全局库。",
+      "data.clearProject": "清空当前项目",
+      "data.clearAll": "清空全部数据",
+      "data.confirm": "此操作不可恢复。\n即将清空：{scope}\n请输入“{word}”确认：",
+      "data.confirmFail": "确认文本不匹配，已取消",
+      "data.clearing": "正在清空…",
+      "data.cleared": "已清除 {n} 条记录",
+      "data.fail": "清空失败：{msg}",
       "toast.uploadDone": "已入库 {n} 个文件",
       "toast.noSupported": "所选文件里没有支持的格式（{ext}）",
       "footer.note": "服务地址同源 ·",
@@ -586,6 +643,39 @@ footer a { color: var(--muted); }
       "delete.fail": "Delete failed: {msg}",
       "toast.llmSaved": "LLM config saved and applied",
       "toast.llmSaveFail": "Failed to save LLM config: {msg}",
+      "embed.title": "Embedding model",
+      "embed.modelLabel": "Model",
+      "embed.save": "Save model",
+      "embed.reading": "Loading",
+      "embed.locked": "Locked",
+      "embed.saving": "Saving…",
+      "embed.saved": "Switched to {model} ({dim} dims)",
+      "embed.saveFail": "Save failed: {msg}",
+      "embed.needOne": "Keep at least one model; clearing all models makes retrieval unavailable.",
+      "embed.hint": "Retrieval works without an LLM, but it needs an embedding model. The default is the lightest; stronger models use more memory.",
+      "embed.migrateHint": "The library already has data: saving migrates it to the new model first. The library is read-only during migration (writes paused), and semantic search falls back to keyword search.",
+      "embed.migrate": "Migrate and switch",
+      "embed.migrating": "Migrating {percent}% ({done}/{total})…",
+      "embed.migrateStarted": "Migration started; writes are paused until it finishes",
+      "embed.migrated": "Migrated and switched to {model} ({dim} dims, {done} records)",
+      "embed.migrateFail": "Migration failed: {msg}",
+      "embed.models": "Per-model data",
+      "embed.modelRow": "{n} records · {scopes} stores",
+      "embed.active": "Active",
+      "embed.delete": "Delete data",
+      "embed.deleteConfirm": "This deletes all data of model \"{model}\" ({n} records) and cannot be undone. Type the model name to confirm:",
+      "embed.deleteFail": "Delete failed: {msg}",
+      "embed.deleted": "Deleted {n} records ({model})",
+      "toast.embedSaved": "Embedding model switched",
+      "data.title": "Data",
+      "data.hint": "Clearing is irreversible. Clearing the current project leaves others untouched; clearing all removes every project and the global store.",
+      "data.clearProject": "Clear current project",
+      "data.clearAll": "Clear all data",
+      "data.confirm": "This cannot be undone.\nAbout to clear: {scope}\nType \"{word}\" to confirm:",
+      "data.confirmFail": "Confirmation did not match; cancelled",
+      "data.clearing": "Clearing…",
+      "data.cleared": "Cleared {n} record(s)",
+      "data.fail": "Clear failed: {msg}",
       "toast.uploadDone": "{n} file(s) ingested",
       "toast.noSupported": "No supported files selected ({ext})",
       "footer.note": "Same-origin service ·",
@@ -810,6 +900,221 @@ footer a { color: var(--muted); }
       var msg = errorText(err);
       $("llmHint").textContent = T("llm.saveFail", { msg: msg });
       showToast(T("toast.llmSaveFail", { msg: msg }), "err");
+    });
+  }
+
+  /* ---------- 嵌入模型 ---------- */
+
+  var embedPoll = null;
+
+  function renderModelList(data) {
+    var box = $("modelList");
+    box.textContent = "";
+    var models = data.models || [];
+    if (!models.length) return;
+    var title = document.createElement("p");
+    title.className = "hint";
+    title.textContent = T("embed.models");
+    box.appendChild(title);
+    models.forEach(function (m) {
+      var row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:6px;margin:4px 0;font-size:12px";
+      var name = document.createElement("span");
+      name.style.cssText = "flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      name.textContent = m.model + (m.active ? " · " + T("embed.active") : "");
+      name.title = m.model;
+      var usage = document.createElement("span");
+      usage.className = "mini";
+      usage.textContent = T("embed.modelRow", { n: m.records, scopes: m.scopes });
+      row.appendChild(name);
+      row.appendChild(usage);
+      if (!m.active) {
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = T("embed.delete");
+        btn.style.cssText = "font-size:12px;padding:2px 6px;color:#b42318;border-color:#b42318";
+        btn.addEventListener("click", function () { deleteModel(m); });
+        row.appendChild(btn);
+      }
+      box.appendChild(row);
+    });
+  }
+
+  function applyEmbed(data) {
+    if (!data) return;
+    state.embed = data;
+    var sel = $("embedModel");
+    sel.textContent = "";
+    (data.options || []).forEach(function (opt) {
+      var o = document.createElement("option");
+      o.value = opt.id;
+      o.textContent = opt.label + " · " + opt.size + " · " + opt.dim + " 维";
+      sel.appendChild(o);
+    });
+    var known = Array.prototype.some.call(sel.options, function (o) {
+      return o.value === data.current;
+    });
+    if (!known && data.current) {
+      var cur = document.createElement("option");
+      cur.value = data.current;
+      cur.textContent = data.current;
+      sel.appendChild(cur);
+    }
+    sel.value = data.current || "";
+    var mig = data.migration || {};
+    var running = mig.status === "running";
+    sel.disabled = running;
+    $("saveEmbed").disabled = running;
+    $("saveEmbed").textContent = data.migration_required
+      ? T("embed.migrate") : T("embed.save");
+    if (running) {
+      $("migrateBox").hidden = false;
+      $("migrateBar").style.width = (mig.percent || 0) + "%";
+      $("migrateText").textContent = T("embed.migrating", {
+        percent: mig.percent || 0, done: mig.done || 0, total: mig.total || 0
+      });
+      $("embedBadge").textContent = T("embed.migrating", {
+        percent: mig.percent || 0, done: mig.done || 0, total: mig.total || 0
+      });
+      $("embedHint").textContent = T("embed.migrateHint");
+      if (!embedPoll) embedPoll = setTimeout(pollMigration, 1000);
+    } else if (mig.status === "failed") {
+      $("migrateBox").hidden = false;
+      $("migrateText").textContent = T("embed.migrateFail", { msg: mig.error || "" });
+      $("embedBadge").textContent = data.dimension + " 维";
+      $("embedHint").textContent = T("embed.migrateHint");
+    } else {
+      $("migrateBox").hidden = true;
+      $("embedBadge").textContent = data.dimension + " 维";
+      $("embedHint").textContent = data.migration_required
+        ? T("embed.migrateHint") : T("embed.hint");
+    }
+    renderModelList(data);
+  }
+
+  function loadEmbed() {
+    $("embedBadge").textContent = T("embed.reading");
+    return api("/api/v1/embed").then(applyEmbed).catch(function (err) {
+      $("embedBadge").textContent = T("llm.readFail");
+      $("embedHint").textContent = errorText(err);
+    });
+  }
+
+  function pollMigration() {
+    embedPoll = null;
+    api("/api/v1/embed/migrate").then(function (m) {
+      if (m.status === "running") {
+        $("migrateBox").hidden = false;
+        $("migrateBar").style.width = (m.percent || 0) + "%";
+        $("migrateText").textContent = T("embed.migrating", {
+          percent: m.percent || 0, done: m.done || 0, total: m.total || 0
+        });
+        $("embedBadge").textContent = T("embed.migrating", {
+          percent: m.percent || 0, done: m.done || 0, total: m.total || 0
+        });
+        embedPoll = setTimeout(pollMigration, 1000);
+        return;
+      }
+      $("migrateBar").style.width = "100%";
+      if (m.status === "failed") {
+        var msg = m.error || "";
+        $("migrateText").textContent = T("embed.migrateFail", { msg: msg });
+        showToast(T("embed.migrateFail", { msg: msg }), "err");
+        loadEmbed();
+        return;
+      }
+      loadEmbed().then(function () {
+        if (m.status === "done") {
+          showToast(T("embed.migrated", {
+            model: m.target,
+            dim: (state.embed && state.embed.dimension) || "",
+            done: m.done || 0
+          }), "ok");
+        }
+      });
+    }).catch(function (err) {
+      $("migrateText").textContent = errorText(err);
+      embedPoll = setTimeout(pollMigration, 2000);
+    });
+  }
+
+  function saveEmbed() {
+    var model = ($("embedModel").value || "").trim();
+    if (!model) {
+      $("embedHint").textContent = T("embed.needOne");
+      showToast(T("embed.needOne"), "err");
+      return;
+    }
+    var useMigrate = !!(state.embed && state.embed.migration_required);
+    if (useMigrate && !window.confirm(T("embed.migrateHint"))) return;
+    $("embedHint").textContent = T("embed.saving");
+    api(useMigrate ? "/api/v1/embed/migrate" : "/api/v1/embed/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: model })
+    }, 20000).then(function (data) {
+      applyEmbed(data);
+      if (useMigrate) {
+        $("migrateBox").hidden = false;
+        $("migrateBar").style.width = "0%";
+        showToast(T("embed.migrateStarted"), "ok");
+        if (!embedPoll) embedPoll = setTimeout(pollMigration, 1000);
+      } else {
+        $("embedHint").textContent = T("embed.saved", {
+          model: data.current, dim: data.dimension
+        });
+        showToast(T("toast.embedSaved"), "ok");
+      }
+    }).catch(function (err) {
+      var msg = errorText(err);
+      $("embedHint").textContent = T("embed.saveFail", { msg: msg });
+      showToast(T("embed.saveFail", { msg: msg }), "err");
+    });
+  }
+
+  function deleteModel(m) {
+    var typed = window.prompt(T("embed.deleteConfirm", {
+      model: m.model, n: m.records
+    }));
+    if (typed === null) return;
+    api("/api/v1/embed/models/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: m.model, confirm: typed })
+    }).then(function (res) {
+      if (res.embed) applyEmbed(res.embed); else loadEmbed();
+      showToast(T("embed.deleted", { n: res.deleted, model: m.model }), "ok");
+    }).catch(function (err) {
+      showToast(T("embed.deleteFail", { msg: errorText(err) }), "err");
+    });
+  }
+
+  function resetData(all) {
+    var expected = all ? "清空全部" : (state.project || "全局库");
+    var scope = all ? T("data.clearAll") : (state.project || "全局库");
+    var typed = window.prompt(T("data.confirm", { scope: scope, word: expected }));
+    if (typed === null) return;
+    if (typed.trim() !== expected) {
+      showToast(T("data.confirmFail"), "err");
+      return;
+    }
+    showToast(T("data.clearing"), "ok");
+    api("/api/v1/admin/reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        project: all ? null : (state.project || null),
+        all: all,
+        confirm: expected
+      })
+    }, 120000).then(function (data) {
+      showToast(T("data.cleared", { n: data.total }), "ok");
+      checkHealth();
+      loadDocs();
+      loadEmbed();
+      loadGraph();
+    }).catch(function (err) {
+      showToast(T("data.fail", { msg: errorText(err) }), "err");
     });
   }
 
@@ -1301,6 +1606,9 @@ footer a { color: var(--muted); }
     $("llmMode").addEventListener("change", toggleLlmBlocks);
     $("refreshModels").addEventListener("click", refreshModels);
     $("saveLlm").addEventListener("click", saveLlm);
+    $("saveEmbed").addEventListener("click", saveEmbed);
+    $("clearProject").addEventListener("click", function () { resetData(false); });
+    $("clearAll").addEventListener("click", function () { resetData(true); });
     $("refreshGraph").addEventListener("click", loadGraph);
     $("project").addEventListener("change", function () { saveSettings(); });
     $("project").addEventListener("keydown", function (e) {
@@ -1319,6 +1627,7 @@ footer a { color: var(--muted); }
   applyLang(state.lang);
   checkHealth();
   loadLlm();
+  loadEmbed();
   loadGraph();
 })();
 </script>

@@ -1,0 +1,10 @@
+{
+  "product": "kb",
+  "display_name": "本地优先的 RAG 知识库",
+  "default_port": 8000,
+  "default_embed_model": "BAAI/bge-small-zh-v1.5",
+  "default_embed_dimension": 512,
+  "optional_models": ["BAAI/bge-base-zh-v1.5", "BAAI/bge-m3"],
+  "migration_mode": "read-only-window",
+  "migration_write_behavior": "HTTP 409 while migrating"
+}

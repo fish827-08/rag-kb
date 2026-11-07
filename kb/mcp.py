@@ -108,18 +108,23 @@ def write_memory(content: str,
 
 def search_memory(query: str, top_k: int = 5,
                   project: str | None = None,
+                  table: bool = False,
                   client: str | None = None,
                   ctx: Context | None = None) -> list[dict] | dict:
     """混合检索记忆与知识（向量语义 + BM25 关键词，归一化融合）；
     返回命中列表，每项含 id/content/score/type/source。
     project 指定项目子库时，检索范围 = 该项目子库 + 全局库（项目命中加分）；
     不传 project 时只检索全局库。
+    table=true 时先尝试确定性表格问答：命中返回 {"table": true, "answer", "sources"}，
+    未命中回退普通检索；整个过程不需要 LLM。
     top_k 小于 1 时返回 {"error": "INVALID_ARGUMENT", "message": 原因}。
     client：来源客户端（可选，缺省从 clientInfo 自动识别，仅审计）。
     English: Hybrid retrieval over memories and knowledge (vector semantics + BM25 keywords, normalized fusion);
     returns a hit list, each item having id/content/score/type/source.
     With project, the scope is that project's sub-store plus the global store (project hits boosted);
     without project, only the global store is searched.
+    With table=true, try deterministic table Q&A first and return {"table": true, "answer", "sources"}
+    on a hit; otherwise fall back to normal retrieval. No LLM is involved.
     Returns {"error": "INVALID_ARGUMENT", "message": reason} when top_k is less than 1.
     client: source client (optional; auto-detected from clientInfo when omitted; audit only)."""
     if top_k < 1:
@@ -130,6 +135,11 @@ def search_memory(query: str, top_k: int = 5,
     if err:
         return {"error": "INVALID_ARGUMENT", "message": err}
     c = _resolve_client_ctx(ctx, client)
+    if table:
+        answer = _svc().table_answer(query, project=project)
+        if answer is not None:
+            return {"table": True, "answer": answer["answer"],
+                    "sources": answer["sources"]}
     try:
         return _svc().search(query, top_k=top_k, agent_id=project or "default",
                              client=c, project=project)

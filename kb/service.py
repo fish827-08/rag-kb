@@ -11,14 +11,15 @@ from collections import Counter, OrderedDict
 from pathlib import Path
 from urllib.parse import urlparse
 
-from kb.config import Settings, get_settings
+from kb.config import EMBED_MODEL_OPTIONS, Settings, get_settings
 from kb.embedder import Embedder, EmbeddingUnavailableError
 from kb.ingest import (UnsupportedFormatError, WebFetchError, chunk_text,
                        fetch_webpage, parse_file)
 from kb.links import LinkError, validate_relation
 from kb.llm import LLMClient, LLMStatus
 from kb.models import Record, RecordType
-from kb.scopes import ScopeManager
+from kb.scopes import (DEFAULT_COLLECTION, ScopeManager, collection_count,
+                       collection_for, load_model_map)
 from kb.sparse import SparseEmbedder as _SparseEmbedderClass
 from kb.sparse import SparseIndex
 from kb.storage import ChromaStore
@@ -33,6 +34,10 @@ RAG_SYSTEM_PROMPT = "仅依据参考文档回答，无相关信息则明确说�
 
 # 表格逐行入库上限：超过后按字符预算聚合成多行块，避免大表写爆向量库
 TABLE_MAX_ROW_RECORDS = 500
+
+# 迁移批次：每批做一次嵌入 + 一次 Chroma upsert（嵌入器内部还会按
+# embed_batch_size 再分批，这里控制的是写库与进度更新粒度）
+MIGRATION_BATCH = 64
 
 # 复杂度分类提示（本地 LLM，max_tokens=5）：仅输出 SIMPLE / COMPLEX
 CLASSIFY_PROMPT = "判断问题类型，仅输出 SIMPLE 或 COMPLEX。问题：{q}"
@@ -118,6 +123,45 @@ def validate_project(project: str | None) -> str | None:
 class LLMDisabledError(Exception):
     """LLM 不可用（本地与云端均未就绪）；API 层据此转 503 并附配置指引。
     English: LLM unavailable (neither local nor cloud ready); the API layer maps it to 503 with setup guidance."""
+
+
+class MigrationBusyError(RuntimeError):
+    """嵌入模型迁移的只读窗口内写操作被拒；API 层据此转 409。
+
+    English: A write was rejected while the embedding-model migration holds the
+    library read-only; the API layer maps this to 409.
+    """
+
+
+class _WriteGate:
+    """写锁门禁：迁移窗口内拒绝写入，读路径不经过这里。
+
+    在拿到锁之后再检查一次迁移标志，避免「检查通过 → 等锁 → 迁移已开始
+    → 仍写入旧 collection」的竞态；迁移线程自身用原始锁，不受门禁影响。
+    English: A write gate that rejects writes during the migration window. The
+    migration flag is checked after acquiring the lock, closing the race where a
+    writer passes the check, waits for the lock, and then writes while a migration
+    has already started. The migration thread uses the raw lock directly.
+    """
+
+    def __init__(self, lock, blocked):
+        self._lock = lock
+        self._blocked = blocked
+
+    def __enter__(self):
+        self._lock.acquire()
+        try:
+            if self._blocked():
+                raise MigrationBusyError(
+                    "正在迁移嵌入模型（只读窗口）：写入已暂停，读取与关键词检索仍可用")
+        except BaseException:
+            self._lock.release()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._lock.release()
+        return False
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -210,7 +254,8 @@ def resolve_embed_model(settings: Settings, has_data: bool) -> str:
                 # 用户显式要求换模型却被沿用 → 必须告警，并给出可操作步骤
                 log.warning(
                     "库中数据由 %s 构建，已沿用该模型以避免向量维度不匹配"
-                    "（你配置的是 %s）。如确要换，请备份后清空 kb_data/chroma 重新入库。",
+                    "（你配置的是 %s）。如确要换，请用 Web UI 的模型迁移"
+                    "（POST /api/v1/embed/migrate）把数据迁到新模型。",
                     recorded, settings.embed_model)
             else:
                 # 差异只因内置默认值变化（老库沿用建库模型）→ INFO 即可，不刷警告
@@ -225,7 +270,8 @@ def resolve_embed_model(settings: Settings, has_data: bool) -> str:
     _remember(LEGACY_DEFAULT_EMBED_MODEL)
     log.info(
         "检测到早于模型记录特性的历史数据，已沿用历史默认嵌入模型 %s 并记录"
-        "（当前内置默认已改为 %s）。如需换用轻量模型，请备份后清空 kb_data/chroma 重新入库。",
+        "（当前内置默认已改为 %s）。如需换用轻量模型，可用 Web UI 的模型迁移"
+        "（POST /api/v1/embed/migrate）。",
         LEGACY_DEFAULT_EMBED_MODEL, settings.embed_model)
     return LEGACY_DEFAULT_EMBED_MODEL
 
@@ -318,9 +364,9 @@ def load_llm_overrides(path: Path) -> dict:
 
 
 def save_llm_overrides(path: Path, data: dict) -> None:
-    """原子写入运行时 LLM 配置（先写 .tmp 再 replace，避免半截文件）。
+    """原子写入运行时配置（先写 .tmp 再 replace，避免半截文件）。
 
-    文件含 API Key，写入后收紧权限：POSIX chmod 600；Windows 用 icacls
+    文件可能含 API Key，写入后收紧权限：POSIX chmod 600；Windows 用 icacls
     去掉继承、只授权当前用户（失败静默，不影响配置生效）。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -340,6 +386,18 @@ def save_llm_overrides(path: Path, data: dict) -> None:
             os.chmod(path, 0o600)
     except (OSError, subprocess.SubprocessError):
         pass
+
+
+def load_embed_overrides(path: Path) -> dict:
+    """读取运行时嵌入模型选择；文件缺失/损坏返回 {}。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    model = data.get("embed_model")
+    return {"embed_model": model} if isinstance(model, str) and model else {}
 
 
 class KBService:
@@ -373,12 +431,27 @@ class KBService:
                 self.device = "cpu"
         # 并发写入锁（改进项 2）：ChromaDB / BM25 / 稀疏索引均非线程安全，
         # 所有作用域的写路径统一串行化；读路径不加锁。
-        self._write_lock = threading.RLock()
-        store = ChromaStore(self.settings.chroma_dir)
-        all_records = list(store.iter_all())
+        # v2.5：外面再包一层门禁——迁移窗口内写操作直接 409（只读不中断）。
+        self._migration: dict | None = None
+        self._raw_lock = threading.RLock()
+        self._write_lock = _WriteGate(self._raw_lock, self._migration_active)
         # 嵌入模型解析（设计文档 §3.1）：全局库已有数据则沿用其建库模型；
         # 项目子库首次创建时沿用同一模型，避免同一安装出现维度不一致。
-        self.settings.embed_model = resolve_embed_model(self.settings, bool(all_records))
+        # 运行时选择（Web UI 保存）优先于环境变量，但最终仍受"库里已有数据"约束。
+        self._embed_overrides = load_embed_overrides(self.settings.embed_config_file)
+        if self._embed_overrides.get("embed_model"):
+            self.settings.embed_model = self._embed_overrides["embed_model"]
+        # v2.5：一个库可能同时存在多个模型的数据（各自独立 collection），
+        # 任意已登记 collection 有记录就说明不是空库。
+        _mapping = load_model_map(self.settings.data_dir)
+        _collections = list(_mapping.values()) or [DEFAULT_COLLECTION]
+        _has_data = any(collection_count(self.settings.data_dir, c) > 0
+                        for c in _collections)
+        self.settings.embed_model = resolve_embed_model(self.settings, _has_data)
+        _collection = collection_for(self.settings.data_dir,
+                                     self.settings.embed_model)
+        store = ChromaStore(self.settings.chroma_dir, _collection)
+        all_records = list(store.iter_all())
         self.embedder = Embedder(
             self.settings.embed_model, device=self.device,
             idle_unload_seconds=self.settings.idle_unload_seconds,
@@ -403,6 +476,9 @@ class KBService:
         # /ask 答案缓存（LRU）：key=问题原文，条目含问题向量/答案/来源/后端
         self._cache: OrderedDict[str, dict] = OrderedDict()
         self._stats_cache: tuple[float, int] = (0.0, 0)
+        # 表格行缓存：key=project，value=(epoch, rows, meta)；写入时 epoch+1 即失效
+        self._table_rows_cache: dict[str, tuple[int, list[dict], dict]] = {}
+        self._table_epoch = 0
 
     # ---- 运行时 LLM 配置（Web UI：云端 / Ollama 本地）----
     def llm_info(self) -> dict:
@@ -453,6 +529,267 @@ class KBService:
             self._cache.clear()
         return self.llm_info()
 
+    # ---- 运行时嵌入模型选择（Web UI）----
+    def embed_info(self) -> dict:
+        """当前嵌入模型、可选目录、迁移状态与各模型数据量。
+
+        locked 保留旧语义（库中已有数据 → 不能"立即"切换），迁移能力通过
+        migration_required + /embed/migrate 提供：库非空时切换模型走迁移。
+        English: Current embedding model, available options, migration state and
+        per-model data usage. `locked` keeps the old meaning (a non-empty library
+        cannot switch instantly); migration_required tells the UI to use /embed/migrate.
+        """
+        total = self.scopes.total_records()
+        return {
+            "current": self.settings.embed_model,
+            "dimension": self.embedder.dimension,
+            "options": [dict(item) for item in EMBED_MODEL_OPTIONS],
+            "locked": total > 0,
+            "migration_required": total > 0,
+            "reason": ("库中已有数据：切换会先把现有数据迁移到新模型"
+                       "（迁移期间只读）" if total > 0 else ""),
+            "migration": self.migration_info(),
+            "models": self.scopes.model_usage(),
+            "config_file": str(self.settings.embed_config_file),
+        }
+
+    def reconfigure_embed(self, patch: dict) -> dict:
+        """立即切换嵌入模型并热替换 embedder（仅在库为空时允许）。
+
+        空模型名直接拒绝：至少要保留一个模型，否则服务无法做任何检索。
+        库非空时不在这里硬切（新旧向量不可比），调用方应改用 start_migration。
+        English: Switch the embedding model and rebuild the embedder immediately
+        (only when the library is empty). An empty model name is rejected outright —
+        at least one model must remain or retrieval cannot work at all. A non-empty
+        library must go through start_migration instead.
+        """
+        model = str((patch or {}).get("model", "")).strip()
+        if not model:
+            raise ValueError("至少保留一个嵌入模型；清空后服务将无法检索")
+        if len(model) > 200:
+            raise ValueError("模型名过长（≤200 字符）")
+        if model == self.settings.embed_model:
+            return self.embed_info()
+        if self.scopes.total_records() > 0:
+            raise ValueError("库中已有数据，切换嵌入模型需要先迁移"
+                             "（POST /api/v1/embed/migrate）；迁移期间只读")
+        with self._write_lock:
+            previous = self.settings.embed_model
+            self.settings.embed_model = model
+            save_llm_overrides(self.settings.embed_config_file,
+                               {"embed_model": model})
+            self._embed_overrides = {"embed_model": model}
+            self._remember_runtime_model(model)
+            self.embedder = Embedder(
+                model, device=self.device,
+                idle_unload_seconds=self.settings.idle_unload_seconds,
+                torch_threads=self.settings.torch_threads,
+                embed_batch_size=self.settings.embed_batch_size)
+            self.scopes.switch_model(self.embedder, previous_model=previous)
+            self._sync_global_aliases()
+            self._cache.clear()
+            self._table_rows_cache.clear()
+            self._bump_table_epoch()
+            self._stats_cache = (0.0, 0)
+        return self.embed_info()
+
+    # ---- v2.5 嵌入模型迁移（只读窗口）----
+    def _migration_active(self) -> bool:
+        """迁移是否正在进行（写门禁据此拒绝写入）。"""
+        m = self._migration
+        return bool(m and m.get("status") == "running")
+
+    def migration_info(self) -> dict:
+        """迁移状态快照（供 GET /api/v1/embed/migrate 与 UI 轮询）。"""
+        m = dict(self._migration or {})
+        if not m:
+            return {"status": "idle", "source": "", "target": "",
+                    "total": 0, "done": 0, "percent": 0, "error": "",
+                    "readonly": False, "scopes": [],
+                    "started_at": "", "finished_at": ""}
+        total = int(m.get("total") or 0)
+        done = int(m.get("done") or 0)
+        # 作用域进度是后台线程持续写入的，返回快照避免序列化时读到半更新结构
+        m["scopes"] = [dict(item) for item in (m.get("scopes") or [])]
+        if m.get("status") == "done":
+            percent = 100
+        elif total > 0:
+            percent = min(99, int(done * 100 / total))
+        else:
+            percent = 0
+        m["percent"] = percent
+        # 只读窗口=迁移进行中：写入被 409 拒绝，语义检索降级为 BM25
+        m["readonly"] = m.get("status") == "running"
+        return m
+
+    def start_migration(self, model: str) -> dict:
+        """把全部数据迁移到新嵌入模型；返回最新状态（后台线程执行）。
+
+        库为空时等价于立即切换；库非空时进入只读窗口：
+        - 写操作被拒（MigrationBusyError → 409），读与关键词检索继续；
+        - 每个作用域按模型独立 collection 镜像同步（补缺失/更新变更/删多余）；
+        - 失败保留旧库与旧模型，可直接重试（新 collection 会被增量修正）。
+        English: Migrate all data to a new embedding model in a background thread.
+        An empty library switches instantly; a non-empty one enters a read-only window:
+        writes are rejected (409), reads and keyword retrieval keep working, and each
+        scope mirror-syncs into the model's own collection. On failure the old library
+        and model stay active, and a retry incrementally fixes the new collection.
+        """
+        model = str(model or "").strip()
+        if not model:
+            raise ValueError("至少保留一个嵌入模型；清空后服务将无法检索")
+        if len(model) > 200:
+            raise ValueError("模型名过长（≤200 字符）")
+        if model == self.settings.embed_model:
+            return self.embed_info()
+        with self._raw_lock:
+            if self._migration_active():
+                raise MigrationBusyError("已有迁移在进行中，请等待完成或失败后重试")
+            if self.scopes.total_records() == 0:
+                return self.reconfigure_embed({"model": model})
+            source = self.settings.embed_model
+            self._migration = {
+                "status": "running", "source": source, "target": model,
+                "total": 0, "done": 0, "error": "", "scopes": [],
+                "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "finished_at": "",
+            }
+            threading.Thread(
+                target=self._run_migration, args=(source, model),
+                name="kb-embed-migrate", daemon=True).start()
+        return self.embed_info()
+
+    def _remember_runtime_model(self, model: str) -> None:
+        """把生效模型写入 runtime.json（保留 device 等其他键），失败静默。"""
+        runtime = self.settings.runtime_file
+        data: dict = {}
+        try:
+            if runtime.exists():
+                data = json.loads(runtime.read_text(encoding="utf-8")) or {}
+            if not isinstance(data, dict):
+                data = {}
+            data["embed_model"] = model
+            runtime.parent.mkdir(parents=True, exist_ok=True)
+            runtime.write_text(json.dumps(data), encoding="utf-8")
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _sync_global_aliases(self) -> None:
+        """作用域重开后同步全局库兼容别名（store/bm25/retriever/稀疏）。"""
+        g = self.scopes.global_scope
+        self.store = g.store
+        self.bm25 = g.bm25
+        self._bm25_cache = g.bm25_cache
+        self.sparse_embedder = g.sparse_embedder
+        self.sparse_index = g.sparse_index
+        self.retriever = g.retriever
+
+    def _migrate_batch(self, dst: ChromaStore, records: list[Record],
+                       embedder: Embedder) -> None:
+        """把一批记录按目标模型编码后 upsert 到目标 collection。"""
+        vectors, _ = self._embed_for_records(records, embedder=embedder)
+        dst.upsert(records, vectors)
+
+    def _run_migration(self, source: str, target: str) -> None:
+        """迁移线程主体：逐作用域镜像同步 → 成功后原子切换模型。"""
+        import logging
+        log = logging.getLogger("kb.service")
+        state = self._migration
+        embedder = Embedder(
+            target, device=self.device,
+            idle_unload_seconds=self.settings.idle_unload_seconds,
+            torch_threads=self.settings.torch_threads,
+            embed_batch_size=self.settings.embed_batch_size)
+        try:
+            # 先释放旧模型：低配机器上两个模型同时驻留会 OOM；
+            # 迁移期间语义检索本来就已降级为 BM25，卸载不影响读取。
+            try:
+                self.embedder.unload()
+            except Exception:  # noqa: BLE001 - 卸载失败不影响迁移
+                pass
+            bases: list[tuple[str, Path]] = [("", self.settings.data_dir)]
+            bases += [(n, self.settings.projects_dir / n)
+                      for n in self.scopes.project_names()]
+            plans: list[dict] = []
+            for name, base in bases:
+                src_col = collection_for(base, source)
+                dst_col = collection_for(base, target)
+                if src_col == dst_col or not (base / "chroma").exists():
+                    continue
+                src_store = ChromaStore(base / "chroma", src_col)
+                total = src_store.count()
+                progress = {"name": name or "全局库", "total": total,
+                            "done": 0, "status": "pending"}
+                if state is not None:
+                    state["scopes"].append(progress)
+                    state["total"] += total
+                plans.append({"name": name or "全局库", "base": base,
+                              "src": src_store, "dst": dst_col,
+                              "total": total, "progress": progress})
+            for plan in plans:
+                progress = plan["progress"]
+                progress["status"] = "running"
+                dst = ChromaStore(plan["base"] / "chroma", plan["dst"])
+                batch: list[Record] = []
+                for record in plan["src"].iter_all():
+                    batch.append(record)
+                    if len(batch) >= MIGRATION_BATCH:
+                        self._migrate_batch(dst, batch, embedder)
+                        progress["done"] += len(batch)
+                        if state is not None:
+                            state["done"] += len(batch)
+                        batch = []
+                if batch:
+                    self._migrate_batch(dst, batch, embedder)
+                    progress["done"] += len(batch)
+                    if state is not None:
+                        state["done"] += len(batch)
+                # 镜像删除：目标里多出的 id（上次失败残留 / 源侧已删除）
+                src_ids = set(plan["src"].list_ids())
+                extra = [i for i in dst.list_ids() if i not in src_ids]
+                if extra:
+                    dst.delete(extra)
+                progress["status"] = "done"
+            # 全部作用域同步完成后才切换：任何一步失败都不会让服务丢数据
+            with self._raw_lock:
+                self.settings.embed_model = target
+                save_llm_overrides(self.settings.embed_config_file,
+                                   {"embed_model": target})
+                self._embed_overrides = {"embed_model": target}
+                self._remember_runtime_model(target)
+                self.embedder = embedder
+                self.scopes.switch_model(embedder, previous_model=source)
+                self._sync_global_aliases()
+                self._cache.clear()
+                self._table_rows_cache.clear()
+                self._bump_table_epoch()
+                self._stats_cache = (0.0, 0)
+                if state is not None:
+                    state["status"] = "done"
+                    state["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            log.info("嵌入模型迁移完成：%s → %s（%d 条）",
+                     source, target, (state or {}).get("done", 0))
+        except Exception as exc:  # noqa: BLE001 - 失败保留旧库，允许重试
+            if state is not None:
+                state["status"] = "failed"
+                state["error"] = str(exc)[:500]
+                state["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            log.warning("嵌入模型迁移失败（旧库与旧模型保持可用）: %s", exc)
+        finally:
+            # 迁移失败时释放目标模型；成功时它就是当前模型，保持加载
+            if self.embedder is not embedder:
+                try:
+                    embedder.unload()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def delete_model_data(self, model: str) -> int:
+        """删除某个非活跃模型的数据（各作用域一起删），返回删除记录数。"""
+        if self._migration_active():
+            raise MigrationBusyError("迁移进行中不能删除模型数据")
+        with self._raw_lock:
+            return self.scopes.delete_model_data(model)
+
     def _persist_bm25(self, scope=None) -> None:
         """BM25 语料落盘；失败记 WARNING 不阻塞主流程（N27）。
         English: Persist the BM25 corpus; on failure log a WARNING without blocking the main flow (N27)."""
@@ -473,12 +810,15 @@ class KBService:
 
     # ---- N25 稀疏第三路（A3.5 spec §3.2/§3.4）----
 
-    def _build_sparse(self, all_records, base_dir):
+    def _build_sparse(self, all_records, base_dir, force: bool = False):
         """sparse_enabled 时组装 (SparseEmbedder, SparseIndex)；失败降级 (None, None)。
 
         每个作用域独立索引，落盘到各自 base_dir/sparse_index.json。
+        force=True 时跳过磁盘缓存强制重建（换模型后稀疏向量同样失效）。
         English: Build per-scope (SparseEmbedder, SparseIndex) when sparse_enabled;
-        degrade to (None, None) on failure. Each scope persists its own index file."""
+        degrade to (None, None) on failure. Each scope persists its own index file.
+        force=True bypasses the on-disk cache (sparse vectors also depend on the model).
+        """
         import logging
         if not getattr(self.settings, "sparse_enabled", False):
             return None, None
@@ -493,15 +833,16 @@ class KBService:
         cache = Path(base_dir) / "sparse_index.json"
         sparse_index = SparseIndex()
         valid_ids = [r.id for r in all_records]
-        if not sparse_index.load(cache, valid_ids):
-            vecs = sparse_embedder.encode([r.content for r in all_records])
-            sparse_index.rebuild(zip(valid_ids, vecs))
-            # 注意：调用方尚未持有索引引用，直接落盘局部实例
-            try:
-                sparse_index.save(cache)
-            except OSError as e:
-                logging.getLogger("kb.service").warning(
-                    "稀疏索引落盘失败: %s", e)
+        if not force and sparse_index.load(cache, valid_ids):
+            return sparse_embedder, sparse_index
+        vecs = sparse_embedder.encode([r.content for r in all_records])
+        sparse_index.rebuild(zip(valid_ids, vecs))
+        # 注意：调用方尚未持有索引引用，直接落盘局部实例
+        try:
+            sparse_index.save(cache)
+        except OSError as e:
+            logging.getLogger("kb.service").warning(
+                "稀疏索引落盘失败: %s", e)
         return sparse_embedder, sparse_index
 
     def _persist_sparse(self, scope) -> None:
@@ -932,6 +1273,42 @@ class KBService:
                 for c in contents)
         return records
 
+    # ---- 向量生成：表格行跳过嵌入 ----
+    def _embed_for_records(self, records: list[Record],
+                           embedder: Embedder | None = None
+                           ) -> tuple[list[list[float]], int]:
+        """为待入库记录生成向量；表格行用常量单位向量，不调用嵌入模型。
+
+        表格行级向量检索本来就不适用（同模板生成的行在向量空间几乎重合），
+        表格查询由确定性路径负责；跳过嵌入可把 800 行导入从约 24 秒降到约 2 秒。
+        常量向量与真实查询的余弦相似度接近 0，会被 min_vector_score 过滤，
+        不会污染语义检索结果。embedder 参数用于迁移时按目标模型编码。
+        English: Build embeddings for records; table rows get a constant unit vector
+        instead of a model call. Row-level vector search is a poor fit for tabular
+        data (rows generated from one template collapse in embedding space) and the
+        deterministic path handles those queries, so skipping the model makes bulk
+        table ingest much faster without polluting semantic retrieval. The embedder
+        argument lets migration encode with the target model.
+        """
+        encoder = embedder or self.embedder
+        embed_indexes = [i for i, r in enumerate(records)
+                         if "table" not in (r.tags or [])]
+        vectors: list[list[float] | None] = [None] * len(records)
+        if embed_indexes:
+            computed = encoder.embed_texts(
+                [records[i].content for i in embed_indexes])
+            for i, vec in zip(embed_indexes, computed):
+                vectors[i] = vec
+        table_count = len(records) - len(embed_indexes)
+        if table_count:
+            dim = encoder.dimension
+            unit = 1.0 / math.sqrt(dim) if dim > 0 else 0.0
+            constant = [unit] * dim
+            for i, vec in enumerate(vectors):
+                if vec is None:
+                    vectors[i] = constant
+        return vectors, table_count  # type: ignore[return-value]
+
     def add_document(self, path: str | Path,
                      source: str | None = None,
                      agent_id: str = "default",
@@ -958,19 +1335,20 @@ class KBService:
             if not records:
                 return {"source": doc_source, "chunks": 0}
             scope = self.scopes.get(project)
-            vecs = self.embedder.embed_texts([r.content for r in records])
+            vecs, _table_count = self._embed_for_records(records)
             replaced = self._replace_source_locked(scope, doc_source, records, vecs)
             # 改进项 1B：批量并入语料后单次重建（此前每个 chunk 触发一次全量重建）
             scope.bm25.add_many(records)
             self._persist_bm25(scope)
             self._sparse_add(scope, records)
             self.scopes.sync_count(scope)
+            self._bump_table_epoch()
             self._audit_access("ingest", agent_id, type="doc_chunk",
                                source=doc_source, content=records[0].content,
                                namespace=records[0].namespace, client=client,
                                project=project)
             return {"source": doc_source, "chunks": len(records),
-                    "replaced": replaced}
+                    "table_chunks": _table_count, "replaced": replaced}
 
     def add_documents_bulk(self, paths: list[str | Path],
                            project: str | None = None,
@@ -1017,9 +1395,11 @@ class KBService:
                 files += 1
                 records.extend(file_records)
             if not records:
-                return {"files": 0, "chunks": 0, "replaced": 0, "failed": failed}
-            # 先算全部向量再删旧，嵌入失败不会清空已有数据（同 add_document）
-            vectors = self.embedder.embed_texts([r.content for r in records])
+                return {"files": 0, "chunks": 0, "table_chunks": 0,
+                        "replaced": 0, "failed": failed}
+            # 先算全部向量再删旧，嵌入失败不会清空已有数据（同 add_document）；
+            # 表格行用常量向量，不触发嵌入模型。
+            vectors, table_chunks = self._embed_for_records(records)
             sources = {r.source for r in records}
             old_ids = [r.id for r in scope.store.iter_all()
                        if r.source in sources]
@@ -1035,12 +1415,14 @@ class KBService:
             self._persist_bm25(scope)
             self._sparse_add(scope, records)
             self.scopes.sync_count(scope)
+            self._bump_table_epoch()
             for source in sorted(sources):
                 self._audit_access("ingest", agent_id, type="doc_chunk",
                                    source=source, content=f"bulk:{source}",
                                    namespace="default", client=client,
                                    project=project)
             return {"files": files, "chunks": len(records),
+                    "table_chunks": table_chunks,
                     "replaced": len(old_ids), "failed": failed}
 
     def add_webpage(self, url: str,
@@ -1141,7 +1523,46 @@ class KBService:
             if scope.links is not None:
                 scope.links.remove_records(ids)
             self.scopes.sync_count(scope)
+            self._bump_table_epoch()
             return n
+
+    def reset(self, project: str | None = None) -> int:
+        """清空一个作用域（None=全局库）的全部记录，返回删除数量。
+
+        同步清理 BM25、稀疏索引、关联边与计数缓存；表格行缓存通过 epoch 失效。
+        """
+        with self._write_lock:
+            scope = self.scopes.get(project)
+            ids = [r.id for r in scope.store.iter_all()]
+            if ids:
+                scope.store.delete(ids)
+                scope.bm25.remove_many(ids)
+                self._persist_bm25(scope)
+                self._sparse_remove(scope, ids)
+                if scope.links is not None:
+                    scope.links.remove_records(ids)
+            self.scopes.sync_count(scope)
+            self._bump_table_epoch()
+            return len(ids)
+
+    def reset_all(self) -> dict[str, int]:
+        """清空所有项目子库与全局库，返回各作用域删除数量。
+
+        与迁移互斥：迁移进行中直接拒绝，且整轮清空持原始写锁，
+        不会出现"清了一半、迁移又开始了"的中间状态。
+        English: Clear every project sub-store and the global store, returning per-scope
+        counts. Mutually exclusive with migration: rejected during a read-only window,
+        and the whole sweep holds the raw write lock so a migration cannot start midway.
+        """
+        with self._raw_lock:
+            if self._migration_active():
+                raise MigrationBusyError(
+                    "正在迁移嵌入模型（只读窗口）：暂不能清空数据")
+            result: dict[str, int] = {}
+            for name in self.scopes.project_names():
+                result[name] = self.reset(name)
+            result[""] = self.reset(None)
+            return result
 
     # ---- 检索与统计 ----
     def _audit_access(self, action: str, agent_id: str, *,
@@ -1249,6 +1670,9 @@ class KBService:
         the global store, boosting project hits. With link_expand_enabled, the first
         3 memory hits are expanded one hop, appending at most link_expand_limit
         neighbors (tagged via); with no links the results are identical to base search."""
+        if self._migration_active():
+            # 只读窗口：旧模型已卸载（内存让给迁移），语义检索降级为 BM25
+            mode = "keyword"
         if project and self.scopes.has_project(project):
             scope = self.scopes.get(project)
             project_hits = scope.retriever.search(
@@ -1286,6 +1710,40 @@ class KBService:
                            hits=len(results), namespace="default",
                            client=client, project=project or "")
         return results
+
+    def group_by_file(self, results: list[dict], top_k: int = 10) -> list[dict]:
+        """把 chunk 级检索结果按来源文件聚合，返回文件级候选。
+
+        同一文件的多个命中合并为一项：score 取该文件最高分，hits 为命中块数，
+        snippets 保留最多 3 条最相关的原文。用户先看“哪几个文件相关”，
+        再看“为什么相关”，避免 10 条结果其实来自同一份文档。
+        English: Aggregate chunk-level hits into file-level candidates. A file's score
+        is its best chunk score, hits is the chunk count, and snippets keeps the top 3
+        chunks, so users see which files matched before reading individual chunks."""
+        groups: dict[str, dict] = {}
+        for hit in results:
+            source = hit.get("source") or "(未命名)"
+            group = groups.get(source)
+            if group is None:
+                group = {"source": source, "score": 0.0, "hits": 0,
+                         "snippets": []}
+                groups[source] = group
+            group["hits"] += 1
+            group["score"] = max(group["score"], float(hit.get("score") or 0.0))
+            group["snippets"].append({"content": hit.get("content", ""),
+                                      "score": hit.get("score", 0.0)})
+        files = sorted(groups.values(), key=lambda item: item["score"], reverse=True)
+        for item in files:
+            item["snippets"] = item["snippets"][:3]
+        return files[:top_k]
+
+    def search_files(self, query: str, top_k: int = 10, mode: str = "hybrid",
+                     agent_id: str = "default", client: str = "default",
+                     project: str | None = None) -> list[dict]:
+        """检索并按文件聚合（先多取候选，再合并同一 source）。"""
+        results = self.search(query, top_k=max(top_k * 4, 20), mode=mode,
+                              agent_id=agent_id, client=client, project=project)
+        return self.group_by_file(results, top_k=top_k)
 
     def stats(self) -> dict:
         """运行统计；records 为全局 + 项目库总数（5 秒缓存，避免探针频繁开库）。
@@ -1354,19 +1812,47 @@ class KBService:
         return result
 
     def _table_answer(self, question: str, project: str | None) -> dict | None:
-        """确定性表格问答：扫描带 table 标签的记录并逐行匹配，命中即返回。
+        """确定性表格问答：命中即返回；表格行按作用域缓存，避免每次全库重扫。
 
-        与 RAG 不同，这里不调用 LLM、不做向量检索，答案直接来自表格单元格，
-        因此 `小明 语文 95` 这类问题可以精确命中；未命中返回 None 交给原流程。
-        English: Deterministic table Q&A: scan records tagged `table` and match rows
-        directly. No LLM or vector retrieval is involved, so exact cell questions hit
-        precisely; returns None when nothing matches, letting the normal path continue."""
+        2 万行时每次重扫 Chroma + 重新解析约 1.3 秒；缓存后稳态问答降至毫秒级。
+        任何写入（入库/删除）都会提升 epoch，使缓存自动失效。
+        English: Deterministic table Q&A. Parsed table rows are cached per scope so a
+        query does not rescan and re-parse the whole library (about 1.3s at 20k rows).
+        Any write bumps the epoch, invalidating the cache automatically."""
+        rows = self._table_rows(project)[0]
+        result = query_table(rows, question)
+        if result is None:
+            return None
+        answer, matched = result
+        # 来源只取真正命中的记录；来源信息随行缓存，避免逐条回查 Chroma
+        _rows, meta = self._table_rows(project)
+        matched_ids = {row.get("_record_id") for row in matched}
+        sources = []
+        for rid in matched_ids:
+            info = meta.get(rid)
+            if info is None:
+                continue
+            sources.append({"id": rid, "content": info[1],
+                            "score": 1.0, "source": info[0]})
+        return {"answer": answer, "sources": sources[:5], "llm": "table",
+                "table": True}
+
+    def _table_rows(self, project: str | None) -> tuple[list[dict], dict]:
+        """读取并缓存某作用域的表格行与来源信息。
+
+        返回 (rows, meta)：rows 带 `_record_id`；meta 为 id → (source, content)。
+        缓存命中时直接返回，避免 2 万行每次问答都重扫 Chroma 并重新解析。
+        """
+        key = project or ""
+        cached = self._table_rows_cache.get(key)
+        if cached is not None and cached[0] == self._table_epoch:
+            return cached[1], cached[2]
         scopes = []
         if project and self.scopes.has_project(project):
             scopes.append(self.scopes.get(project))
         scopes.append(self.scopes.global_scope)
         rows: list[dict] = []
-        records_by_id: dict[str, object] = {}
+        meta: dict[str, tuple[str, str]] = {}
         for scope in scopes:
             for record in scope.store.iter_all():
                 if "table" not in (record.tags or []):
@@ -1374,25 +1860,16 @@ class KBService:
                 parsed = rows_from_content(record.content)
                 if not parsed:
                     continue
-                records_by_id[record.id] = record
+                meta[record.id] = (record.source or "", record.content)
                 for row in parsed:
                     row["_record_id"] = record.id
                 rows.extend(parsed)
-        result = query_table(rows, question)
-        if result is None:
-            return None
-        answer, matched = result
-        # 来源只取真正命中的记录（不再把所有表格记录塞进 sources）
-        matched_ids = {row.get("_record_id") for row in matched}
-        sources = []
-        for rid in matched_ids:
-            record = records_by_id.get(rid)
-            if record is None:
-                continue
-            sources.append({"id": record.id, "content": record.content,
-                            "score": 1.0, "source": record.source})
-        return {"answer": answer, "sources": sources[:5], "llm": "table",
-                "table": True}
+        self._table_rows_cache[key] = (self._table_epoch, rows, meta)
+        return rows, meta
+
+    def _bump_table_epoch(self) -> None:
+        """表格数据变更后让缓存失效（入库/删除/替换都调用）。"""
+        self._table_epoch += 1
 
     def table_answer(self, question: str, project: str | None = None) -> dict | None:
         """确定性表格问答的公开入口（供 /search 的“仅检索”模式复用）。"""

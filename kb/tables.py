@@ -582,7 +582,18 @@ def _apply_conditions(rows: list[dict], headers: list[str], q: str):
 
 
 def _select_rows(rows: list[dict], q: str, exclude: set[str] | None = None):
-    """按单元格值定位行：同名多行全保留，前缀只取最长命中。"""
+    """按单元格值定位行：同名多行全保留，前缀冲突只裁掉被包含的那一行。
+
+    v2.4.6：不再“全局取最长命中”。旧规则会把多实体查询里的短名字丢掉
+    （“王五和欧阳娜娜”只剩欧阳娜娜）；新规则只看“本行的最长命中是否被
+    另一行的命中真包含”，因此：
+      · 张芳 / 张芳芳 → 只留张芳芳（前缀冲突，前者是误命中）
+      · 王五 / 欧阳娜娜 → 两行都留（不同实体，互不包含）
+      · 五班张芳 / 五班李四 → 只留张芳（前者命中班级+姓名两个值）
+    English: Match rows by cell values. v2.4.6 stops globally keeping only the
+    longest hit, which dropped shorter names in multi-entity questions. Rows with
+    more matched values win first (class + name beats class alone); a row is then
+    dropped only when its own longest hit is a proper substring of another hit."""
     exclude = exclude or set()
     candidates: list[tuple[dict, list[str]]] = []
     for row in rows:
@@ -601,9 +612,18 @@ def _select_rows(rows: list[dict], q: str, exclude: set[str] | None = None):
             continue
         seen.add(key)
         unique.append((row, hits))
-    best_len = max(max(len(v) for v in hits) for _, hits in unique)
-    unique = [(row, hits) for row, hits in unique
-              if max(len(v) for v in hits) == best_len]
+    all_hits = {v for _, hits in unique for v in hits}
+
+    # 先保留“命中值更多”的行：问「五班张芳」时，张芳行同时命中班级和姓名，
+    # 李四行只命中班级；不先按命中数收窄，会把整班的人都列出来。
+    most = max(len(hits) for _, hits in unique)
+    unique = [(row, hits) for row, hits in unique if len(hits) == most]
+
+    def _dominated(hits: list[str]) -> bool:
+        longest = max(hits, key=len)
+        return any(longest != other and longest in other for other in all_hits)
+
+    unique = [(row, hits) for row, hits in unique if not _dominated(hits)]
     return [row for row, _ in unique], [v for _, hits in unique for v in hits]
 
 

@@ -450,11 +450,68 @@ python -m kb dedup --threshold 0.90 --dry-run
 - `--dry-run/--no-dry-run`：默认 dry-run（输出候选对表：记录A/记录B/相似度/内容摘要）；`--no-dry-run` 暂未实现自动合并（N23c 智能层 consolidation 后续实现），提示人工审核后手动处理
 - 逐条计算 embedding 后两两比较余弦相似度，记录数较多时耗时随 O(n²) 增长
 
+### 5.3 清空数据（Web UI / API）
+
+Web UI「设置 → 数据管理」提供两个按钮：
+
+- **清空当前项目**：只清当前选中的项目子库（未选项目时为全局库）
+- **清空全部数据**：删除所有项目子库 + 全局库
+
+两者都需要输入确认文本（项目名，或“清空全部”），**清空不可恢复**。
+
+API 等价：
+
+```bash
+# 清空一个项目
+curl -X POST http://127.0.0.1:8000/api/v1/admin/reset \
+  -H "Content-Type: application/json" \
+  -d '{"project":"demo","confirm":"demo"}'
+
+# 清空全部
+curl -X POST http://127.0.0.1:8000/api/v1/admin/reset \
+  -H "Content-Type: application/json" \
+  -d '{"all":true,"confirm":"清空全部"}'
+```
+
+清空会同步清理 Chroma、BM25、稀疏索引、关联边和计数；表格缓存自动失效。
+
+### 5.4 切换嵌入模型（迁移已有数据）
+
+Web UI「设置 → 嵌入模型」选择新模型后点「迁移并切换」。库为空时立即生效；
+库中已有数据时进入**只读窗口**：
+
+- 迁移在后台执行，进度条显示百分比与已处理条数；
+- **写入暂停**：写入接口返回 `409 MIGRATION_IN_PROGRESS`，读取与关键词检索继续；
+  语义检索临时降级为 BM25，迁移完成后自动恢复混合检索；
+- 全部作用域（全局库 + 所有项目子库）同步完成后才切换模型；
+- **失败不影响旧库**：状态显示失败原因，旧模型继续可用，可直接重试；
+- 迁移完成后旧模型数据仍占磁盘，设置面板里每个非当前模型都有「删除数据」按钮。
+
+API 等价：
+
+```bash
+# 启动迁移（库为空时等价于立即切换）
+curl -X POST http://127.0.0.1:8000/api/v1/embed/migrate \
+  -H "Content-Type: application/json" -d '{"model":"BAAI/bge-m3"}'
+
+# 轮询进度
+curl http://127.0.0.1:8000/api/v1/embed/migrate
+
+# 删除非活跃模型的数据（confirm 必须等于模型名）
+curl -X POST http://127.0.0.1:8000/api/v1/embed/models/delete \
+  -H "Content-Type: application/json" \
+  -d '{"model":"BAAI/bge-small-zh-v1.5","confirm":"BAAI/bge-small-zh-v1.5"}'
+```
+
+> 建议在空闲时段迁移：迁移前会先卸载旧模型，避免低配机器同时驻留两个模型。
+> 迁移期间请勿强制结束进程；中断后旧库仍完整，重启后重新发起迁移会增量补齐。
+
 ## 6. 常见问题与故障排查
 
 **Q：healthz 访问不通？**
-服务没起来。检查：终端是否还开着、端口是否被占（`netstat -ano | findstr 8000`）、
-换端口 `KB_API_PORT=8001 python -m kb serve`。
+服务没起来。检查：终端是否还开着、端口是否被占（`netstat -ano | findstr 8000`）；
+换端口用 `python -m kb serve --port 8001`（或设 `KB_API_PORT=8001`）。
+注意：同一 `KB_DATA_DIR` 只允许一个长驻实例，**换端口不能绕过**；需要并行时给两个实例设置不同的数据目录。
 
 **Q：写入/检索报「嵌入模型不可用」，内容提到 torch？**
 transformers 检测到 torch 版本过旧会静默禁用 PyTorch 后端，底层只抛

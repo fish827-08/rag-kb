@@ -7,9 +7,10 @@ One-click scripts to start/stop the kb service, grouped by OS.
 scripts/
 ├── windows/                 # Windows (.bat)
 │   ├── start_kb.bat             无窗口后台启动（background, no window）
-│   ├── start_kb_console.bat     前台调试窗口（foreground debug console）
 │   ├── stop_kb.bat              停止服务（3 重保险）
 │   └── install_skill_kb_memory.bat  kb-memory skill 一键装到用户级全局目录
+├── verify_model_migration.py # v2.5 模型迁移端到端验收（样例见 samples/）
+├── bench_table_query.py      # 表格问答准确率/延迟基准
 └── linux/                   # Linux / macOS (.sh) — 预留下，待补
 ```
 
@@ -21,7 +22,7 @@ Works from anywhere in the repo (auto-resolves the repo root).
 | 操作 Action | 命令 Command |
 |---|---|
 | 后台启动 Background start | `scripts\windows\start_kb.bat` |
-| 调试窗启动 Debug console | `scripts\windows\start_kb_console.bat` |
+| 前台调试 Debug console | `python -m kb serve`（直接运行即可） |
 | 停止 Stop | `scripts\windows\stop_kb.bat` |
 | 安装 kb-memory skill 到全局 | `scripts\windows\install_skill_kb_memory.bat` |
 
@@ -105,6 +106,20 @@ cp skills/kb-memory/SKILL.md ~/.claude/skills/kb-memory/
 - **解决**：用**修复后的脚本重跑**（脚本现在会对比源/目标大小，失败打 `[FAIL]`），
   或手动覆盖该文件后确认大小与 `skills\kb-memory\SKILL.md` 一致，再重启客户端。
 - **自查**（PowerShell）：`(Get-Item "%USERPROFILE%\.trae-cn\skills\kb-memory\SKILL.md").Length` 应大于 0。
+
+## 模型迁移验收（v2.5.0）
+
+`samples/` 内置了记忆、md/txt/html/json/docx/csv/多 sheet xlsx 样例；
+启动服务后运行：
+
+```powershell
+python scripts/verify_model_migration.py --target BAAI/bge-m3
+python scripts/verify_model_migration.py --target BAAI/bge-m3 --delete-old
+```
+
+脚本把样例导入独立项目 `verify-migration`，迁移前后各跑一遍语义检索、关键词检索、
+记忆检索、DOCX/HTML/JSON 命中与 CSV/多 sheet 表格问答，并校验记录数不变、旧模型数据保留。
+全部通过时输出 `结果：PASS`，退出码 0。详见 `samples/README.md`。
 
 ## 构建独立 skill 包（Build the standalone skill package）
 

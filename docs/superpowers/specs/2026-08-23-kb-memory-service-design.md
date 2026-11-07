@@ -379,7 +379,7 @@ Embedding 相关测试用真实小模型（如 `bge-small-zh-v1.5`，约 100MB�
 | 2 | 安装 CUDA 版 PyTorch | ✅ 已完成（2026-08-23）：torch 2.11.0+cu128，CUDA 可用已验证。要点：Python 3.10 的 CUDA 轮子最新为 2.11.0+cu128（cu124 已停发）；官方源国内仅 ~0.6MB/s，轮子从阿里云镜像 `mirrors.aliyun.com/pytorch-wheels/cu128/` 下载（curl 带 `-A "Mozilla/5.0"`，实测 ~6.5MB/s），再本地 `pip install` |
 | 3 | 一次性下载 BGE-M3 模型 | ✅ 已缓存（4.25GB，位于 `~/.cache/huggingface/hub`）。新环境重装时：设置 `HF_ENDPOINT=https://hf-mirror.com` 后首次启动自动下载 |
 | 4 | 安装 Ollama for Windows | ✅ 已完成（2026-08-23）：v0.32.15 安装，11434 端口正常。官网慢时用 GitHub Releases + 加速代理下载（可用前缀按序尝试 `gh-proxy.com` / `ghproxy.net` / `ghfast.top` / `ghproxy.cn`，旧域名 ghproxy.com 已停服），或 `winget install --id=Ollama.Ollama -e` |
-| 5 | 拉取本地模型 | ✅ 已完成（2026-08-23）：`qwen3:1.7b` 与 `qwen3:4b` 均已拉取并改名，基准见 7.2 节。模型目录已迁移至 **`D:\ollama_models`**（用户级环境变量 `OLLAMA_MODELS` 已设置）。国内直连慢时从魔搭拉取：`ollama pull modelscope.cn/Qwen/Qwen3-4B-GGUF` 后 `ollama cp` 改短名 |
+| 5 | 拉取本地模型 | ✅ 已完成（2026-08-23）：`qwen3:1.7b` 与 `qwen3:4b` 均已拉取并改名，基准见 7.2 节。模型目录通过用户级环境变量 `OLLAMA_MODELS` 指定（具体路径因机器而异）。国内直连慢时从魔搭拉取：`ollama pull modelscope.cn/Qwen/Qwen3-4B-GGUF` 后 `ollama cp` 改短名 |
 | 6 | 云端 LLM API Key（可选） | ⬜ 待办：任选一家 OpenAI 兼容服务（DeepSeek / OpenAI / 通义 / 硅基流动等）注册获取，写入 `.env` 的 `KB_LLM_API_KEY`（配 `KB_LLM_BASE_URL` / `KB_LLM_CLOUD_MODEL`），作为云降级；不配则 keep `KB_LLM_MODE=off`（默认，完全本地离线） |
 | 7 | 验证 GPU 可用 | ✅ 已完成（2026-08-23）：`torch.cuda.is_available()=True`，CUDA GPU 矩阵乘法测试通过 |
 

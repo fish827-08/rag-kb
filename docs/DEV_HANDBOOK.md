@@ -55,6 +55,8 @@ discovery.py 安装清单/服务发现/登录自启（`kb where`、`kb autostart
 | 三协议共享一个 `KBService` 单例，挂 `app.state.kb` | [api.py create_app](file:///./kb/api.py) | 改 service 构造函数，三端同时受影响 |
 | 全局库 + 项目子库 v2.1：`project` 选择 `projects/<project>/`，不传走全局 | spec 2026-10-20；scopes.py | 读写/检索/按 ID 定位都必须先过 ScopeManager，不要直接碰全局 store |
 | 项目子库懒打开 + LRU（`KB_PROJECT_CACHE_SIZE`），全局库永不淘汰 | scopes.py | 新读写入口必须经 `scopes.get(project)` / `scopes.locate` |
+| v2.5 每模型独立 collection（`kb_records` / `kb_records__<hash>`），映射落 `models.json` | scopes.py `collection_for/switch_model` | 任何新建 `ChromaStore` 都必须显式传 collection；换模型只能走迁移，不能只换 embedder |
+| v2.5 迁移只读窗口：写锁门禁在**拿到锁之后**再查迁移标志 | service.py `_WriteGate` | 新写入口继续用 `with self._write_lock` 即可自动被拦截，勿直接操作 `_raw_lock` |
 | `Record` 统一承载记忆与文档 chunk，靠 `type` 字段区分 | models.py L17 | 检索/删除都按 type 过滤 |
 | Chroma metadata 不支持 None/空串/list | models.py L38、storage.py L47 | 新增字段必须过 `to_metadata`/`_clean_metadata` |
 | 模型全部懒加载（实例化不加载，首次用才加载） | embedder/reranker/llm | 不要在 `__init__` 里加载模型 |
@@ -187,13 +189,15 @@ GET    /                           服务导航页（API 状态/文档链接）
 
 | 函数 | 行 | 职责 |
 |---|---|---|
-| `serve / mcp_stdio` | L378/L410 | 启动 REST 常驻服务 / stdio 模式 MCP |
+| `serve / mcp_stdio` | L378/L410 | 启动 REST 常驻服务 / stdio 模式 MCP；两者启动时都会抢 `KB_DATA_DIR/kb.lock` 单例锁，`serve` 支持 `--port` |
 | `add / search / ask / info / stats` | L225-378 | 终端直写、检索、问答、信息、统计 |
+| `table query` | — | 直接查询单个 CSV/XLS/XLSX，不建库、不加载嵌入模型 |
 | `forget / dedup` | L424/L472 | 治理维护：全作用域陈旧记忆级联清理（备份 + dry-run 先行）、重复对扫描 |
 | `audit` | L519 | 存取审计查询 |
 | `eval_cmd` | L576 | 检索质量评测（独立临时库，不碰生产数据） |
 | `resolve_device` | L139 | GPU 选择交互（显式配置 > runtime.json > 交互询问） |
 | `is_port_in_use / write_pid_file / remove_pid_file` | L182-213 | 端口预检与 pid 文件（配合 start/stop_kb.bat） |
+| `kb/singleton.py` | — | 数据目录单例锁：锁文件与信息文件分离，进程退出/强杀时由内核自动释放 |
 
 ### 3.4 monitor.py（465 行） — 本地监控 Agent（默认关）
 

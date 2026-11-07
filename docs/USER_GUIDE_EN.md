@@ -76,7 +76,14 @@ python -m kb serve
 - Not sure where kb is installed or how to start it? `kb where`, or
   `python bootstrap.py --status` / `--start-only`
 
-> One-click: `scripts\windows\start_kb.bat` (background), `scripts\windows\start_kb_console.bat` (debug console), `scripts\windows\stop_kb.bat` (stop).
+> One-click: `scripts\windows\start_kb.bat` (background), `scripts\windows\stop_kb.bat` (stop).
+> Debug console: just run `python -m kb serve` in a terminal.
+> Port conflict: `python -m kb serve --port 8001` (or set `KB_API_PORT`).
+
+> **Single instance per data directory**: one `KB_DATA_DIR` can host only one long-lived
+> process (`serve` or stdio `mcp`). Changing the port does NOT bypass this rule — two
+> processes writing the same Chroma/BM25 files would corrupt the index. To run two
+> instances in parallel, give each a different `KB_DATA_DIR`.
 
 ### 2.3 Stop & restart
 

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kb-memory"
-version = "2.4.5"
-description = "Local-first agent memory & knowledge service: hybrid retrieval + memory governance (decay / dedup / freshness), REST + MCP dual protocol, fully usable offline without an LLM"
+version = "2.5.0"
+description = "Local-first RAG knowledge base & agent memory service: hybrid retrieval + memory governance, REST + MCP, fully usable offline without an LLM"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"

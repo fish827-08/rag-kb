@@ -424,6 +424,55 @@ def remove_pid_file() -> None:
         pass  # 清理失败不阻断退出（stop_kb.bat 另有端口/命令行兜底）
 
 
+def _lock_info(port: int | None = None) -> dict:
+    """本进程写入数据目录锁文件的身份信息（仅供错误提示展示）。"""
+    from kb import __version__
+    s = get_settings()
+    return {"pid": os.getpid(), "host": s.api_host,
+            "port": port if port is not None else s.api_port,
+            "version": __version__,
+            "started_at": datetime.now().isoformat(timespec="seconds")}
+
+
+def _holder_text(holder: dict) -> str:
+    """把锁文件里的持有者信息格式化成一行中文提示。"""
+    pid = holder.get("pid", "?")
+    host = holder.get("host", "127.0.0.1")
+    port = holder.get("port", "?")
+    started = holder.get("started_at", "?")
+    return f"pid={pid}  地址=http://{host}:{port}  启动于={started}"
+
+
+def _deny_double_instance(holder: dict, data_dir) -> None:
+    """长驻进程抢锁失败时的统一报错，然后退出。"""
+    console.print("\n[bold red]已有一个 kb 实例在运行，本次启动已取消。[/bold red]")
+    console.print(f"  {_holder_text(holder)}")
+    console.print(f"  数据目录：{data_dir}")
+    console.print("  同一数据目录只允许一个实例，避免向量库与索引文件并发写。")
+    console.print("  如确需并行，请先停止该实例，或为另一个实例设置不同的 KB_DATA_DIR。")
+    console.print("  停止方式：Ctrl+C（前台）/ scripts\\windows\\stop_kb.bat（Windows）"
+                  " / systemctl stop kb（Linux）\n")
+    raise typer.Exit(code=1)
+
+
+def _warn_if_service_running() -> None:
+    """短命写命令（import/add/forget 等）检测到服务在跑时给出警告。
+
+    不阻止执行：写库本身能成功，但服务进程的内存 BM25 不会感知新数据，
+    关键词检索要重启服务后才生效。明确告诉用户，避免“导入后搜不到”。
+    """
+    from kb.singleton import is_locked
+    s = get_settings()
+    holder = is_locked(s.data_dir)
+    if holder is None:
+        return
+    console.print("[yellow]检测到 kb 服务正在运行：[/yellow]"
+                  f"{_holder_text(holder)}")
+    console.print("[yellow]本次是命令行直接写库，服务的内存索引不会自动更新：[/yellow]"
+                  "新数据的向量可被检索，但关键词检索需重启服务后才生效。")
+    console.print("[yellow]建议：优先用 Web UI / MCP 导入；或导入完成后重启服务。[/yellow]")
+
+
 @app.command()
 def add(content: str,
         tags: str = typer.Option("", "--tags", help="逗号分隔的标签"),
@@ -433,6 +482,7 @@ def add(content: str,
         client: str = typer.Option("CLI", "--client", help="来源客户端（默认 CLI）"),
         project: str | None = typer.Option(None, "--project", help="项目名；缺省自动取当前目录名")):
     """写入一条记忆（v2.1：缺省落到当前目录名对应的项目子库）。"""
+    _warn_if_service_running()
     svc = _service()
     project = project if project is not None else _default_project()
     r = svc.add_memory(
@@ -451,6 +501,7 @@ def import_cmd(paths: list[str] = typer.Argument(..., help="文件或目录，�
 
     整本书（几百个章节）场景比逐个上传快数倍；同一 source 重复导入自动替换。
     """
+    _warn_if_service_running()
     files: list[Path] = []
     for raw in paths:
         p = Path(raw)
@@ -473,9 +524,12 @@ def import_cmd(paths: list[str] = typer.Argument(..., help="文件或目录，�
     t0 = time.time()
     r = _service().add_documents_bulk(files, project=project, client=client)
     cost = time.time() - t0
+    rate = f"，约 {r['chunks'] / cost:.0f} 块/秒" if cost > 0 and r["chunks"] else ""
     console.print(
         f"已导入 [bold]{r['files']}[/bold] 个文件 / [bold]{r['chunks']}[/bold] 块"
-        f"（替换旧块 {r['replaced']}），耗时 {cost:.1f}s，project={project or '-'}")
+        f"（替换旧块 {r['replaced']}），耗时 {cost:.1f}s{rate}，project={project or '-'}")
+    if r.get("table_chunks"):
+        console.print(f"  其中表格行 {r['table_chunks']} 块：只进关键词索引，不参与向量嵌入。")
     if r["failed"]:
         console.print(f"[yellow]跳过 {len(r['failed'])} 个文件：[/yellow]")
         for item in r["failed"][:10]:
@@ -504,6 +558,54 @@ def search(query: str,
 def info():
     """运行信息。"""
     console.print(_service().stats())
+
+
+# 表格工具子命令：完全独立于向量库与嵌入模型，只读文件、只做确定性匹配。
+table_app = typer.Typer(help="表格工具：直接查询单个文件，不建库、不加载模型")
+app.add_typer(table_app, name="table")
+
+
+@table_app.command("query")
+def table_query(
+    path: str = typer.Argument(..., help="CSV / XLS / XLSX 文件路径"),
+    question: str = typer.Argument(..., help="要查询的问题"),
+    as_json: bool = typer.Option(False, "--json", help="输出 JSON"),
+):
+    """对单个表格文件做确定性问答（不需要 LLM、不写库）。
+
+    适合快速验证一份表能否被正确解析与定位；批量入库仍用 kb import。
+    """
+    from kb.tables import (parse_table_file, query_table, row_to_text,
+                           rows_from_content)
+    p = Path(path)
+    if not p.is_file():
+        console.print(f"[red]文件不存在：{path}[/red]")
+        raise typer.Exit(code=1)
+    try:
+        tables = parse_table_file(p)
+    except Exception as exc:  # noqa: BLE001 - CLI 统一转可读错误
+        console.print(f"[red]解析失败：{exc}[/red]")
+        raise typer.Exit(code=1)
+    multi = len(tables) > 1
+    rows: list[dict] = []
+    for table in tables:
+        prefix = f"[{table['sheet']}] " if multi else ""
+        for row in table["rows"]:
+            text = row_to_text(table["headers"], row)
+            if text:
+                rows.extend(rows_from_content(prefix + text))
+    result = query_table(rows, question)
+    if result is None:
+        console.print("[yellow]没有命中：确定性路径答不了这类问题（聚合/概念性问题需要 LLM）[/yellow]")
+        raise typer.Exit(code=1)
+    answer, matched = result
+    if as_json:
+        console.print_json(data={"answer": answer, "matched": len(matched),
+                                 "rows": len(rows), "sheets": len(tables)})
+    else:
+        console.print(answer)
+        console.print(f"[dim]命中 {len(matched)} 行 / 共 {len(rows)} 行，"
+                      f"{len(tables)} 个 sheet[/dim]")
 
 
 @app.command()
@@ -624,36 +726,59 @@ def ask(
 @app.command()
 def serve(non_interactive: bool = typer.Option(
         False, "--non-interactive",
-        help="非交互模式（自启/脚本）：不询问设备，按配置/runtime.json/cpu 启动")):
-    """启动常驻 REST 服务（python -m kb serve）。"""
+        help="非交互模式（自启/脚本）：不询问设备，按配置/runtime.json/cpu 启动"),
+        port: int = typer.Option(
+            None, "--port", "-p",
+            help="监听端口（缺省取 KB_API_PORT 或 8000）")):
+    """启动常驻 REST 服务（python -m kb serve）。
+
+    同一 KB_DATA_DIR 只允许一个长驻实例；换端口不能绕过这条限制。
+    """
     import uvicorn
     from kb.api import create_app, exposure_warning
+    from kb.singleton import DataDirLock
     s = get_settings()
-    # 端口占用预检：先于一切重初始化（设备检测/模型加载），被占立刻中文报错退出，
-    # 杜绝“进程活着但不监听”的双实例竞跑空壳（任务 #2）
-    if is_port_in_use(s.api_host, s.api_port):
-        console.print(f"[red]端口 {s.api_port} 已被占用，可能已有实例在运行。"
-                      f"请先停止已有实例（Windows：scripts\\windows\\stop_kb.bat；"
-                      f"Linux：systemctl stop kb 或 kill 对应进程），"
-                      f"确认端口释放后重试。[/red]")
-        raise typer.Exit(code=1)
-    # 终端交互式设备检测（显式配置/runtime.json/询问），结果注入 settings；
-    # 自启/脚本模式跳过询问，避免无 stdin 时 EOFError
-    s.device = resolve_device(s, interactive=not non_interactive)
-    # N29 启动安全警告：非回环监听 + 未鉴权 → 终端醒目横幅（日志侧由 lifespan 记 warning）
-    warn = exposure_warning(s.api_host, s.api_key)
-    if warn:
-        console.print(f"\n[bold red]{'!' * 68}[/bold red]")
-        console.print(f"[bold red]{warn}[/bold red]")
-        console.print(f"[bold red]{'!' * 68}[/bold red]\n")
-    app = create_app(s, enable_watcher=True)
-    # kb.pid 由服务进程自身管理：启动前写入（真实存活到此处才写，不再由
-    # start_kb.bat 猜写）；无论正常退出还是异常，退出时清理，不留指向死进程的旧 pid。
-    write_pid_file()
+    if port:
+        if not (1 <= int(port) <= 65535):
+            console.print(f"[red]端口不合法：{port}（应在 1-65535）[/red]")
+            raise typer.Exit(code=1)
+        s.api_port = int(port)
+    # 单例锁按数据目录判定：换端口不能绕过，避免两个进程并发写同一份
+    # Chroma / BM25 语料 / links.db。
+    lock = DataDirLock(s.data_dir)
+    holder = lock.acquire(_lock_info(s.api_port))
+    if holder is not None:
+        _deny_double_instance(holder, s.data_dir)
     try:
-        uvicorn.run(app, host=s.api_host, port=s.api_port)
+        # 端口占用预检：先于一切重初始化（设备检测/模型加载），被占立刻中文报错退出，
+        # 杜绝“进程活着但不监听”的实例竞跑空壳（任务 #2）
+        if is_port_in_use(s.api_host, s.api_port):
+            console.print(f"[red]端口 {s.api_port} 已被占用。[/red]"
+                          f"可以换一个端口启动：python -m kb serve --port 8001"
+                          f"（或设置环境变量 KB_API_PORT）；"
+                          f"也可以先停止占用该端口的程序"
+                          f"（Windows：scripts\\windows\\stop_kb.bat；"
+                          f"Linux：systemctl stop kb）。")
+            raise typer.Exit(code=1)
+        # 终端交互式设备检测（显式配置/runtime.json/询问），结果注入 settings；
+        # 自启/脚本模式跳过询问，避免无 stdin 时 EOFError
+        s.device = resolve_device(s, interactive=not non_interactive)
+        # N29 启动安全警告：非回环监听 + 未鉴权 → 终端醒目横幅（日志侧由 lifespan 记 warning）
+        warn = exposure_warning(s.api_host, s.api_key)
+        if warn:
+            console.print(f"\n[bold red]{'!' * 68}[/bold red]")
+            console.print(f"[bold red]{warn}[/bold red]")
+            console.print(f"[bold red]{'!' * 68}[/bold red]\n")
+        app = create_app(s, enable_watcher=True)
+        # kb.pid 由服务进程自身管理：启动前写入（真实存活到此处才写，不再由
+        # start_kb.bat 猜写）；无论正常退出还是异常，退出时清理，不留指向死进程的旧 pid。
+        write_pid_file()
+        try:
+            uvicorn.run(app, host=s.api_host, port=s.api_port)
+        finally:
+            remove_pid_file()
     finally:
-        remove_pid_file()
+        lock.release()
 
 
 @app.command("where")
@@ -710,16 +835,26 @@ def autostart_status_cmd():
 
 @app.command(name="mcp")
 def mcp_stdio():
-    """以 stdio 模式运行 MCP 服务器（uvx / Claude Desktop 等客户端直接拉起，
-    工具集与 REST 常驻服务完全一致；HTTP 挂载仍用 serve）。"""
+    """以 stdio 模式运行 MCP 服务器（备用模式：HTTP 挂载请用 serve）。
+
+    与 serve 共用同一把数据目录锁，二者不能同时运行（避免并发写坏索引）。
+    """
     import anyio
     from kb.mcp import create_mcp_server
     from kb.service import KBService
+    from kb.singleton import DataDirLock
     s = get_settings()
-    # stdio 协议流上不可交互：设备跟随显式配置/runtime.json，否则 cpu
-    s.device = resolve_device(s, interactive=False)
-    svc = KBService(s)
-    anyio.run(create_mcp_server(svc).run_stdio_async)
+    lock = DataDirLock(s.data_dir)
+    holder = lock.acquire(_lock_info())
+    if holder is not None:
+        _deny_double_instance(holder, s.data_dir)
+    try:
+        # stdio 协议流上不可交互：设备跟随显式配置/runtime.json，否则 cpu
+        s.device = resolve_device(s, interactive=False)
+        svc = KBService(s)
+        anyio.run(create_mcp_server(svc).run_stdio_async)
+    finally:
+        lock.release()
 
 
 @app.command()
@@ -755,6 +890,8 @@ def forget(
     if not stale:
         console.print("[yellow]请指定 --stale（当前仅支持陈旧未命中模式）[/yellow]")
         raise typer.Exit(code=1)
+    if not dry_run:
+        _warn_if_service_running()
     if project and global_only:
         console.print("[red]--project 与 --global-only 不能同时使用[/red]")
         raise typer.Exit(code=1)
@@ -830,6 +967,8 @@ def dedup(
       kb dedup --dry-run                  # 预览相似度>0.85的重复对
       kb dedup --threshold 0.90 --dry-run # 自定义阈值
     """
+    if not dry_run:
+        _warn_if_service_running()
     svc = _service()
     records = _iter_all_records(svc)
     if len(records) < 2:

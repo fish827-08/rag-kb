@@ -6,26 +6,60 @@
 [![Glama MCP score](https://glama.ai/mcp/servers/fish827-08/rag-kb/badges/score.svg)](https://glama.ai/mcp/servers/fish827-08/rag-kb)
 [English](README_EN.md) | 中文
 
-**本地优先、完全离线可用的 Agent 记忆与知识服务**——REST + MCP 双协议，混合检索（向量 + BM25 归一化加权融合），文档/网页入库与 RAG 问答；无 LLM 时存取与检索完整可用。
+**本地优先、完全离线可用的 RAG 知识库与 Agent 记忆服务**——把文档、网页、CSV/Excel 变成可检索、可提问的本地知识库，同时为 Claude Code / Cursor / TraeWork 提供跨会话记忆。REST + MCP 双协议，混合检索（向量 + BM25 归一化加权融合）；不配置 LLM 也能入库和检索。
 
 <!-- GitHub Topics: mcp, memory-service, rag, ai-agent, knowledge-base, local-first, llm, claude-code, hybrid-search, embedding -->
 
-**kb** 是本地优先、完全免费的 Agent 记忆与知识服务（v2.4.5）。
+**kb** 是本地优先、完全免费的 RAG 知识库与 Agent 记忆服务（v2.5.0）。
 
 > 开源协议：[Apache-2.0](LICENSE)（含专利授权，可商用）。
 
-## kb — 本地优先的 Agent 记忆与知识服务
+## kb — 本地优先的 RAG 知识库与 Agent 记忆服务
 
-Windows 单进程常驻（`python -m kb serve`），REST + MCP 双协议，向 Claude Code /
-Cursor / TraeWork / 自建 Agent 提供记忆写入、文档与网页入库、混合检索
-（向量 + BM25 归一化加权融合）与 RAG 问答。
+Windows 单进程常驻（`python -m kb serve`），把本地文档、网页、CSV/Excel 统一入库，
+提供混合检索与 RAG 问答；同一份库同时也是 Claude Code / Cursor / TraeWork
+的跨会话记忆。REST + MCP 双协议。
 
 **无 LLM 时存取与检索完整可用**——记忆写入、文档入库、混合检索不依赖任何大模型；
 配置本地 Ollama 或云端 API 后，`/ask` 问答能力自动启用。
 
-## 两个真实场景
+### 能力边界：LLM 是可选的
 
-### 1. 测试/实施：把一堆 CSV、Excel 变成可提问的本地资料
+| 能力 | 没有 LLM | 有 LLM | 作为 Agent 的 skill |
+|---|---|---|---|
+| 记忆写入 / 更新 / 删除 | ✅ | ✅ | ✅ |
+| 文档 / 表格入库 | ✅ | ✅ | ✅ |
+| 混合检索、来源追溯 | ✅ | ✅ | ✅ |
+| 表格单元格查询、限定条件 | ✅ 确定性匹配 | ✅ 仍走确定性 | ✅ |
+| 文档问答（RAG） | ❌ | ✅ | ✅ Agent 自己生成 |
+| 聚合（有多少 / 平均） | ❌ | ✅ | ✅ |
+| 概念性 / 模糊问题 | ❌ | ✅ | ✅ |
+
+> 注意：不需要的是 **LLM**；检索仍需要一个轻量嵌入模型（默认 92MB，CPU 可跑），
+> 表格问答完全不经过嵌入模型。把 kb 挂进 Agent 时，kb 只负责精确检索，生成交给 Agent。
+
+## 三种用法
+
+### 1. 本地 RAG 知识库：文档、网页、表格进同一个库
+
+这是 kb 的主定位：**一个跑在本机的 RAG 知识库**。PDF、Word、Markdown、网页、
+CSV/Excel 都进同一个本地库，检索走「向量 + BM25」混合召回；接上 LLM 后
+可以在检索结果上生成带来源的答案。
+
+```powershell
+pip install "kb-memory[ingest]"
+python -m kb serve
+# 打开 http://127.0.0.1:8000/ui，拖入文档或整个文件夹
+
+python -m kb import .\docs --project kb          # 命令行批量入库
+python -m kb search "部署步骤" --project kb       # 纯检索，不需要 LLM
+python -m kb ask "部署步骤有哪些" --project kb     # 有 LLM 时生成带来源的答案
+```
+
+数据不出本机。检索结果带 `source`；`/search` 支持 `group_by_file`，
+可以按文件聚合，先看「哪几个文件相关」，再看具体片段。
+
+### 2. 结构化数据：CSV / Excel 精确到单元格
 
 测试和交付现场经常是几十个用例表、导出报表、配置清单，散在不同目录。Excel 手动筛选慢，
 跨文件查一个值要在十几个表里翻；数据又不能传到在线文档。
@@ -40,13 +74,31 @@ python -m kb serve
 python -m kb import "D:\用例数据" --project smoke   # 也可以命令行批量导入
 python -m kb ask "用户550的分数是多少" --project smoke
 # → 用户550：分数=30     （表格确定性匹配，未配置 LLM 也能答）
+
+python -m kb table query "D:\用例数据\成绩.xlsx" "五班张芳的数学成绩"
+# → 直接查单个文件：不建库、不加载嵌入模型，适合先验证表格能否被正确解析
 ```
+
+> 表格行**不参与向量嵌入**（只进关键词索引和确定性匹配），写入按 2000 条分批
+> （Chroma 单次写入上限约 5461）。CPU 实测：
+>
+> | 数据 | 解析 | 入库 | 吞吐 | 首次查询 | 稳态查询 |
+> |---|---|---|---|---|---|
+> | 800 行 / 4 sheet（5 列） | 0.02s | 1.17s | ~680 行/秒 | — | — |
+> | 20,000 行 / 40 sheet（5 列） | 3.26s | 15.53s | 1288 行/秒 | 1.21s（建缓存） | 7.5ms（问题带表名） |
+> | 20,000 行 / 18 sheet（真实业务表 14 列） | 7.97s | 31.80s | 629 行/秒 | 1.57s（建缓存） | 326ms（问题不带表名） |
+>
+> 稳态差距来自“是否先按 sheet 收窄”：问题带表名/班级时只扫目标 sheet（毫秒级）；
+> 不带时扫描全部 2 万行（约 0.3 秒）。首次查询需要从 Chroma 读回并解析表格行建缓存。
+> 嵌入模型全程保持 `unloaded`。
+>
+> 可复现：`python scripts/bench_table_query.py --ingest --sheets 40 --rows 500`。
 
 CSV 用标准库解析，XLSX 用 `openpyxl`、旧版 `.xls` 用 `xlrd` 逐 sheet 读取；每行变成 `列名=值 | ...` 文本，
 既能精确命中单元格，也能走向量 + BM25 混合检索。多 sheet 会按表名消歧（问「五班张芳」
 只答五班）。它不替代 SQL/BI，适合“快速在一堆表里找一个值/一行记录”的场景。
 
-### 2. Agent / 脚本：REST 与 MCP 都能读写记忆和知识库
+### 3. Agent / 脚本：REST 与 MCP 都能读写记忆和知识库
 
 同一份服务同时暴露 REST 和 MCP，13 个 MCP 工具覆盖记忆与 RAG 的增删查：
 
@@ -55,6 +107,9 @@ CSV 用标准库解析，XLSX 用 `openpyxl`、旧版 `.xls` 用 `xlrd` 逐 shee
 | 写/查/删记忆 | `POST/GET/DELETE /api/v1/memories` | `write_memory` / `search_memory` / `delete_memory` |
 | 文档入库 | `POST /api/v1/documents` | `add_document` / `add_webpage` |
 | 展示/删除知识库 | `GET /api/v1/documents`、`DELETE /api/v1/documents/{source}` | `list_documents` / `delete_document` |
+
+> `search_memory(query, table=true)` 会先尝试确定性表格问答：命中返回结构化答案
+> `{"table": true, "answer", "sources"}`，未命中回退普通检索。Agent 因此也能精确查表。
 
 ```powershell
 # 写入一条记忆
@@ -91,8 +146,10 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/documents/用例.csv" -Meth
 - **大库读取分页（v2.4.3）**：`iter_all` 改为每批 500 条分页读取，降低大库打开/重建 BM25 时的峰值内存；新增 680 条库 5 次进程重启的回归用例
 - **MCP 文档管理（v2.4.4）**：新增 `list_documents` / `delete_document`，MCP 侧也能展示与删除 RAG 知识库（共 13 个工具）
 - **Excel 兼容性与问答优化（v2.4.5）**：兼容不带 `<dimension>` 的导出文件（原先会报“表格为空”）、识别标题行与合并单元格、支持 `.xls`；多 sheet 同名实体只返回目标列有值的表，公式单元格提示“为公式”，来源按字段两列展示；`/search` 支持 `table=true`，仅检索也能返回结构化表格答案
+- **单例与模型选择（v2.4.6）**：同一 `KB_DATA_DIR` 只允许一个长驻实例（数据目录锁，换端口不能绕过）；`kb serve --port 8001` 支持换端口；`kb table query` 可直接查单个表格文件；`/search` 支持 `group_by_file` 按文件聚合；MCP `search_memory` 支持 `table=true`；Web UI 可选择嵌入模型（库为空时），并保证至少保留一个模型；表格行跳过向量嵌入，批量导入显著提速；多实体查询（王五和欧阳娜娜）不再漏人
+- **嵌入模型迁移（v2.5.0）**：每个模型独立 collection，换模型不再要求清空数据；迁移后台执行，**迁移期间只读（写入 409、读取与关键词检索继续）**，全量同步完成后才切换；失败保留旧库可重试；支持删除非活跃模型的数据
 - **目录监听**：指定目录内新增/删除文件自动入库/清理（`KB_WATCH_DIR`）
-- **CLI 工具**：`kb add/search/stats/ask/eval/forget/dedup`——终端直接完成写入、检索、统计与 RAG 问答
+- **CLI 工具**：`kb add/search/stats/ask/table query/eval/forget/dedup`——终端直接完成写入、检索、统计、单表查询与 RAG 问答
 - **隐私护栏**：敏感 namespace 强制本地回答不出网；`/ask` 智能路由（本地优先，难题可选云端）
 - **断网可用**：模型与数据全部落本地，无网络时存取与检索功能完整
 
@@ -108,6 +165,13 @@ python -m kb serve
 
 > 不先装 CPU 版 torch 时，PyPI 默认会拉 CUDA 版本（torch + cudnn + nccl 等合计 **2–3 GB**），
 > 这是 Linux 新用户最大的下载坑；只做记忆存取与检索不需要显卡。
+
+> **首次启动会下载嵌入模型**（默认约 92 MB）。国内网络建议先设置
+> `HF_ENDPOINT=https://hf-mirror.com`；下载完成并缓存后可完全断网运行。
+>
+> **同一 `KB_DATA_DIR` 只允许一个实例**。端口被占时用 `python -m kb serve --port 8001`
+> 换端口；换端口**不能**绕过单例限制——两个进程写同一份数据会损坏索引。
+> 需要并行跑两个实例时，分别设置不同的 `KB_DATA_DIR`。
 
 **2 核 2G 服务器建议配置**（写入 `.env` 或环境变量）：
 
@@ -198,6 +262,7 @@ curl http://127.0.0.1:8000/api/v1/healthz
 | 模型 | 体积 | 维度 | 加载后常驻内存 | 适用 |
 |---|---|---|---|---|
 | **`BAAI/bge-small-zh-v1.5`（默认）** | **约 92 MB** | 512 | 约 100 MB 量级 | 日常偏好/决策/笔记类记忆；CPU 上也快 |
+| `BAAI/bge-base-zh-v1.5` | 约 400 MB | 768 | 约 500 MB | 召回更好，内存与延迟中等 |
 | `BAAI/bge-m3` | 约 2.2 GB | 1024 | 约 2 GB | 长文档、跨语言、语义更微妙的内容，需要更强语义召回 |
 
 > 本项目在自带 50 题中文评测集上的实测（`kb eval`）：轻量模型 Recall@1 **0.760** / MRR **0.847** /
@@ -205,13 +270,37 @@ curl http://127.0.0.1:8000/api/v1/healthz
 > 但 **bge-m3 在长文档与跨语言场景预期更强**，两个模型定位不同，按自己数据选。
 
 **换模型前必读**：向量维度不同（512 vs 1024），ChromaDB 集合维度由首次写入的向量决定，
-**换了模型后旧数据无法直接检索**。所以：
+**不同模型的向量不能混在同一个 collection**。所以：
 
 - **新库**（还没写过数据）：直接设 `KB_EMBED_MODEL=BAAI/bge-m3` 即可；
 - **已有数据的库**：kb 会自动**沿用建库时使用的模型**（记录在 `kb_data/runtime.json`），
   不会因默认值变化而破坏你的数据，启动日志会记录实际沿用的模型；
-  若能识别的配置与库不一致（你显式改了 `KB_EMBED_MODEL`），还会给出 WARNING 说明如何迁移。
-  确要换模型，请先备份，再清空 `kb_data/chroma` 后重新入库。
+  确要换模型，用下面的 Web UI 迁移或 `POST /api/v1/embed/migrate`。
+
+**Web UI 选择模型（v2.4.6 / v2.5.0）**：右上角「设置 → 嵌入模型」可直接切换，选择会保存到
+`kb_data/embed_config.json`，重启后仍然生效。两条硬规则：
+
+- **至少要保留一个模型**：空模型名会被拒绝并提示「清空后服务将无法检索」。默认模型始终可用；
+- **库中已有数据时走迁移**：v2.5.0 起切换不再要求先清空，而是把现有数据迁移到新模型。
+
+**嵌入模型迁移（v2.5.0，只读窗口）**：
+
+- 每个模型在各自作用域里有独立 collection，旧模型的数据不会被覆盖；
+- 迁移在后台执行：**写入暂停（API 返回 409），读取继续**，语义检索临时降级为关键词（BM25）
+  检索；迁移完成后自动切回混合检索；
+- 全部数据同步完成才切换模型；**失败保留旧库与旧模型**，可直接重试（目标 collection 会增量修正）；
+- 迁移完成后旧模型数据仍占磁盘，可在设置面板里逐个「删除数据」，或
+  `POST /api/v1/embed/models/delete`（需 `confirm` 等于模型名）；
+- 建议在空闲时段迁移：低配机器上两个模型不会同时驻留（迁移前会先卸载旧模型）。
+- **可复现验收**：仓库内 `samples/`（记忆 / md / txt / html / json / docx / csv / 多 sheet xlsx）
+  配合 `scripts/verify_model_migration.py`，迁移前后各跑一遍检索与表格问答；用法见
+  [samples/README.md](samples/README.md)。
+
+```powershell
+# 迁移（库为空时等价于立即切换）；进度查询
+curl -X POST http://127.0.0.1:8000/api/v1/embed/migrate -H "Content-Type: application/json" -d '{"model":"BAAI/bge-m3"}'
+curl http://127.0.0.1:8000/api/v1/embed/migrate
+```
 
 ### 配置 LLM（可选，`/ask` 问答需要）
 
@@ -366,10 +455,16 @@ claude mcp add --transport http kb http://127.0.0.1:8000/mcp/
 | POST | `/api/v1/memories/{id}/links` | 建立记忆关联 `{to_id, relation?}`；relation: `related/supersedes/depends_on/part_of/contradicts` |
 | GET | `/api/v1/memories/{id}/links` | 列一跳关联（含内容/方向；`?project=&relation=`） |
 | DELETE | `/api/v1/memories/{id}/links/{to_id}` | 取消关联（任一方向；删除后同步清理） |
-| POST | `/api/v1/search` | 混合检索 `{query, top_k?, mode?, type?, tag?, table?}`，mode: `hybrid/vector/keyword`；`table=true` 先尝试确定性表格问答 |
+| POST | `/api/v1/search` | 混合检索 `{query, top_k?, mode?, type?, tag?, table?, group_by_file?}`，mode: `hybrid/vector/keyword`；`table=true` 先尝试确定性表格问答；`group_by_file=true` 额外返回按文件聚合的 `files` 数组 |
+| GET | `/api/v1/embed` | 当前嵌入模型、可选列表、迁移状态与各模型数据量 |
+| POST | `/api/v1/embed/config` | 立即切换嵌入模型（仅空库；非空库请用 `/embed/migrate`） |
+| POST | `/api/v1/embed/migrate` | 迁移现有数据到新模型（后台执行；库为空时立即切换；迁移期间写入返回 409） |
+| GET | `/api/v1/embed/migrate` | 查询迁移状态与进度（`status/percent/done/total/readonly`） |
+| POST | `/api/v1/embed/models/delete` | 删除非活跃模型的数据 `{model, confirm}`（`confirm` 必须等于模型名） |
 | POST | `/api/v1/documents` | 文档/表格入库：multipart `file` 字段或 JSON `{"path": "本地路径"}`；CSV/XLS/XLSX 逐行入库 |
 | GET | `/api/v1/documents` | 已入库文档列表（按 source 聚合，含 `kind=doc/web/table`） |
 | DELETE | `/api/v1/documents/{source}` | 按 source 删除该文档全部记录（本地文件名等简单 source） |
+| POST | `/api/v1/admin/reset` | 清空指定项目或全部数据；必须提供 `confirm`（项目名，或“清空全部”） |
 | DELETE | `/api/v1/documents?source=<urlencoded>` | 按查询参数删除（**URL 等含斜杠的 source 必须用这个**） |
 | POST | `/api/v1/ingest/web` | 网页入库 `{url}`，抓取正文切分入库；同 URL 重复入库自动替换旧记录 |
 | POST | `/api/v1/ask` | RAG 问答 `{question, top_k?}`（`top_k` 默认 5，长文档可调至 8~10）；表格问句优先确定性作答（`llm="table"`），未配置 LLM 且非表格问题返回 503 |
