@@ -1,4 +1,4 @@
-# kb 项目全景导读（2026-11-03）
+# kb 项目全景导读（2026-11-08，v2.5.0）
 
 > 面向第一次接手或准备面试讲解的人。读完全文大约 40 分钟；只求跑起来看效果，读第 0、1、6 节即可。
 > 设计依据：`docs/superpowers/specs/2026-08-23-kb-memory-service-design.md`（基础）、
@@ -38,23 +38,24 @@ REST、MCP 和浏览器界面，负责记忆存取、文档/网页入库、混�
 
 | 文件 | 行数 | 职责 | 值得注意的点 |
 |---|---:|---|---|
-| `kb/config.py` | 143 | 全部配置（`KB_*` 环境变量 + `.env`） | `Settings` 是唯一配置源，禁止硬编码 |
-| `kb/models.py` | 102 | `Record` 统一模型 + Chroma metadata 互转 | Chroma metadata 不支持 list，`tags` 用逗号拼接 |
-| `kb/embedder.py` | 265 | 向量编码、懒加载、空闲卸载 | 模型不可用时抛 `EmbeddingUnavailableError` → 503 |
-| `kb/storage.py` | 204 | `ChromaStore`（`VectorStore` 抽象） | 单 client 多 collection；`get_many` 消 N+1 |
+| `kb/config.py` | 166 | 全部配置（`KB_*` 环境变量 + `.env`） | `Settings` 是唯一配置源，禁止硬编码 |
+| `kb/models.py` | 119 | `Record` 统一模型 + Chroma metadata 互转 | Chroma metadata 不支持 list，`tags` 用逗号拼接 |
+| `kb/embedder.py` | 310 | 向量编码、懒加载、空闲卸载 | 模型不可用时抛 `EmbeddingUnavailableError` → 503 |
+| `kb/storage.py` | 261 | `ChromaStore`（`VectorStore` 抽象） | 单 client 多 collection；`upsert`/`list_ids` 供模型迁移 |
 | `kb/bm25.py` | 144 | jieba 分词 + BM25 内存索引 | `add_many` 批量只重建一次；语料落盘免启动全量分词 |
-| `kb/retriever.py` | 281 | 双路召回 + `weighted_fuse` / `rrf_fuse` | 每路取 `max(30, 3*top_k)` 候选 |
-| `kb/service.py` | 1155 | **核心编排**：CRUD、入库、检索、问答、审计、治理接入 | 写锁、作用域合并、`_ask_auto` 路由都在这里 |
-| `kb/scopes.py` | 209 | 全局库 / 项目子库的物理隔离 | 所有读写入口必须经过 `get/locate`，禁止绕过 |
-| `kb/ingest.py` | 122 | 解析（txt/md/pdf/docx/markitdown）+ 切块 + 网页正文 | 可选依赖缺失时给「装哪个 extras」的明确错误 |
-| `kb/tables.py` | — | **v2.4** CSV/XLSX 解析、逐行文本化、确定性表格问答 | 行文本 `列名=值 \| ...`；无 LLM 也能精准答单元格 |
-| `kb/llm.py` | 155 | 本地 Ollama / 云端 OpenAI 兼容客户端 | `think:false` 直传；`stream:false` 显式关闭 |
-| `kb/api.py` | 1062 | FastAPI 工厂、REST 端点、鉴权/字符集/日志中间件 | 统一错误 JSON `{error, message}` |
-| `kb/mcp.py` | 365 | MCP 工具注册（写/查/读/改/删/关联/入库/问答） | 与 REST 共享同一个 `KBService` 单例 |
-| `kb/cli.py` | 960 | `kb add/search/ask/serve/eval/forget/dedup/audit/where` | Typer + rich |
-| `kb/audit.py` | 263 | 存取审计 JSON（按 client+project 分文件） | 用户的「谁存过什么」入口 |
+| `kb/retriever.py` | 305 | 双路召回 + `weighted_fuse` / `rrf_fuse` | 每路取 `max(30, 3*top_k)` 候选 |
+| `kb/service.py` | 2097 | **核心编排**：CRUD、入库、检索、问答、审计、治理接入 | 写锁、作用域合并、`_ask_auto`、模型迁移状态机 |
+| `kb/scopes.py` | 393 | 全局库 / 项目子库隔离；每模型独立 collection | 所有读写入口必须经过 `get/locate`；`switch_model` 重开作用域 |
+| `kb/singleton.py` | 166 | 数据目录单例锁（v2.4.6） | OS 级锁，进程退出自动释放，换端口不能绕过 |
+| `kb/ingest.py` | 177 | 解析（txt/md/pdf/docx/markitdown）+ 切块 + 网页正文 | 可选依赖缺失时给「装哪个 extras」的明确错误 |
+| `kb/tables.py` | 899 | **v2.4** CSV/XLSX 解析、逐行文本化、确定性表格问答 | 行文本 `列名=值 \| ...`；无 LLM 也能精准答单元格 |
+| `kb/llm.py` | 160 | 本地 Ollama / 云端 OpenAI 兼容客户端 | `think:false` 直传；`stream:false` 显式关闭 |
+| `kb/api.py` | 1363 | FastAPI 工厂、REST 端点、鉴权/字符集/日志中间件 | 统一错误 JSON `{error, message}`；迁移/清空端点 |
+| `kb/mcp.py` | 409 | MCP 工具注册（写/查/读/改/删/关联/入库/问答） | 与 REST 共享同一个 `KBService` 单例 |
+| `kb/cli.py` | 1157 | `kb add/search/ask/serve/eval/forget/dedup/audit/where` | Typer + rich；`serve --port` |
+| `kb/audit.py` | 259 | 存取审计 JSON（按 client+project 分文件） | 用户的「谁存过什么」入口 |
 | `kb/governance.py` | 188 | 衰减 / 去重 / 新鲜度（纯函数） | 默认全关，开启后行为变化点集中 |
-| `kb/links.py` | — | 记忆显式关联（SQLite 边） | 一跳检索扩展，默认开但无数据时零变化 |
+| `kb/links.py` | 177 | 记忆显式关联（SQLite 边） | 一跳检索扩展，默认开但无数据时零变化 |
 | `kb/reranker.py` / `kb/sparse.py` | 61 / 238 | 交叉精排 / BGE-M3 稀疏第三路 | 都默认关，失败自动降级双路 |
 | `kb/eval.py` | 136 | Recall@1/@5 + MRR 评测 | 配合 `tests/eval_zh_50.jsonl` |
 | `kb/static/index.html` | — | **新增**浏览器界面 | 单文件、无构建、离线可用 |
@@ -224,7 +225,7 @@ python -m kb eval --file tests/eval_hongloumeng.jsonl --top-k 10 --rerank   # �
 ## 7. 测试与验证
 
 ```powershell
-pytest tests/ -q          # 全量：536 passed, 1 skipped（2026-11-03 实测，约 3 分钟）
+pytest tests/ -q          # 全量：589 passed, 1 skipped（2026-11-08 实测，约 3 分钟）
 pytest tests/test_n33_web_ui.py -q   # Web UI 的 8 项验收
 pytest tests/test_n34_bulk_ingest.py -q  # 批量导入的 3 项验收
 pytest tests/test_n35_llm_config.py -q   # 运行时 LLM 配置的 8 项验收
@@ -233,7 +234,7 @@ pytest tests/test_n38_graph.py -q        # v2.4 知识图谱接口
 pytest tests/test_n39_separation.py -q   # v2.4 RAG 与记忆分离（不遗忘）
 ```
 
-计数口径：`pytest tests/ --collect-only -q | Select-Object -Last 1` 会打印「537 tests collected」。
+计数口径：`pytest tests/ --collect-only -q | Select-Object -Last 1` 会打印「590 tests collected」。
 如果你的环境跑出别的数字，先看收集数——差异通常来自依赖缺失或不在同一 commit，而不是测试本身少跑。
 
 唯一的 1 项跳过是 `tests/test_v21_runtime.py` 的「Linux 开机自启」用例（Windows 下启动项用 `.cmd` 实现），
@@ -265,11 +266,45 @@ pytest tests/test_n39_separation.py -q   # v2.4 RAG 与记忆分离（不遗忘�
 - **`pytest` 用的是全局 Python 而不是 venv**：两者依赖版本可能不同，报错先确认 `sys.executable`。
 - **首次上传很慢**：正在下载 `bge-small-zh-v1.5`（约 92MB），之后离线可用。
 - **`/ask` 503**：`KB_LLM_MODE=off` 是默认值，不是故障；前端勾「仅检索」可先验证召回。
-- **改嵌入模型后检索变差**：库里已有数据时会沿用建库模型，想真正切换必须重建库。
+- **改嵌入模型后检索变差**：v2.5.0 起用 `/api/v1/embed/migrate` 迁移（只读窗口），不要只改配置。
 - **导入整本书后重启报 `Error loading hnsw index`**：单集合超过约 800 块会触发，见 6.1，改用分项目子库。
 - **`kb import` 比逐个上传快得多**：226 个文件 2337 块从 367s 降到批量的一次重建；视觉上就是少了一堆「重建 BM25」。
 - **首次查询要等十几秒**：`kb_data/runtime.json` 记录 cuda、但 torch 是 CPU 版时，旧版本会退回在线加载并卡在
   HuggingFace 重试；现在 `KBService` 会自动回退 cpu，且在线兜底超时已收紧。换 `bge-small-zh` 可把冷启动从
-  ~23s / 2GB RSS 降到几秒 / 数百 MB（需重建库）。
+  ~23s / 2GB RSS 降到几秒 / 数百 MB（用模型迁移，不必重建库）。
+
+---
+
+## 10. v2.4.6 / v2.5.0 增量
+
+### 10.1 单例锁与换端口
+
+同一 `KB_DATA_DIR` 只允许一个长驻实例：`kb/singleton.py` 在 `data_dir/kb.lock` 上抢 OS 级独占锁，
+内核在进程退出（含强杀）时自动释放；锁文件与持有者信息（`kb.lock.info`）分离，避免 Windows 字节锁影响读取。
+抢锁失败会打印 pid / 地址 / 启动时间。换端口不能绕过，并行必须用不同的 `KB_DATA_DIR`。
+`kb serve --port 8010` 可换端口；`kb import` / `kb add` 等短命命令只检测并警告，不抢锁。
+
+### 10.2 表格与检索体验
+
+- 表格行用常量单位向量入库，跳过嵌入模型（800 行约 24s → 2s）；
+- `ChromaStore.add/delete` 按 2000 条分批，绕开 Chroma 单次 5461 条上限；
+- `/search` 支持 `group_by_file`，先看哪几个文件相关；
+- `kb table query <文件> <问题>` 不建库、不加载模型，直接查单表；
+- 多实体问题（王五 + 欧阳娜娜）不再丢短名字。
+
+### 10.3 模型迁移（v2.5.0）
+
+每个模型在每个作用域一个 collection：`kb_records` / `kb_records__<sha1前12位>`，映射落 `models.json`。
+`POST /api/v1/embed/migrate` 后台逐作用域迁移：源 collection 按批编码 → upsert 目标 → 镜像删除多余 id；
+全部成功才切换 settings/embedder 并重开作用域。迁移期间写入门禁直接返回 409，读取继续，
+语义检索临时降级 BM25；失败保留旧库，可直接重试。旧模型数据不自动删除，
+`POST /api/v1/embed/models/delete` 手动清理（当前模型禁止删）。
+
+### 10.4 清空数据与验收样例
+
+- `POST /api/v1/admin/reset`：项目清空要求 `confirm=项目名`，全部清空要求 `confirm="清空全部"`；
+  Web UI「设置 → 数据管理」有对应按钮；
+- `samples/` 覆盖记忆、md/txt/html/json/docx/csv/多 sheet xlsx；
+- `scripts/verify_model_migration.py` 迁移前后各跑一遍检索与表格问答，校验记录数不变、旧模型数据保留。
 
 
