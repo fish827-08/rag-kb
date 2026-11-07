@@ -66,3 +66,6 @@ _tmp/
 _local/
 # 对话上传的临时图片（附件目录，不入库）
 .uploads/
+# 本地查看用示意图（仅本机保留，不入库）
+docs/assets/
+docs/diagrams/
