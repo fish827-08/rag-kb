@@ -25,15 +25,9 @@ REST、MCP 和浏览器界面，负责记忆存取、文档/网页入库、混�
 
 **入库链路**：文件/网页 → 解析 → 切块 → 向量编码 → Chroma + BM25。
 
-![入库链路](diagrams/01-ingest-flow.svg)
-
 **问答链路**：提问 → 作用域 → 双路召回 → 融合 → 预算截断 → 护栏 prompt → LLM。
 
-![问答链路](diagrams/02-ask-flow.svg)
-
 **模块分层**：入口 / 编排 / 检索 / 存储 / 基础。
-
-![模块分层](diagrams/03-module-map.svg)
 
 依赖方向只有一个：**入口 → 编排（KBService）→ 检索 → 存储**。基础层被所有人依赖，存储层不反向依赖上层的任何东西。
 这条规则是整个项目可测试性的来源——`retriever.py` 只认 `store + bm25 + embedder` 三个接口，所以可以在无 GPU、无 Chroma 的环境里用替身测试。
