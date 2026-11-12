@@ -122,9 +122,10 @@ If `KB_API_KEY` is set, add an auth header to the same server entry:
 "headers": { "Authorization": "Bearer <your-key>" }
 ```
 
-The MCP endpoint exposes exactly these 11 tools:
+The MCP endpoint exposes exactly these 13 tools:
 `write_memory`, `search_memory`, `read_memory`, `update_memory`, `delete_memory`,
-`link_memory`, `unlink_memory`, `list_links`, `add_document`, `add_webpage`, `ask_kb`.
+`link_memory`, `unlink_memory`, `list_links`, `add_document`, `add_webpage`,
+`list_documents`, `delete_document`, `ask_kb`.
 
 ## 4. Memory behavior rules (for the agent)
 
@@ -210,6 +211,8 @@ database migration decisions", "Reply in Chinese but store memories in English".
 | `read_memory` / `update_memory` / `delete_memory` | Manage a record by `id` (optional `project`) |
 | `add_document` | Ingest a local file path (optional `project`) |
 | `add_webpage` | Fetch and ingest a web page by URL (optional `project`) |
+| `list_documents` | List ingested documents/pages/tables by source (optional `project`) |
+| `delete_document` | Delete all chunks of a source and clean BM25/vector indexes (optional `project`) |
 | `ask_kb` | RAG answer (requires an LLM; otherwise `LLM_DISABLED`) |
 
 ### HTTP fallback (when MCP is not mounted)

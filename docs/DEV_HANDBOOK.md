@@ -212,9 +212,9 @@ GET    /                           服务导航页（API 状态/文档链接）
 | `weighted_fuse` | L48 | min-max 归一加权融合（N32 修复件，保留分数区分度） |
 | `_minmax_norm` | L31 | 单路分数归一化到 [0,1] |
 
-### 3.6 mcp.py（约 430 行） — MCP 11 工具薄封装
+### 3.6 mcp.py（约 430 行） — MCP 13 工具薄封装
 
-11 个工具函数 `write_memory / search_memory / read_memory / update_memory / delete_memory / link_memory / unlink_memory / list_links / add_document / add_webpage / ask_kb`，全部委托 KBService。`create_mcp_server` 注册工具；`_client_from_ctx / _resolve_client_ctx` 从 MCP 握手自动识别客户端；`_check_identity` 身份校验。**改工具签名=改三处：mcp.py + 设计文档 + 客户端规约。**
+13 个工具函数 `write_memory / search_memory / read_memory / update_memory / delete_memory / link_memory / unlink_memory / list_links / add_document / add_webpage / list_documents / delete_document / ask_kb`，全部委托 KBService。`create_mcp_server` 注册工具；`_client_from_ctx / _resolve_client_ctx` 从 MCP 握手自动识别客户端；`_check_identity` 身份校验。**改工具签名=改三处：mcp.py + 设计文档 + 客户端规约。**
 
 ### 3.7 audit.py（263 行） — 审计日志
 

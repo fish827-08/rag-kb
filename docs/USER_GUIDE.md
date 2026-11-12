@@ -103,10 +103,10 @@ MCP 端点：`http://127.0.0.1:8000/mcp/`
 }
 ```
 
-挂载成功后 AI 获得 11 个工具：`write_memory`（写记忆）、`search_memory`（混合检索）、
+挂载成功后 AI 获得 13 个工具：`write_memory`（写记忆）、`search_memory`（混合检索）、
 `read_memory` / `update_memory` / `delete_memory`、`link_memory` / `unlink_memory` /
 `list_links`（记忆关联）、`add_document`（文档入库）、`add_webpage`（网页入库）、
-`ask_kb`（RAG 问答）。
+`list_documents` / `delete_document`（文档列表与删除）、`ask_kb`（RAG 问答）。
 
 记忆关联是轻量知识图谱：两条记忆关系明确时（替代、依赖、从属、矛盾），
 让 AI 用 `link_memory` 建一条边即可。检索会自动带出一跳邻居，结果里的
